@@ -2,8 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 const packageMetadata = require("../package.json");
 
 const validActions = new Set(["minimize", "maximize", "fullscreen", "close"]);
-const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.2";
-const appVersionCode = 2026052801;
+const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.3";
+const appVersionCode = 2026052802;
 
 contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
   version() {

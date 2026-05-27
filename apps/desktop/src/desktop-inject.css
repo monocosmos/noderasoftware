@@ -159,6 +159,22 @@ html.hotelops-desktop-shell #sidebar-app-downloads {
   user-select: none !important;
 }
 
+#hotelops-desktop-window-controls-hit-zone {
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  z-index: 2147483646 !important;
+  width: 138px !important;
+  height: 40px !important;
+  display: block !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  -webkit-app-region: no-drag !important;
+}
+
 #hotelops-desktop-window-controls .window-control-btn {
   width: 46px !important;
   height: 40px !important;
@@ -280,6 +296,10 @@ html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-c
 
   #hotelops-desktop-window-controls {
     right: 0 !important;
+    width: 138px !important;
+  }
+
+  #hotelops-desktop-window-controls-hit-zone {
     width: 138px !important;
   }
 

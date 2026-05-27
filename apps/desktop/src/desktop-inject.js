@@ -2,6 +2,7 @@
   const rootClass = "hotelops-desktop-shell";
   const styleId = "hotelops-desktop-shell-style";
   const controlsId = "hotelops-desktop-window-controls";
+  const controlsHitZoneId = "hotelops-desktop-window-controls-hit-zone";
   const hiddenHrefAttribute = "data-hotelops-desktop-href";
   const hiddenTitleAttribute = "data-hotelops-desktop-title";
   const platformClass = `hotelops-platform-${String(window.__HOTELOPS_DESKTOP_PLATFORM__ || "unknown")
@@ -122,6 +123,27 @@
       </button>
     `;
     document.body.appendChild(controls);
+  }
+
+  function installControlsHitZone() {
+    if (window.__HOTELOPS_NATIVE_WINDOW_CONTROLS__) {
+      document.getElementById(controlsHitZoneId)?.remove();
+      return;
+    }
+
+    if (window.__HOTELOPS_DESKTOP_PLATFORM__ === "darwin") {
+      document.getElementById(controlsHitZoneId)?.remove();
+      return;
+    }
+
+    const header = document.querySelector(".site-header");
+    if (!header) return;
+    if (document.getElementById(controlsHitZoneId)) return;
+
+    const hitZone = document.createElement("div");
+    hitZone.id = controlsHitZoneId;
+    hitZone.setAttribute("aria-hidden", "true");
+    header.appendChild(hitZone);
   }
 
   function installBrandLogo() {
@@ -334,6 +356,7 @@
     document.documentElement.classList.add(rootClass, platformClass);
     installStyle();
     installControls();
+    installControlsHitZone();
     bindWindowControls();
     installBrandLogo();
     suppressImageDrag();
@@ -364,6 +387,7 @@
 
       installStyle();
       installControls();
+      installControlsHitZone();
       installBrandLogo();
       suppressImageDrag();
       hideAllLinkChrome();

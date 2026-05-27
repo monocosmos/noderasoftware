@@ -314,7 +314,7 @@ done
     if (Test-Path $downloadsArchive) {
       Remove-Item -LiteralPath $downloadsArchive -Force
     }
-    & tar.exe -czf "$downloadsArchive" -C "$downloadsPath" .
+    & tar.exe -czf "$downloadsArchive" --exclude="./_backups" -C "$downloadsPath" .
     if ($LASTEXITCODE -ne 0) {
       throw "Indirme dosyalari tar paketi olusturulamadi. Exit code: $LASTEXITCODE"
     }
