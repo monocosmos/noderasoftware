@@ -1,0 +1,289 @@
+html.hotelops-desktop-shell {
+  --hotelops-window-controls-width: 138px;
+}
+
+html.hotelops-platform-darwin {
+  --hotelops-window-controls-width: 0px;
+}
+
+html.hotelops-desktop-shell .layout-wrapper {
+  height: 100vh !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html.hotelops-desktop-shell .main-content {
+  height: 100vh !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html.hotelops-desktop-shell .site-header {
+  flex: 0 0 var(--classic-header) !important;
+}
+
+html.hotelops-desktop-shell .page-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain !important;
+  scrollbar-gutter: stable !important;
+  scrollbar-color: rgba(37, 99, 235, .55) rgba(226, 232, 240, .74) !important;
+  scrollbar-width: thin !important;
+}
+
+html.hotelops-desktop-shell .page-content::-webkit-scrollbar {
+  width: 12px !important;
+}
+
+html.hotelops-desktop-shell .page-content::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, .74) !important;
+  border-radius: 999px !important;
+}
+
+html.hotelops-desktop-shell .page-content::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(96, 165, 250, .84), rgba(37, 99, 235, .72)) !important;
+  border: 3px solid rgba(226, 232, 240, .74) !important;
+  border-radius: 999px !important;
+}
+
+html.hotelops-desktop-shell .site-header {
+  -webkit-app-region: drag !important;
+  padding-right: calc(env(titlebar-area-width, var(--hotelops-window-controls-width)) + 18px) !important;
+}
+
+html.hotelops-desktop-shell .login-page {
+  -webkit-app-region: drag !important;
+}
+
+html.hotelops-desktop-shell .login-box {
+  -webkit-app-region: no-drag !important;
+}
+
+html.hotelops-platform-darwin .site-header {
+  padding-left: 24px !important;
+  padding-right: 24px !important;
+}
+
+html.hotelops-platform-darwin .sidebar-brand {
+  min-height: 104px !important;
+  padding-top: 48px !important;
+  -webkit-app-region: drag !important;
+}
+
+html.hotelops-desktop-shell .header-actions,
+html.hotelops-desktop-shell .header-actions *,
+html.hotelops-desktop-shell button,
+html.hotelops-desktop-shell a,
+html.hotelops-desktop-shell input,
+html.hotelops-desktop-shell textarea,
+html.hotelops-desktop-shell select,
+html.hotelops-desktop-shell [role="button"],
+html.hotelops-desktop-shell [role="menu"],
+html.hotelops-desktop-shell [contenteditable="true"] {
+  -webkit-app-region: no-drag !important;
+}
+
+html.hotelops-desktop-shell .header-title {
+  -webkit-app-region: drag !important;
+}
+
+html.hotelops-desktop-shell .brand-icon,
+html.hotelops-desktop-shell .login-logo .logo-mark {
+  overflow: hidden !important;
+  background: linear-gradient(145deg, #0d1128, #111936) !important;
+  border: 1px solid rgba(25, 255, 211, .24) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.08),
+    0 8px 24px rgba(25, 255, 211, .12) !important;
+  color: transparent !important;
+}
+
+html.hotelops-desktop-shell .login-logo .logo-mark {
+  width: 64px !important;
+  height: 64px !important;
+  padding: 0 !important;
+  border-radius: 16px !important;
+}
+
+html.hotelops-desktop-shell .brand-icon {
+  padding: 0 !important;
+  border-radius: 10px !important;
+}
+
+html.hotelops-desktop-shell .brand-logo-img {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  object-fit: cover !important;
+  -webkit-user-drag: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
+html.hotelops-desktop-shell a[data-hotelops-desktop-href] {
+  cursor: pointer !important;
+  -webkit-user-drag: none !important;
+  user-select: none;
+}
+
+html.hotelops-desktop-shell img {
+  -webkit-user-drag: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+html.hotelops-desktop-shell #app-downloads,
+html.hotelops-desktop-shell #sidebar-app-downloads {
+  display: none !important;
+}
+
+#hotelops-desktop-window-controls {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  z-index: 2147483647 !important;
+  width: 138px !important;
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+}
+
+#hotelops-desktop-window-controls .window-control-btn {
+  width: 46px !important;
+  height: 40px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  background: transparent !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  cursor: default !important;
+  -webkit-app-region: no-drag !important;
+}
+
+#hotelops-desktop-window-controls .window-control-btn:focus,
+#hotelops-desktop-window-controls .window-control-btn:focus-visible {
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+#hotelops-desktop-window-controls .window-control-btn:hover {
+  background: rgba(15, 23, 42, .10) !important;
+}
+
+#hotelops-desktop-window-controls .window-control-btn:active {
+  background: rgba(15, 23, 42, .16) !important;
+}
+
+#hotelops-desktop-window-controls .window-control-close:hover {
+  background: #ef4444 !important;
+  color: #fff !important;
+}
+
+#hotelops-desktop-window-controls .window-control-close:active {
+  background: #dc2626 !important;
+}
+
+#hotelops-desktop-window-controls .window-control-icon {
+  display: block !important;
+  position: relative !important;
+  color: currentColor !important;
+}
+
+#hotelops-desktop-window-controls .window-control-min {
+  width: 12px !important;
+  height: 1.8px !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+}
+
+#hotelops-desktop-window-controls .window-control-max {
+  width: 11px !important;
+  height: 11px !important;
+  box-sizing: border-box !important;
+  border: 2px solid currentColor !important;
+  border-radius: 2px !important;
+}
+
+html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-control-max {
+  width: 12px !important;
+  height: 12px !important;
+  border: 0 !important;
+}
+
+html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-control-max::before,
+html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-control-max::after {
+  content: "" !important;
+  position: absolute !important;
+  width: 9px !important;
+  height: 9px !important;
+  box-sizing: border-box !important;
+  border: 2px solid currentColor !important;
+  border-radius: 2px !important;
+}
+
+html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-control-max::before {
+  top: 0 !important;
+  right: 0 !important;
+  opacity: .65 !important;
+}
+
+html[data-hotelops-maximized="true"] #hotelops-desktop-window-controls .window-control-max::after {
+  left: 0 !important;
+  bottom: 0 !important;
+}
+
+#hotelops-desktop-window-controls .window-control-x {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+#hotelops-desktop-window-controls .window-control-x::before,
+#hotelops-desktop-window-controls .window-control-x::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 6px !important;
+  left: 1px !important;
+  width: 12px !important;
+  height: 1.8px !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+}
+
+#hotelops-desktop-window-controls .window-control-x::before {
+  transform: rotate(45deg) !important;
+}
+
+#hotelops-desktop-window-controls .window-control-x::after {
+  transform: rotate(-45deg) !important;
+}
+
+@media (max-width: 720px) {
+  html.hotelops-desktop-shell {
+    --hotelops-window-controls-width: 138px;
+  }
+
+  #hotelops-desktop-window-controls {
+    right: 0 !important;
+    width: 138px !important;
+  }
+
+  #hotelops-desktop-window-controls .window-control-btn {
+    width: 46px !important;
+  }
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=HotelOps Node.js API
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=hotelops
+Group=hotelops
+WorkingDirectory=/opt/noderasoftware
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/noderasoftware/.env
+ExecStart=/usr/bin/node /opt/noderasoftware/apps/api/dist/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

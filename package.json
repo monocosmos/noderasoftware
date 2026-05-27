@@ -1,0 +1,27 @@
+{
+  "name": "hotel-ops-enterprise-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Enterprise hotel operations and management platform monorepo.",
+  "scripts": {
+    "dev": "npm run dev --workspace @hotel-ops/web",
+    "build": "npm run build --workspace @hotel-ops/web",
+    "lint": "npm run lint --workspace @hotel-ops/web",
+    "typecheck": "npm run typecheck --workspace @hotel-ops/web",
+    "api:dev": "npm run dev --workspace @hotel-ops/api",
+    "desktop:start": "npm run start --workspace @hotel-ops/desktop",
+    "desktop:pack": "npm run pack --workspace @hotel-ops/desktop",
+    "desktop:dist": "npm run dist --workspace @hotel-ops/desktop",
+    "desktop:test-window-controls": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\test-desktop-window-controls.ps1",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
+}

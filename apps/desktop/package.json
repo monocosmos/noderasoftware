@@ -1,0 +1,65 @@
+{
+  "name": "@hotel-ops/desktop",
+  "private": true,
+  "version": "1.0.2",
+  "description": "HotelOps Windows WebView shell.",
+  "author": "Nodera Software",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir --win",
+    "dist": "npm run dist:installer && npm run dist:portable",
+    "dist:installer": "electron-builder --win nsis --config.win.artifactName=HotelOps-Setup-V1-${arch}.${ext}",
+    "dist:portable": "electron-builder --win portable --config.win.artifactName=HotelOps-Portable-V1-${arch}.${ext}",
+    "mac:icon": "bash scripts/create-mac-icon.sh",
+    "dist:mac": "npm run mac:icon && electron-builder --mac dmg zip --x64 --arm64 --config.mac.identity=null",
+    "dist:mac:x64": "npm run mac:icon && electron-builder --mac dmg zip --x64 --config.mac.identity=null",
+    "dist:mac:arm64": "npm run mac:icon && electron-builder --mac dmg zip --arm64 --config.mac.identity=null"
+  },
+  "build": {
+    "appId": "com.noderasoftware.hotelops",
+    "productName": "HotelOps Desktop",
+    "copyright": "Copyright © 2026 Nodera Software",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.business",
+      "artifactName": "HotelOps-Mac-V1-${arch}.${ext}",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "LSMinimumSystemVersion": "12.0.0",
+        "NSHighResolutionCapable": true
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HotelOps"
+    }
+  },
+  "devDependencies": {
+    "electron": "42.0.1",
+    "electron-builder": "26.8.1"
+  }
+}
