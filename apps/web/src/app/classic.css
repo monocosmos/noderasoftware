@@ -1496,7 +1496,18 @@
   height: 15px;
 }
 
+.module-workspace-compact .kpi-card > svg.kpi-icon {
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+}
+
 .module-workspace-compact .kpi-value {
+  font-size: 22px;
+  line-height: .95;
+}
+
+.module-workspace-compact .kpi-card > strong {
   font-size: 22px;
   line-height: .95;
 }
@@ -1504,6 +1515,12 @@
 .module-workspace-compact .kpi-label {
   font-size: 10px;
   line-height: 1.15;
+}
+
+.module-workspace-compact .kpi-card > span {
+  font-size: 10px;
+  line-height: 1.15;
+  color: var(--classic-muted);
 }
 
 .dashboard-grid {
@@ -2048,6 +2065,24 @@ textarea.form-control {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.operation-document-description,
+.operation-document-actions,
+.operation-document-readstate {
+  display: none;
+}
+
+.job-card.selected .operation-document-description {
+  display: block;
+}
+
+.job-card.selected .operation-document-actions {
+  display: flex;
+}
+
+.job-card.selected .operation-document-readstate {
+  display: grid;
 }
 
 .muted-inline {

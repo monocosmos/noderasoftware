@@ -4172,10 +4172,17 @@ function OperationDocumentsPage({
   setOperationDocumentDraft
 }: RenderContext) {
   const canCreateDocument = session.departmentId === "sales" || session.departmentId === "fnb";
+  const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const unreadDocuments = operationDocuments.filter((document) => !document.readAt);
   const totalReadCount = operationDocuments.reduce((total, document) => total + document.readBy.length, 0);
   const totalUnreadUsers = operationDocuments.reduce((total, document) => total + document.unreadUsers.length, 0);
   const latestDocument = operationDocuments[0];
+  useEffect(() => {
+    if (selectedDocumentId && !operationDocuments.some((document) => document.id === selectedDocumentId)) {
+      setSelectedDocumentId("");
+    }
+  }, [operationDocuments, selectedDocumentId]);
+
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
@@ -4193,12 +4200,12 @@ function OperationDocumentsPage({
   };
 
   return (
-    <div className="ui-section">
-      <div className="kpi-grid">
+    <div className="ui-section module-workspace-compact">
+      <div className="kpi-grid ui-section-bottom-sm">
         <div className="kpi-card inprogress">
-          <FileText className="kpi-icon" />
-          <strong>{operationDocuments.length}</strong>
-          <span>Toplam Belge</span>
+          <div className="kpi-icon"><FileText size={15} /></div>
+          <div className="kpi-value">{operationDocuments.length}</div>
+          <div className="kpi-label">Toplam Belge</div>
         </div>
         <div className="kpi-card urgent">
           <AlertTriangle className="kpi-icon" />
@@ -4226,8 +4233,21 @@ function OperationDocumentsPage({
           <div className="card-body ui-body-compact">
             {operationDocuments.length ? operationDocuments.map((document) => {
               const isRead = Boolean(document.readAt);
+              const isSelected = selectedDocumentId === document.id;
               return (
-                <div key={document.id} className="job-card">
+                <div
+                  key={document.id}
+                  className={`job-card ${isSelected ? "selected" : ""}`}
+                  onClick={() => setSelectedDocumentId(isSelected ? "" : document.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedDocumentId(isSelected ? "" : document.id);
+                    }
+                  }}
+                >
                   <span className={`priority-strip ${isRead ? "low" : "urgent"}`} />
                   <span className="job-main">
                     <span className="job-title">{document.operationDefinition}</span>
@@ -4237,20 +4257,23 @@ function OperationDocumentsPage({
                       <span className="job-meta-item">{departmentLabelFor(document.createdBy.departmentId)}</span>
                       <span className={`badge ${isRead ? "badge-completed" : "badge-danger"}`}>{isRead ? "Okundu" : "Okunmadı"}</span>
                     </span>
-                    {document.description && <span className="ui-muted ui-block ui-section-sm">{document.description}</span>}
-                    <span className="management-request-actions">
-                      <a className="btn btn-outline btn-sm" href={document.document.dataUrl} download={document.document.name}>
+                    {document.description && <span className="ui-muted ui-block ui-section-sm operation-document-description">{document.description}</span>}
+                    <span className="management-request-actions operation-document-actions">
+                      <a className="btn btn-outline btn-sm" href={document.document.dataUrl} download={document.document.name} onClick={(event) => event.stopPropagation()}>
                         <FileText size={14} /> {document.document.name}
                       </a>
                       <span className="ui-meta">{fileSizeLabel(document.document.size)}</span>
                       {!isRead ? (
-                        <button type="button" className="btn btn-primary btn-sm" onClick={() => markOperationDocumentRead(document.id)}>
+                        <button type="button" className="btn btn-primary btn-sm" onClick={(event) => {
+                          event.stopPropagation();
+                          markOperationDocumentRead(document.id);
+                        }}>
                           <CheckCircle2 size={14} /> Okundu
                         </button>
                       ) : null}
                     </span>
                     {canCreateDocument && (
-                      <span className="permission-preview">
+                      <span className="permission-preview operation-document-readstate">
                         <strong>Okuma Durumu</strong>
                         <span>{document.readBy.length} okudu, {document.unreadUsers.length} okumadı</span>
                         {document.unreadUsers.length ? (
@@ -4266,6 +4289,7 @@ function OperationDocumentsPage({
                       </span>
                     )}
                   </span>
+                  <ChevronRight size={16} className={isSelected ? "accordion-chevron open" : "accordion-chevron"} />
                 </div>
               );
             }) : <EmptyState title="Operasyon belgesi yok" description="Satış veya F&B departmanı belge yayınladığında burada görünür." />}
