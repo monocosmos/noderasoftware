@@ -3,7 +3,7 @@ const packageMetadata = require("../package.json");
 
 const validActions = new Set(["minimize", "maximize", "fullscreen", "close"]);
 const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
-const appVersionCode = 1;
+const appVersionCode = 2;
 
 contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
   version() {

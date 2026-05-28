@@ -5,8 +5,8 @@
   "platforms": {
     "desktop": {
       "latestVersion": "1.0.0",
-      "latestCode": 1,
-      "minimumCode": 1,
+      "latestCode": 2,
+      "minimumCode": 2,
       "downloadUrl": "/downloads/HotelOps-Setup-V1-x64.exe",
       "title": "Windows uygulamasi guncel degil",
       "message": "HotelOps Windows uygulamasinin yeni surumu hazir."

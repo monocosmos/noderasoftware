@@ -5,6 +5,7 @@ const packageMetadata = require("../package.json");
 
 const HOTEL_URL = process.env.HOTELOPS_URL || "https://noderasoftware.com/hotel/";
 const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
+const DESKTOP_APP_BUILD = 2;
 const ALLOWED_HOSTS = new Set(["noderasoftware.com", "www.noderasoftware.com"]);
 const PRELOAD_PATH = path.join(__dirname, "preload.cjs");
 const OFFLINE_PATH = path.join(__dirname, "offline.html");
@@ -284,15 +285,6 @@ function updateTrayMenu() {
       { label: desktopAuthToken ? "Bildirim servisi: Aktif" : "Bildirim servisi: Oturum bekliyor", enabled: false },
       { type: "separator" },
       { label: "Yenile", click: () => mainWindow && !mainWindow.isDestroyed() && mainWindow.reload() },
-      {
-        label: "Test bildirimi gonder",
-        click: () => showDesktopNotification({
-          title: "Nodera Sistem",
-          body: "Windows bildirim servisi calisiyor.",
-          tag: "hotelops-test"
-        })
-      },
-      { type: "separator" },
       {
         label: "Cikis",
         click: () => {
@@ -703,7 +695,9 @@ function createWindow() {
     }
   });
 
-  mainWindow.webContents.setUserAgent(`${mainWindow.webContents.getUserAgent()} NoderaHotelOpsDesktop/${DESKTOP_APP_VERSION}`);
+  mainWindow.webContents.setUserAgent(
+    `${mainWindow.webContents.getUserAgent()} NoderaHotelOpsDesktop/${DESKTOP_APP_BUILD} HotelOpsDesktopVersion/${DESKTOP_APP_VERSION} HotelOpsDesktopBuild/${DESKTOP_APP_BUILD} HotelOpsDesktop`
+  );
 
   applyWindowsBackdrop(mainWindow);
   registerWindowStateEvents(mainWindow);

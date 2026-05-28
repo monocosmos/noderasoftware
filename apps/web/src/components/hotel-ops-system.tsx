@@ -143,6 +143,7 @@ type AppUpdateNotice = {
   label: string;
   currentVersion: string;
   latestVersion: string;
+  latestCode: number;
   downloadUrl: string;
   title: string;
   message: string;
@@ -409,6 +410,17 @@ function readAndroidUserAgentInfo(userAgent: string) {
   return { updateCode, version, buildNumber };
 }
 
+function readDesktopUserAgentInfo(userAgent: string) {
+  const buildToken = userAgent.match(/NoderaHotelOpsDesktop\/([^\s]+)/i)?.[1] || "";
+  const explicitVersion = userAgent.match(/HotelOpsDesktopVersion\/([^\s]+)/i)?.[1] || "";
+  const explicitBuild = toShellNumber(userAgent.match(/HotelOpsDesktopBuild\/(\d+)/i)?.[1]);
+  const legacyNumericBuild = /^\d+$/.test(buildToken) ? toShellNumber(buildToken) : 0;
+  const legacyVersion = buildToken && !legacyNumericBuild ? buildToken : "";
+  const version = explicitVersion || legacyVersion;
+  const buildNumber = explicitBuild || legacyNumericBuild;
+  return { version, buildNumber };
+}
+
 function detectShellRuntime(): ShellRuntime {
   if (typeof window === "undefined") return "web";
 
@@ -438,8 +450,14 @@ function readShellAppInfo(): ShellAppInfo | null {
   const shellWindow = window as HotelOpsShellWindow;
 
   if (runtime === "desktop") {
-    const version = callShellString(() => shellWindow.hotelOpsDesktopShell?.version?.() || "") || "1.0.0";
-    const versionCode = callShellNumber(() => shellWindow.hotelOpsDesktopShell?.versionCode?.() || 0);
+    const desktopUserAgent = readDesktopUserAgentInfo(navigator.userAgent || "");
+    const version =
+      callShellString(() => shellWindow.hotelOpsDesktopShell?.version?.() || "") ||
+      desktopUserAgent.version ||
+      "1.0.0";
+    const versionCode =
+      callShellNumber(() => shellWindow.hotelOpsDesktopShell?.versionCode?.() || 0) ||
+      desktopUserAgent.buildNumber;
     return { runtime, label: "Windows", version, versionCode, buildNumber: versionCode };
   }
 
@@ -478,6 +496,7 @@ function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformMa
     label: info.label,
     currentVersion: info.version,
     latestVersion: platform.latestVersion,
+    latestCode: platform.latestCode,
     downloadUrl: platform.downloadUrl,
     title: platform.title,
     message: platform.message
@@ -1917,8 +1936,25 @@ export function HotelOpsSystem() {
     let cancelled = false;
     const retryIds: number[] = [];
 
+    const notifyViaWebApi = async (notice: AppUpdateNotice) => {
+      if (!("Notification" in window)) return false;
+      try {
+        if (Notification.permission === "default") {
+          await Notification.requestPermission();
+        }
+        if (Notification.permission !== "granted") return false;
+        new Notification(notice.title, {
+          body: notice.message || `${notice.label} uygulamasi icin yeni guncelleme hazir.`,
+          tag: `app-update-${notice.runtime}-${notice.latestCode}`
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     const notifyNativeShell = (info: ShellAppInfo, notice: AppUpdateNotice) => {
-      const key = `${notice.runtime}-${info.versionCode}-${notice.latestVersion}`;
+      const key = `${notice.runtime}-${info.versionCode}-${notice.latestVersion}-${notice.latestCode}`;
       if (appUpdateNotifiedRef.current === key) return;
       appUpdateNotifiedRef.current = key;
 
@@ -1927,9 +1963,19 @@ export function HotelOpsSystem() {
       const shellWindow = window as HotelOpsShellWindow;
 
       if (notice.runtime === "desktop") {
-        shellWindow.hotelOpsDesktopShell?.notify?.({ title, body, tag: `app-update-${info.versionCode}` })?.catch?.(() => {});
+        if (shellWindow.hotelOpsDesktopShell?.notify) {
+          shellWindow.hotelOpsDesktopShell.notify({ title, body, tag: `app-update-${notice.latestCode}` }).catch(() => {
+            void notifyViaWebApi(notice);
+          });
+        } else {
+          void notifyViaWebApi(notice);
+        }
       } else {
-        shellWindow.HotelOpsAndroidShell?.notifyAppUpdate?.(title, body);
+        if (shellWindow.HotelOpsAndroidShell?.notifyAppUpdate) {
+          shellWindow.HotelOpsAndroidShell.notifyAppUpdate(title, body);
+        } else {
+          void notifyViaWebApi(notice);
+        }
       }
     };
 
@@ -2621,7 +2667,7 @@ export function HotelOpsSystem() {
                 onClick={() => appUpdateNotice && openAppUpdateDownload(appUpdateNotice)}
                 disabled={!appUpdateNotice}
               >
-                {shellAppInfo.label} {shellAppInfo.version}
+                {shellAppInfo.label} v{shellAppInfo.version}
               </button>
             ) : null}
           </div>

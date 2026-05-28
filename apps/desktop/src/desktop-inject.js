@@ -39,7 +39,9 @@
         const button = findWindowActionTarget(event);
         if (!button) return;
 
+        event.preventDefault();
         event.stopPropagation();
+        runWindowAction(button.dataset.windowAction);
       },
       true
     );
