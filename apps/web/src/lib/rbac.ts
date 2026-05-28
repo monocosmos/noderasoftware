@@ -22,6 +22,7 @@ export type RoleId =
   | "floorChief"
   | "staff"
   | "spaManager"
+  | "salesManager"
   | "fnbManager";
 
 export type Permission =
@@ -154,6 +155,14 @@ export const roles: RoleDefinition[] = [
     department: "spa",
     visibleDepartments: ["spa"],
     permissions: ["workorder.route_hk", "workorder.route_technical"]
+  },
+  {
+    id: "salesManager",
+    labelTR: "Satış Müdürü",
+    labelEN: "Sales Manager",
+    department: "sales",
+    visibleDepartments: ["sales"],
+    permissions: ["workorder.create", "workorder.edit"]
   },
   {
     id: "fnbManager",

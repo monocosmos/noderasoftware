@@ -373,5 +373,6 @@ export const roleDemoUsers: Record<RoleId, string> = {
   floorChief: "Nihan Kaya",
   staff: "Emre Teknik",
   spaManager: "Lara Deniz",
+  salesManager: "Deniz Satış",
   fnbManager: "Can Erdem"
 };

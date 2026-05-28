@@ -235,6 +235,7 @@ function canManageWorkOrderStatus(auth: AuthContext, departmentId: string) {
     "frontOfficeManager",
     "securityManager",
     "spaManager",
+    "salesManager",
     "fnbManager"
   ]);
   return statusManagerRoles.has(auth.roleId) && auth.departmentId === departmentId;
@@ -658,6 +659,7 @@ const departmentLeaderRoles: Record<string, string[]> = {
   frontOffice: ["frontOfficeManager"],
   security: ["securityManager"],
   spa: ["spaManager"],
+  sales: ["salesManager"],
   fnb: ["fnbManager"]
 };
 
@@ -670,6 +672,7 @@ const managementRequestRoles = new Set([
   "frontOfficeManager",
   "securityManager",
   "spaManager",
+  "salesManager",
   "fnbManager",
   "technicalChief",
   "floorChief"
@@ -731,7 +734,7 @@ function isAllowedOperationDocumentFile(fileName: string, mimeType: string) {
 }
 
 function canCreateOperationDocument(auth: AuthContext) {
-  return auth.departmentId === "sales" || auth.departmentId === "fnb";
+  return auth.departmentId === "sales" || auth.departmentId === "fnb" || auth.roleId === "salesManager" || auth.roleId === "fnbManager";
 }
 
 function hasOperationDocumentModuleAccess(user: Prisma.UserGetPayload<{ include: typeof userInclude }>) {

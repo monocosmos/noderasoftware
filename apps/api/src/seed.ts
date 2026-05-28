@@ -31,6 +31,7 @@ const roleDepartments: Record<string, DepartmentCode | null> = {
   floorChief: "HOUSEKEEPING",
   staff: null,
   spaManager: "SPA",
+  salesManager: "SATIS" as DepartmentCode,
   fnbManager: "FNB"
 };
 
@@ -44,6 +45,7 @@ const users = [
   { username: "hk.mudur", fullName: "Derya Housekeeping", email: "derya.housekeeping@hotelops.local", role: "hkManager", department: "HOUSEKEEPING" as DepartmentCode },
   { username: "onburo", fullName: "Ece Yılmaz", email: "ece.yilmaz@hotelops.local", role: "frontOfficeManager", department: "FRONT_OFFICE" as DepartmentCode },
   { username: "guvenlik", fullName: "Kerem Aksoy", email: "kerem.aksoy@hotelops.local", role: "securityManager", department: "SECURITY" as DepartmentCode },
+  { username: "satis", fullName: "Deniz Satış", email: "deniz.satis@hotelops.local", role: "salesManager", department: "SATIS" as DepartmentCode },
   { username: "fnb", fullName: "Can Akın", email: "can.akin@hotelops.local", role: "fnbManager", department: "FNB" as DepartmentCode }
 ];
 
@@ -212,7 +214,7 @@ async function main() {
     });
     userMap.set(user.username, created.id);
 
-    if (!["generalManager", "frontOfficeManager", "securityManager", "fnbManager"].includes(user.role)) {
+    if (!["generalManager", "frontOfficeManager", "securityManager", "salesManager", "fnbManager"].includes(user.role)) {
       await prisma.staffProfile.upsert({
         where: { userId: created.id },
         update: { title: roleLabels[user.role] ?? "Personel" },

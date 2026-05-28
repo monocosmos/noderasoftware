@@ -36,6 +36,7 @@ export const roleScopes: Record<string, string[]> = {
   floorChief: ["housekeeping"],
   staff: ["technical"],
   spaManager: ["spa"],
+  salesManager: ["sales"],
   fnbManager: ["fnb"]
 };
 
@@ -50,6 +51,7 @@ export const roleLabels: Record<string, string> = {
   floorChief: "Kat Şefi",
   staff: "Personel",
   spaManager: "SPA Yöneticisi",
+  salesManager: "Satış Müdürü",
   fnbManager: "Yiyecek & İçecek Müdürü"
 };
 
@@ -85,6 +87,7 @@ export const rolePermissions: Record<string, PermissionCode[]> = {
   floorChief: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "calendar:read", "calendar:write", "reports:read", "settings:read"],
   staff: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "calendar:read", "calendar:write", "reports:read", "settings:read"],
   spaManager: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "calendar:read", "calendar:write", "reports:read", "settings:read"],
+  salesManager: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "calendar:read", "calendar:write", "reports:read", "settings:read"],
   fnbManager: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "work-orders:delete-own", "calendar:read", "calendar:write", "reports:read", "settings:read"]
 };
 

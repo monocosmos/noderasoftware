@@ -1154,6 +1154,7 @@ const departmentManagerRoleMap: Partial<Record<string, RoleId>> = {
   frontOffice: "frontOfficeManager",
   security: "securityManager",
   spa: "spaManager",
+  sales: "salesManager",
   fnb: "fnbManager"
 };
 
@@ -1766,6 +1767,7 @@ function canManageJobStatus(user: DemoUser, job: Pick<JobRecord, "departmentId">
     "frontOfficeManager",
     "securityManager",
     "spaManager",
+    "salesManager",
     "fnbManager"
   ]);
   return statusManagerRoles.has(user.roleId) && user.departmentId === job.departmentId;
@@ -3420,7 +3422,7 @@ function renderPage(context: RenderContext) {
 
 function DashboardPage({ departmentLabelFor, departmentOptions, departmentsList, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, users, visibleJobs }: RenderContext) {
   const isHotelWideRole = session.roleId === "generalManager" || session.roleId === "hrManager";
-  const isDepartmentManager = ["technicalManager", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "fnbManager"].includes(session.roleId);
+  const isDepartmentManager = ["technicalManager", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "salesManager", "fnbManager"].includes(session.roleId);
   const isChief = ["technicalChief", "floorChief"].includes(session.roleId);
   const isHousekeepingUser = isHousekeepingDepartmentUser(session);
   const focusJobs = isHotelWideRole ? visibleJobs : visibleJobs.filter((job) => job.departmentId === session.departmentId || job.assignee === session.fullName);
@@ -4224,6 +4226,10 @@ function ManagementRequestsPage({
   );
 }
 
+function canPublishOperationDocument(user: Pick<DemoUser, "departmentId" | "roleId">) {
+  return user.departmentId === "sales" || user.departmentId === "fnb" || user.roleId === "salesManager" || user.roleId === "fnbManager";
+}
+
 function OperationDocumentsPage({
   departmentLabelFor,
   handleCreateOperationDocument,
@@ -4234,7 +4240,7 @@ function OperationDocumentsPage({
   setAlert,
   setOperationDocumentDraft
 }: RenderContext) {
-  const canCreateDocument = session.departmentId === "sales" || session.departmentId === "fnb";
+  const canCreateDocument = canPublishOperationDocument(session);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const unreadDocuments = operationDocuments.filter((document) => !document.readAt);
   const totalReadCount = operationDocuments.reduce((total, document) => total + document.readBy.length, 0);
