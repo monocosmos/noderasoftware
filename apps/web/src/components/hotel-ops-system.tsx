@@ -3769,7 +3769,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   };
 
   return (
-    <div className="module-workspace">
+    <div className={`module-workspace ${module.id === "announcements" ? "module-workspace-compact" : ""}`}>
       <div className="kpi-grid ui-section-bottom-sm">
         {metricCards.map((metric) => (
           <button

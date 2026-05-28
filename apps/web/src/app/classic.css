@@ -1466,6 +1466,46 @@
   line-height: 1.15;
 }
 
+.module-workspace-compact .kpi-grid {
+  grid-template-columns: repeat(auto-fill, minmax(128px, 156px));
+  justify-content: start;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.module-workspace-compact .kpi-card {
+  width: 100%;
+  min-height: 86px;
+  padding: 9px 10px;
+  gap: 4px;
+  border-radius: 8px;
+}
+
+.module-workspace-compact .kpi-card::before {
+  height: 2px;
+}
+
+.module-workspace-compact .kpi-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.module-workspace-compact .kpi-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.module-workspace-compact .kpi-value {
+  font-size: 22px;
+  line-height: .95;
+}
+
+.module-workspace-compact .kpi-label {
+  font-size: 10px;
+  line-height: 1.15;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(280px, 380px);
