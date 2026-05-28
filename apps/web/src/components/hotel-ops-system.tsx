@@ -4248,14 +4248,14 @@ function OperationDocumentsPage({
                     }
                   }}
                 >
-                  <span className={`priority-strip ${isRead ? "low" : "urgent"}`} />
+                  <span className={`priority-strip ${isRead ? "low" : "normal"}`} />
                   <span className="job-main">
                     <span className="job-title">{document.operationDefinition}</span>
                     <span className="job-meta">
                       <span className="job-meta-item">Operasyon: {formatDateTime(document.operationDate)}</span>
                       <span className="job-meta-item">Yayınlayan: {document.createdBy.fullName}</span>
                       <span className="job-meta-item">{departmentLabelFor(document.createdBy.departmentId)}</span>
-                      <span className={`badge ${isRead ? "badge-completed" : "badge-danger"}`}>{isRead ? "Okundu" : "Okunmadı"}</span>
+                      <span className={`badge ${isRead ? "badge-completed" : "badge-normal"}`}>{isRead ? "Okundu" : "Okunmadı"}</span>
                     </span>
                     {document.description && <span className="ui-muted ui-block ui-section-sm operation-document-description">{document.description}</span>}
                     <span className="management-request-actions operation-document-actions">
@@ -4276,16 +4276,17 @@ function OperationDocumentsPage({
                       <span className="permission-preview operation-document-readstate">
                         <strong>Okuma Durumu</strong>
                         <span>{document.readBy.length} okudu, {document.unreadUsers.length} okumadı</span>
-                        {document.unreadUsers.length ? (
-                          <span className="permission-preview-tags">
-                            {document.unreadUsers.slice(0, 12).map((user) => (
-                              <span key={user.id} className="badge badge-pending">{user.fullName}</span>
-                            ))}
-                            {document.unreadUsers.length > 12 && <span className="badge badge-pending">+{document.unreadUsers.length - 12}</span>}
-                          </span>
-                        ) : (
-                          <span className="badge badge-completed">Tüm görünür kullanıcılar okudu</span>
-                        )}
+                        <span className="permission-preview-tags">
+                          {document.readBy.map((entry) => (
+                            <span key={`read-${entry.user.id}`} className="badge badge-completed">{entry.user.fullName}</span>
+                          ))}
+                          {document.unreadUsers.map((user) => (
+                            <span key={`unread-${user.id}`} className="badge badge-normal">{user.fullName}</span>
+                          ))}
+                          {!document.readBy.length && !document.unreadUsers.length && (
+                            <span className="badge badge-pending">Görünür kullanıcı yok</span>
+                          )}
+                        </span>
                       </span>
                     )}
                   </span>
