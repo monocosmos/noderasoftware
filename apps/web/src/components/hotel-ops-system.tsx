@@ -4366,60 +4366,56 @@ function OperationDocumentsPage({
           </div>
         </div>
 
-        <div className="card">
+        {canCreateDocument && <div className="card">
           <div className="card-header">
             <span className="card-title">Yeni Operasyon Belgesi</span>
           </div>
           <div className="card-body">
-            {canCreateDocument ? (
-              <form onSubmit={handleCreateOperationDocument} className="ui-form-stack">
-                <div className="form-group ui-form-compact">
-                  <label className="form-label">Operasyon Tanımı <span className="required">*</span></label>
-                  <input
-                    className="form-control"
-                    value={operationDocumentDraft.operationDefinition}
-                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDefinition: event.target.value }))}
-                    placeholder="Örn. Banket operasyon planı"
-                  />
-                </div>
-                <div className="form-group ui-form-compact">
-                  <label className="form-label">Operasyon Tarihi <span className="required">*</span></label>
-                  <input
-                    className="form-control"
-                    type="datetime-local"
-                    value={operationDocumentDraft.operationDate}
-                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDate: event.target.value }))}
-                  />
-                </div>
-                <div className="form-group ui-form-compact">
-                  <label className="form-label">Operasyon Açıklaması</label>
-                  <textarea
-                    className="form-control"
-                    rows={4}
-                    value={operationDocumentDraft.description}
-                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, description: event.target.value }))}
-                    placeholder="Operasyon notları, ekip bilgisi, kritik detaylar"
-                  />
-                </div>
-                <div className="form-group ui-form-compact">
-                  <label className="form-label">Belge <span className="required">*</span></label>
-                  <input className="form-control" type="file" accept={operationDocumentAccept} onChange={handleFileChange} />
-                  {operationDocumentDraft.document && (
-                    <div className="permission-preview">
-                      <strong>{operationDocumentDraft.document.name}</strong>
-                      <span>{fileSizeLabel(operationDocumentDraft.document.size)} / PDF, Excel veya Office belgesi</span>
-                    </div>
-                  )}
-                </div>
-                <button type="submit" className="btn btn-primary btn-full">
-                  <Plus size={15} /> Belge Yayınla
-                </button>
-              </form>
-            ) : (
-              <EmptyState title="Yayın yetkisi yok" description="Bu modülde belge yayınlama yetkisi sadece Satış ve F&B departmanındadır. Görünürlük İnsan Kaynakları tarafından yönetilir." />
-            )}
+            <form onSubmit={handleCreateOperationDocument} className="ui-form-stack">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Operasyon Tanımı <span className="required">*</span></label>
+                <input
+                  className="form-control"
+                  value={operationDocumentDraft.operationDefinition}
+                  onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDefinition: event.target.value }))}
+                  placeholder="Örn. Banket operasyon planı"
+                />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Operasyon Tarihi <span className="required">*</span></label>
+                <input
+                  className="form-control"
+                  type="datetime-local"
+                  value={operationDocumentDraft.operationDate}
+                  onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDate: event.target.value }))}
+                />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Operasyon Açıklaması</label>
+                <textarea
+                  className="form-control"
+                  rows={4}
+                  value={operationDocumentDraft.description}
+                  onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, description: event.target.value }))}
+                  placeholder="Operasyon notları, ekip bilgisi, kritik detaylar"
+                />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Belge <span className="required">*</span></label>
+                <input className="form-control" type="file" accept={operationDocumentAccept} onChange={handleFileChange} />
+                {operationDocumentDraft.document && (
+                  <div className="permission-preview">
+                    <strong>{operationDocumentDraft.document.name}</strong>
+                    <span>{fileSizeLabel(operationDocumentDraft.document.size)} / PDF, Excel veya Office belgesi</span>
+                  </div>
+                )}
+              </div>
+              <button type="submit" className="btn btn-primary btn-full">
+                <Plus size={15} /> Belge Yayınla
+              </button>
+            </form>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
