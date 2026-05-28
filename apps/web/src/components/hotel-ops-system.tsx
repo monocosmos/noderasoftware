@@ -60,6 +60,7 @@ type ModuleId =
   | "roomStatus"
   | "lostFound"
   | "guestRequests"
+  | "operationDocuments"
   | "managementRequests"
   | "trainingCertificates"
   | "minibar"
@@ -286,6 +287,39 @@ type ManagementRequestDraft = {
   body: string;
   recipientId: string;
   relatedUserId: string;
+};
+
+type OperationDocumentFile = {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+};
+
+type OperationDocumentRead = {
+  user: DemoUser;
+  readAt: string;
+};
+
+type OperationDocumentRecord = {
+  id: string;
+  operationDefinition: string;
+  operationDate: string;
+  description: string;
+  document: OperationDocumentFile;
+  createdBy: DemoUser;
+  readAt: string;
+  readBy: OperationDocumentRead[];
+  unreadUsers: DemoUser[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type OperationDocumentDraft = {
+  operationDefinition: string;
+  operationDate: string;
+  description: string;
+  document: OperationDocumentFile | null;
 };
 
 type NotificationRecord = {
@@ -702,6 +736,43 @@ async function filesToPhotos(files: FileList | null) {
   return Promise.all(selected.map(compressImage));
 }
 
+const operationDocumentAccept = ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx";
+const operationDocumentExtensions = new Set(["pdf", "xls", "xlsx", "doc", "docx", "ppt", "pptx"]);
+
+function isAllowedOperationDocumentFile(file: File) {
+  const extension = file.name.toLowerCase().split(".").pop() ?? "";
+  return operationDocumentExtensions.has(extension);
+}
+
+function fileSizeLabel(size: number) {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function fileToOperationDocument(file: File): Promise<OperationDocumentFile> {
+  return new Promise((resolve, reject) => {
+    if (!isAllowedOperationDocumentFile(file)) {
+      reject(new Error("UNSUPPORTED_DOCUMENT_TYPE"));
+      return;
+    }
+    if (file.size > 8_000_000) {
+      reject(new Error("DOCUMENT_TOO_LARGE"));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      name: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      dataUrl: String(reader.result ?? "")
+    });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 const departmentOptions: Array<{ id: DepartmentId; label: string }> = [
   { id: "executive", label: "Genel Yönetim" },
   { id: "hr", label: "İnsan Kaynakları" },
@@ -726,6 +797,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "roomStatus", label: "Oda Durum Yönetimi", group: "Yönetim" },
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
+  { id: "operationDocuments", label: "Operasyon Belgeleri", group: "Yönetim" },
   { id: "trainingCertificates", label: "Eğitim ve Sertifika", group: "Yönetim" },
   { id: "minibar", label: "Mini Bar", group: "Yönetim" },
   { id: "equipmentAssignments", label: "Zimmet / Ekipman", group: "Yönetim" },
@@ -826,6 +898,7 @@ const operationalModules: OperationalModuleConfig[] = [
 function isUnknownModulePath(path: string) {
   if (!path.startsWith("/modules/")) return false;
   if (path === "/modules/requests") return false;
+  if (path === "/modules/operation-documents") return false;
   return !operationalModules.some((module) => module.path === path);
 }
 
@@ -1386,6 +1459,11 @@ function formatDateTime(value: string) {
   }).format(date);
 }
 
+function toDateTimeInputValue(date = new Date()) {
+  const timezoneOffset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16);
+}
+
 function priorityLabel(priority: Priority) {
   const labels: Record<Priority, string> = {
     Urgent: "Acil",
@@ -1701,6 +1779,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     roomStatus: isManager || user.departmentId === "housekeeping" || ["hkManager", "floorChief", "frontOfficeManager"].includes(user.roleId),
     lostFound: isManager || ["frontOfficeManager", "securityManager", "hkManager", "floorChief"].includes(user.roleId),
     guestRequests: isManager || ["frontOfficeManager", "hkManager", "technicalManager", "fnbManager"].includes(user.roleId),
+    operationDocuments: true,
     managementRequests: true,
     trainingCertificates: isManager || user.roleId === "hrManager",
     minibar: isManager || ["frontOfficeManager", "hkManager", "floorChief", "fnbManager"].includes(user.roleId),
@@ -1802,6 +1881,15 @@ function newManagementRequestDraft(): ManagementRequestDraft {
   };
 }
 
+function newOperationDocumentDraft(): OperationDocumentDraft {
+  return {
+    operationDefinition: "",
+    operationDate: toDateTimeInputValue(),
+    description: "",
+    document: null
+  };
+}
+
 function emitWorkOrderNotification(job: Pick<JobRecord, "id" | "title" | "departmentId" | "priority">) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
@@ -1839,6 +1927,7 @@ export function HotelOpsSystem() {
   const [jobs, setJobs] = useState<JobRecord[]>(initialJobs);
   const [reminders, setReminders] = useState<ReminderRecord[]>([]);
   const [managementRequests, setManagementRequests] = useState<ManagementRequestRecord[]>([]);
+  const [operationDocuments, setOperationDocuments] = useState<OperationDocumentRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [reminderRecipients, setReminderRecipients] = useState<DemoUser[]>([]);
   const [managementRequestRecipients, setManagementRequestRecipients] = useState<DemoUser[]>([]);
@@ -1865,6 +1954,7 @@ export function HotelOpsSystem() {
   const [jobDraft, setJobDraft] = useState<JobDraft>(() => newJobDraft());
   const [reminderDraft, setReminderDraft] = useState<ReminderDraft>(() => newReminderDraft());
   const [managementRequestDraft, setManagementRequestDraft] = useState<ManagementRequestDraft>(() => newManagementRequestDraft());
+  const [operationDocumentDraft, setOperationDocumentDraft] = useState<OperationDocumentDraft>(() => newOperationDocumentDraft());
   const [checklistText, setChecklistText] = useState("");
   const [userDraft, setUserDraft] = useState<UserDraft>(() => newUserDraft());
   const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
@@ -1888,6 +1978,7 @@ export function HotelOpsSystem() {
         setJobs([]);
         setReminders([]);
         setManagementRequests([]);
+        setOperationDocuments([]);
         setNotifications([]);
         setReminderRecipients([]);
         setManagementRequestRecipients([]);
@@ -1904,6 +1995,7 @@ export function HotelOpsSystem() {
         setJobs(bootstrap.jobs);
         setReminders(bootstrap.reminders ?? []);
         setManagementRequests([]);
+        setOperationDocuments([]);
         setNotifications(bootstrap.notifications ?? []);
         setDepartmentsList(bootstrap.departments ?? []);
         setJobDraft(newJobDraft(bootstrap.user));
@@ -1914,6 +2006,7 @@ export function HotelOpsSystem() {
         setJobs([]);
         setReminders([]);
         setManagementRequests([]);
+        setOperationDocuments([]);
         setNotifications([]);
         setReminderRecipients([]);
         setManagementRequestRecipients([]);
@@ -2076,6 +2169,22 @@ export function HotelOpsSystem() {
   }, [session]);
 
   useEffect(() => {
+    if (!session || !canUseModule(session, "operationDocuments")) {
+      setOperationDocuments([]);
+      return;
+    }
+    const loadOperationDocuments = async () => {
+      try {
+        const response = await apiRequest<{ items: OperationDocumentRecord[] }>("/operation-documents");
+        setOperationDocuments(response.items);
+      } catch {
+        setOperationDocuments([]);
+      }
+    };
+    void loadOperationDocuments();
+  }, [session]);
+
+  useEffect(() => {
     if (!session) return;
     const loadDepartmentAssignees = async () => {
       try {
@@ -2121,6 +2230,13 @@ export function HotelOpsSystem() {
     } else {
       setManagementRequestRecipients([]);
       setManagementRequests([]);
+    }
+
+    if (canUseModule(bootstrap.user, "operationDocuments")) {
+      const response = await apiRequest<{ items: OperationDocumentRecord[] }>("/operation-documents");
+      setOperationDocuments(response.items);
+    } else {
+      setOperationDocuments([]);
     }
 
   }
@@ -2346,6 +2462,7 @@ export function HotelOpsSystem() {
     setSession(null);
     setReminders([]);
     setManagementRequests([]);
+    setOperationDocuments([]);
     setNotifications([]);
     setReminderRecipients([]);
     setManagementRequestRecipients([]);
@@ -2453,6 +2570,50 @@ export function HotelOpsSystem() {
       await refreshAppDataQuietly();
     } catch {
       setAlert("Talep durumu güncellenemedi. Sadece talep edilen kişi işlem yapabilir.");
+    }
+  }
+
+  async function handleCreateOperationDocumentApi(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session) return;
+    if (!operationDocumentDraft.operationDefinition.trim()) {
+      setAlert("Operasyon tanımı zorunludur.");
+      return;
+    }
+    if (!operationDocumentDraft.operationDate) {
+      setAlert("Operasyon tarihi zorunludur.");
+      return;
+    }
+    if (!operationDocumentDraft.document) {
+      setAlert("Belge dosyası zorunludur.");
+      return;
+    }
+
+    try {
+      const created = await apiRequest<OperationDocumentRecord>("/operation-documents", {
+        method: "POST",
+        body: JSON.stringify({
+          ...operationDocumentDraft,
+          operationDate: new Date(operationDocumentDraft.operationDate).toISOString()
+        })
+      });
+      setOperationDocuments((current) => [created, ...current]);
+      setOperationDocumentDraft(newOperationDocumentDraft());
+      setAlert("Operasyon belgesi yayınlandı.");
+      await refreshAppDataQuietly();
+    } catch {
+      setAlert("Operasyon belgesi oluşturulamadı. Yetkiyi, tarihi ve dosya türünü kontrol edin.");
+    }
+  }
+
+  async function markOperationDocumentReadApi(documentId: string) {
+    try {
+      const updated = await apiRequest<OperationDocumentRecord>(`/operation-documents/${documentId}/read`, { method: "PATCH" });
+      setOperationDocuments((current) => current.map((document) => (document.id === documentId ? updated : document)));
+      setAlert("Belge okundu olarak işaretlendi.");
+      await refreshAppDataQuietly();
+    } catch {
+      setAlert("Okundu bilgisi kaydedilemedi. Modül yetkinizi kontrol edin.");
     }
   }
 
@@ -2649,6 +2810,7 @@ export function HotelOpsSystem() {
             departmentLabelFor={activeDepartmentLabel}
             managementRequests={managementRequests}
             notifications={notifications}
+            operationDocuments={operationDocuments}
             visibleJobs={visibleJobs}
           />
           <div className="sidebar-footer">
@@ -2717,6 +2879,8 @@ export function HotelOpsSystem() {
               jobDraft,
               jobs,
               notifications,
+              operationDocumentDraft,
+              operationDocuments,
               managementRequestDraft,
               managementRequestRecipients,
               managementRequests,
@@ -2731,6 +2895,7 @@ export function HotelOpsSystem() {
               setFilters,
               setJobDraft,
               setManagementRequestDraft,
+              setOperationDocumentDraft,
               setJobs,
               setNotifications,
               setReminderDraft,
@@ -2742,6 +2907,8 @@ export function HotelOpsSystem() {
               refreshData: refreshAppDataQuietly,
               handleCreateJob: handleCreateJobApi,
               handleCreateManagementRequest: handleCreateManagementRequestApi,
+              handleCreateOperationDocument: handleCreateOperationDocumentApi,
+              markOperationDocumentRead: markOperationDocumentReadApi,
               updateManagementRequestStatus: updateManagementRequestStatusApi,
               handleCreateReminder: handleCreateReminderApi,
               completeReminder: completeReminderApi,
@@ -2865,6 +3032,7 @@ function SidebarNav({
   managementRequests,
   navigate,
   notifications,
+  operationDocuments,
   session,
   visibleJobs
 }: {
@@ -2873,6 +3041,7 @@ function SidebarNav({
   managementRequests: ManagementRequestRecord[];
   navigate: (path: string) => void;
   notifications: NotificationRecord[];
+  operationDocuments: OperationDocumentRecord[];
   session: DemoUser;
   visibleJobs: JobRecord[];
 }) {
@@ -2886,6 +3055,7 @@ function SidebarNav({
   const unreadCount = notifications.filter((notification) => !notification.readAt).length;
   const requestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status)).length;
   const unreadRequestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status) && !request.readAt).length;
+  const unreadDocumentCount = operationDocuments.filter((document) => !document.readAt).length;
   const today = new Date().toDateString();
   const todayPlannedJobCount = activeJobs.filter((job) => {
     if (!isPlannedJobType(job.type) || !job.due) return false;
@@ -2932,6 +3102,7 @@ function SidebarNav({
       title: "Departman",
       items: [
         entry("requests", "managementRequests", "/modules/requests", "Talepler", MessageSquareText, requestCount, "müdür şef genel müdür"),
+        entry("operation-documents", "operationDocuments", "/modules/operation-documents", "Operasyon Belgeleri", FileText, unreadDocumentCount, "satış fnb pdf excel office operasyon okundu"),
         entry("guest", "guestRequests", "/modules/guest-requests", "Misafir Talebi", MessageSquareText, undefined, "şikayet istek"),
         ...(!prioritizeRoomStatus ? [roomStatusEntry] : []),
         entry("lost", "lostFound", "/modules/lost-found", "Kayıp Eşya", Search, undefined, "eşya"),
@@ -3089,6 +3260,7 @@ function getPageTitle(path: string) {
   if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (path === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
+  if (path === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
   const operationalModule = operationalModules.find((module) => module.path === path);
   if (operationalModule) return { title: operationalModule.title, subtitle: operationalModule.subtitle };
   return { title: "Dashboard", subtitle: "Operasyon Özeti" };
@@ -3120,6 +3292,8 @@ type RenderContext = {
   managementRequestRecipients: DemoUser[];
   managementRequests: ManagementRequestRecord[];
   notifications: NotificationRecord[];
+  operationDocumentDraft: OperationDocumentDraft;
+  operationDocuments: OperationDocumentRecord[];
   queryParams: URLSearchParams;
   reminderDraft: ReminderDraft;
   reminderRecipients: DemoUser[];
@@ -3131,6 +3305,7 @@ type RenderContext = {
   setDepartmentsList: (value: DepartmentRecord[] | ((value: DepartmentRecord[]) => DepartmentRecord[])) => void;
   setJobDraft: (value: JobDraft | ((value: JobDraft) => JobDraft)) => void;
   setManagementRequestDraft: (value: ManagementRequestDraft | ((value: ManagementRequestDraft) => ManagementRequestDraft)) => void;
+  setOperationDocumentDraft: (value: OperationDocumentDraft | ((value: OperationDocumentDraft) => OperationDocumentDraft)) => void;
   setJobs: (value: JobRecord[] | ((value: JobRecord[]) => JobRecord[])) => void;
   setNotifications: (value: NotificationRecord[] | ((value: NotificationRecord[]) => NotificationRecord[])) => void;
   setReminderDraft: (value: ReminderDraft | ((value: ReminderDraft) => ReminderDraft)) => void;
@@ -3142,6 +3317,8 @@ type RenderContext = {
   refreshData: () => Promise<void>;
   handleCreateJob: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   handleCreateManagementRequest: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  handleCreateOperationDocument: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  markOperationDocumentRead: (documentId: string) => void | Promise<void>;
   updateManagementRequestStatus: (requestId: string, status: ManagementRequestStatus) => void | Promise<void>;
   handleCreateReminder: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   completeReminder: (reminderId: string) => void | Promise<void>;
@@ -3165,6 +3342,7 @@ function moduleForPath(path: string): ModuleId {
   if (path === "/reports") return "reports";
   if (path === "/settings") return "settings";
   if (path === "/modules/requests") return "managementRequests";
+  if (path === "/modules/operation-documents") return "operationDocuments";
   const operationalModule = operationalModules.find((module) => module.path === path);
   if (operationalModule) return operationalModule.id;
   return "dashboard";
@@ -3188,6 +3366,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/modules/requests") return <ManagementRequestsPage {...context} />;
+  if (currentPath === "/modules/operation-documents") return <OperationDocumentsPage {...context} />;
   const operationalModule = operationalModules.find((module) => module.path === currentPath);
   if (operationalModule) return <OperationalModulePage {...context} module={operationalModule} />;
   return <DashboardPage {...context} />;
@@ -3976,6 +4155,176 @@ function ManagementRequestsPage({
             </div>
             <button type="submit" className="btn btn-primary btn-full"><Plus size={15} /> Talep Oluştur</button>
           </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OperationDocumentsPage({
+  departmentLabelFor,
+  handleCreateOperationDocument,
+  markOperationDocumentRead,
+  operationDocumentDraft,
+  operationDocuments,
+  session,
+  setAlert,
+  setOperationDocumentDraft
+}: RenderContext) {
+  const canCreateDocument = session.departmentId === "sales" || session.departmentId === "fnb";
+  const unreadDocuments = operationDocuments.filter((document) => !document.readAt);
+  const totalReadCount = operationDocuments.reduce((total, document) => total + document.readBy.length, 0);
+  const totalUnreadUsers = operationDocuments.reduce((total, document) => total + document.unreadUsers.length, 0);
+  const latestDocument = operationDocuments[0];
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setOperationDocumentDraft((draft) => ({ ...draft, document: null }));
+      return;
+    }
+    try {
+      const document = await fileToOperationDocument(file);
+      setOperationDocumentDraft((draft) => ({ ...draft, document }));
+    } catch {
+      event.target.value = "";
+      setOperationDocumentDraft((draft) => ({ ...draft, document: null }));
+      setAlert("Sadece PDF, Excel ve Office dosyaları yüklenebilir. Dosya en fazla 8 MB olmalıdır.");
+    }
+  };
+
+  return (
+    <div className="ui-section">
+      <div className="kpi-grid">
+        <div className="kpi-card inprogress">
+          <FileText className="kpi-icon" />
+          <strong>{operationDocuments.length}</strong>
+          <span>Toplam Belge</span>
+        </div>
+        <div className="kpi-card urgent">
+          <AlertTriangle className="kpi-icon" />
+          <strong>{unreadDocuments.length}</strong>
+          <span>Okunmamış Belge</span>
+        </div>
+        <div className="kpi-card completed">
+          <CheckCircle2 className="kpi-icon" />
+          <strong>{totalReadCount}</strong>
+          <span>Okundu Kaydı</span>
+        </div>
+        <div className="kpi-card pending">
+          <Users className="kpi-icon" />
+          <strong>{canCreateDocument ? totalUnreadUsers : latestDocument ? formatDateTime(latestDocument.operationDate) : "-"}</strong>
+          <span>{canCreateDocument ? "Okumayan Kişi" : "Son Operasyon"}</span>
+        </div>
+      </div>
+
+      <div className="side-panel-grid">
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Operasyon Belge Akışı</span>
+            <span className="ui-meta">{operationDocuments.length} kayıt</span>
+          </div>
+          <div className="card-body ui-body-compact">
+            {operationDocuments.length ? operationDocuments.map((document) => {
+              const isRead = Boolean(document.readAt);
+              return (
+                <div key={document.id} className="job-card">
+                  <span className={`priority-strip ${isRead ? "low" : "urgent"}`} />
+                  <span className="job-main">
+                    <span className="job-title">{document.operationDefinition}</span>
+                    <span className="job-meta">
+                      <span className="job-meta-item">Operasyon: {formatDateTime(document.operationDate)}</span>
+                      <span className="job-meta-item">Yayınlayan: {document.createdBy.fullName}</span>
+                      <span className="job-meta-item">{departmentLabelFor(document.createdBy.departmentId)}</span>
+                      <span className={`badge ${isRead ? "badge-completed" : "badge-danger"}`}>{isRead ? "Okundu" : "Okunmadı"}</span>
+                    </span>
+                    {document.description && <span className="ui-muted ui-block ui-section-sm">{document.description}</span>}
+                    <span className="management-request-actions">
+                      <a className="btn btn-outline btn-sm" href={document.document.dataUrl} download={document.document.name}>
+                        <FileText size={14} /> {document.document.name}
+                      </a>
+                      <span className="ui-meta">{fileSizeLabel(document.document.size)}</span>
+                      {!isRead ? (
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => markOperationDocumentRead(document.id)}>
+                          <CheckCircle2 size={14} /> Okundu
+                        </button>
+                      ) : null}
+                    </span>
+                    {canCreateDocument && (
+                      <span className="permission-preview">
+                        <strong>Okuma Durumu</strong>
+                        <span>{document.readBy.length} okudu, {document.unreadUsers.length} okumadı</span>
+                        {document.unreadUsers.length ? (
+                          <span className="permission-preview-tags">
+                            {document.unreadUsers.slice(0, 12).map((user) => (
+                              <span key={user.id} className="badge badge-pending">{user.fullName}</span>
+                            ))}
+                            {document.unreadUsers.length > 12 && <span className="badge badge-pending">+{document.unreadUsers.length - 12}</span>}
+                          </span>
+                        ) : (
+                          <span className="badge badge-completed">Tüm görünür kullanıcılar okudu</span>
+                        )}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            }) : <EmptyState title="Operasyon belgesi yok" description="Satış veya F&B departmanı belge yayınladığında burada görünür." />}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Yeni Operasyon Belgesi</span>
+          </div>
+          <div className="card-body">
+            {canCreateDocument ? (
+              <form onSubmit={handleCreateOperationDocument} className="ui-form-stack">
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Operasyon Tanımı <span className="required">*</span></label>
+                  <input
+                    className="form-control"
+                    value={operationDocumentDraft.operationDefinition}
+                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDefinition: event.target.value }))}
+                    placeholder="Örn. Banket operasyon planı"
+                  />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Operasyon Tarihi <span className="required">*</span></label>
+                  <input
+                    className="form-control"
+                    type="datetime-local"
+                    value={operationDocumentDraft.operationDate}
+                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, operationDate: event.target.value }))}
+                  />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Operasyon Açıklaması</label>
+                  <textarea
+                    className="form-control"
+                    rows={4}
+                    value={operationDocumentDraft.description}
+                    onChange={(event) => setOperationDocumentDraft((draft) => ({ ...draft, description: event.target.value }))}
+                    placeholder="Operasyon notları, ekip bilgisi, kritik detaylar"
+                  />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Belge <span className="required">*</span></label>
+                  <input className="form-control" type="file" accept={operationDocumentAccept} onChange={handleFileChange} />
+                  {operationDocumentDraft.document && (
+                    <div className="permission-preview">
+                      <strong>{operationDocumentDraft.document.name}</strong>
+                      <span>{fileSizeLabel(operationDocumentDraft.document.size)} / PDF, Excel veya Office belgesi</span>
+                    </div>
+                  )}
+                </div>
+                <button type="submit" className="btn btn-primary btn-full">
+                  <Plus size={15} /> Belge Yayınla
+                </button>
+              </form>
+            ) : (
+              <EmptyState title="Yayın yetkisi yok" description="Bu modülde belge yayınlama yetkisi sadece Satış ve F&B departmanındadır. Görünürlük İnsan Kaynakları tarafından yönetilir." />
+            )}
+          </div>
         </div>
       </div>
     </div>

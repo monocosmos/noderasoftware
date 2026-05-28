@@ -16,6 +16,7 @@ const departments: Array<{ code: DepartmentCode; name: string }> = [
   { code: "FRONT_OFFICE", name: "Ön Büro" },
   { code: "SECURITY", name: "Güvenlik" },
   { code: "SPA", name: "SPA" },
+  { code: "SATIS" as DepartmentCode, name: "Satış" },
   { code: "FNB", name: "Yiyecek & İçecek" }
 ];
 

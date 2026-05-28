@@ -60,7 +60,7 @@ const io = new Server(server, {
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: corsOrigin, credentials: true }));
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "16mb" }));
 app.use(
   rateLimit({
     windowMs: 60_000,
@@ -332,6 +332,15 @@ function departmentCodeFromClientId(departmentId: string) {
   return departmentIdToCode[departmentId] ?? normalizeDepartmentCode(departmentId);
 }
 
+async function departmentForClientId(hotelId: string, departmentId: string) {
+  const code = departmentCodeFromClientId(departmentId);
+  return prisma.department.upsert({
+    where: { hotelId_code: { hotelId, code } },
+    update: { name: departmentName(departmentId), deletedAt: null },
+    create: { hotelId, code, name: departmentName(departmentId) }
+  });
+}
+
 function formatLastLogin(value: Date | null) {
   return value ? value.toISOString() : "-";
 }
@@ -513,6 +522,14 @@ const workOrderInclude = {
 
 const userInclude = { role: true, department: true } as const;
 
+const operationDocumentInclude = {
+  createdBy: { include: userInclude },
+  reads: {
+    include: { user: { include: userInclude } },
+    orderBy: { readAt: "desc" as const }
+  }
+} as const;
+
 const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1)
@@ -604,6 +621,22 @@ const managementRequestStatusSchema = z.object({
   status: z.enum(["OPEN", "PENDING", "ACCEPTED", "REJECTED"])
 });
 
+const operationDocumentFileSchema = z.object({
+  name: z.string().min(1).max(180),
+  mimeType: z.string().min(1).max(120),
+  size: z.number().int().min(1).max(8_000_000),
+  dataUrl: z.string().min(1).max(12_000_000)
+}).refine((file) => isAllowedOperationDocumentFile(file.name, file.mimeType), {
+  message: "UNSUPPORTED_DOCUMENT_TYPE"
+});
+
+const operationDocumentSchema = z.object({
+  operationDefinition: z.string().trim().min(2).max(180),
+  operationDate: z.string().datetime(),
+  description: z.string().max(4000).optional().default(""),
+  document: operationDocumentFileSchema
+});
+
 function serializeCalendarEvent(event: Prisma.CalendarEventGetPayload<{ include: { department: true } }>) {
   return {
     id: event.id,
@@ -679,6 +712,77 @@ function serializeManagementRequest(
     readBy: request.readBy ? serializeUser(request.readBy) : null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString()
+  };
+}
+
+function isAllowedOperationDocumentFile(fileName: string, mimeType: string) {
+  const extension = fileName.toLowerCase().split(".").pop() ?? "";
+  const allowedExtensions = new Set(["pdf", "xls", "xlsx", "doc", "docx", "ppt", "pptx"]);
+  const allowedMimeTypes = new Set([
+    "application/pdf",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ]);
+  return allowedExtensions.has(extension) || allowedMimeTypes.has(mimeType.toLowerCase());
+}
+
+function canCreateOperationDocument(auth: AuthContext) {
+  return auth.departmentId === "sales" || auth.departmentId === "fnb";
+}
+
+function hasOperationDocumentModuleAccess(user: Prisma.UserGetPayload<{ include: typeof userInclude }>) {
+  if (user.role.code === "generalManager") return true;
+  try {
+    const access = JSON.parse(user.moduleAccessJson || "{}") as Record<string, boolean>;
+    return access.operationDocuments !== false;
+  } catch {
+    return true;
+  }
+}
+
+async function operationDocumentAudienceUsers(hotelId: string) {
+  const users = await prisma.user.findMany({
+    where: { hotelId, deletedAt: null, isActive: true },
+    include: userInclude,
+    orderBy: [{ department: { code: "asc" } }, { fullName: "asc" }]
+  });
+  return users.filter(hasOperationDocumentModuleAccess);
+}
+
+function serializeOperationDocument(
+  document: Prisma.OperationDocumentGetPayload<{ include: typeof operationDocumentInclude }>,
+  audience: Array<Prisma.UserGetPayload<{ include: typeof userInclude }>>,
+  auth: AuthContext
+) {
+  const reads = document.reads.map((read) => ({
+    user: serializeUser(read.user),
+    readAt: read.readAt.toISOString()
+  }));
+  const readUserIds = new Set(document.reads.map((read) => read.userId));
+  const currentUserRead = document.reads.find((read) => read.userId === auth.userId);
+  const canInspectReads = canCreateOperationDocument(auth);
+
+  return {
+    id: document.id,
+    operationDefinition: document.operationDefinition,
+    operationDate: document.operationDate.toISOString(),
+    description: document.description ?? "",
+    document: {
+      name: document.fileName,
+      mimeType: document.mimeType,
+      size: document.fileSize,
+      dataUrl: document.fileDataUrl
+    },
+    createdBy: serializeUser(document.createdBy),
+    readAt: currentUserRead?.readAt.toISOString() ?? "",
+    readBy: reads,
+    unreadUsers: canInspectReads ? audience.filter((user) => !readUserIds.has(user.id)).map(serializeUser) : [],
+    createdAt: document.createdAt.toISOString(),
+    updatedAt: document.updatedAt.toISOString()
   };
 }
 
@@ -1045,9 +1149,7 @@ app.get("/department-assignees", authenticate, asyncHandler(async (req, res) => 
 app.post("/users", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
   const payload = userSchema.parse(req.body);
   const role = await prisma.role.findUniqueOrThrow({ where: { code: payload.roleId } });
-  const department = await prisma.department.findFirstOrThrow({
-    where: { hotelId: req.auth!.hotelId, code: departmentCodeFromClientId(payload.departmentId) }
-  });
+  const department = await departmentForClientId(req.auth!.hotelId, payload.departmentId);
   const temporaryPassword = payload.password || crypto.randomBytes(9).toString("base64url");
   const email = payload.email ?? generatedUserEmail(payload.username);
   const created = await prisma.user.create({
@@ -1077,9 +1179,7 @@ app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHan
   if (payload.moduleAccess) data.moduleAccessJson = JSON.stringify(payload.moduleAccess);
   if (payload.roleId) data.role = { connect: { code: payload.roleId } };
   if (payload.departmentId) {
-    const department = await prisma.department.findFirstOrThrow({
-      where: { hotelId: req.auth!.hotelId, code: departmentCodeFromClientId(payload.departmentId) }
-    });
+    const department = await departmentForClientId(req.auth!.hotelId, payload.departmentId);
     data.department = { connect: { id: department.id } };
   }
 
@@ -1693,6 +1793,107 @@ app.patch("/management-requests/:id/status", authenticate, requireModuleAccess("
   });
   await audit(req, "ManagementRequest", updated.id, "STATUS", serializeManagementRequest(existing), serializeManagementRequest(updated));
   res.json(serializeManagementRequest(updated));
+}));
+
+app.get("/operation-documents", authenticate, requireModuleAccess("operationDocuments"), asyncHandler(async (req, res) => {
+  const [documents, audience] = await Promise.all([
+    prisma.operationDocument.findMany({
+      where: { hotelId: req.auth!.hotelId, deletedAt: null },
+      include: operationDocumentInclude,
+      orderBy: [{ operationDate: "desc" }, { createdAt: "desc" }],
+      take: 100
+    }),
+    operationDocumentAudienceUsers(req.auth!.hotelId)
+  ]);
+
+  res.json({
+    canCreate: canCreateOperationDocument(req.auth!),
+    items: documents.map((document) => serializeOperationDocument(document, audience, req.auth!))
+  });
+}));
+
+app.post("/operation-documents", authenticate, requireModuleAccess("operationDocuments"), asyncHandler(async (req, res) => {
+  if (!canCreateOperationDocument(req.auth!)) {
+    res.status(403).json({ error: "OPERATION_DOCUMENT_CREATE_DENIED" });
+    return;
+  }
+
+  const payload = operationDocumentSchema.parse(req.body);
+  const audience = await operationDocumentAudienceUsers(req.auth!.hotelId);
+  const created = await prisma.operationDocument.create({
+    data: {
+      hotelId: req.auth!.hotelId,
+      createdById: req.auth!.userId,
+      operationDefinition: payload.operationDefinition,
+      operationDate: new Date(payload.operationDate),
+      description: payload.description,
+      fileName: payload.document.name,
+      mimeType: payload.document.mimeType,
+      fileSize: payload.document.size,
+      fileDataUrl: payload.document.dataUrl,
+      reads: {
+        create: { userId: req.auth!.userId }
+      }
+    },
+    include: operationDocumentInclude
+  });
+
+  const notificationUsers = audience.filter((user) => user.id !== req.auth!.userId);
+  if (notificationUsers.length) {
+    await prisma.notification.createMany({
+      data: notificationUsers.map((user) => ({
+        userId: user.id,
+        title: "Yeni operasyon belgesi",
+        body: `${created.operationDefinition} - ${created.createdBy.fullName}`
+      }))
+    });
+  }
+
+  const serialized = serializeOperationDocument(created, audience, req.auth!);
+  const departmentRooms = new Set(notificationUsers.map((user) => clientDepartmentIdFromCode(user.department.code)));
+  for (const departmentId of departmentRooms) {
+    io.to(`department:${departmentId}`).emit("operation-document.created", serialized);
+  }
+
+  await audit(req, "OperationDocument", created.id, "CREATE", null, serialized);
+  res.status(201).json(serialized);
+}));
+
+app.patch("/operation-documents/:id/read", authenticate, requireModuleAccess("operationDocuments"), asyncHandler(async (req, res) => {
+  const existing = await prisma.operationDocument.findUniqueOrThrow({
+    where: { id: routeParam(req, "id") },
+    include: operationDocumentInclude
+  });
+  if (existing.hotelId !== req.auth!.hotelId || existing.deletedAt) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+
+  const audience = await operationDocumentAudienceUsers(req.auth!.hotelId);
+  if (!audience.some((user) => user.id === req.auth!.userId)) {
+    res.status(403).json({ error: "OPERATION_DOCUMENT_READ_DENIED" });
+    return;
+  }
+
+  await prisma.operationDocumentRead.upsert({
+    where: { documentId_userId: { documentId: existing.id, userId: req.auth!.userId } },
+    update: { readAt: new Date() },
+    create: { documentId: existing.id, userId: req.auth!.userId }
+  });
+  const updated = await prisma.operationDocument.findUniqueOrThrow({
+    where: { id: existing.id },
+    include: operationDocumentInclude
+  });
+
+  await audit(
+    req,
+    "OperationDocument",
+    updated.id,
+    "READ",
+    serializeOperationDocument(existing, audience, req.auth!),
+    serializeOperationDocument(updated, audience, req.auth!)
+  );
+  res.json(serializeOperationDocument(updated, audience, req.auth!));
 }));
 
 app.get("/reminders", authenticate, requireModuleAccess("reminders"), asyncHandler(async (req, res) => {
