@@ -223,6 +223,27 @@ npm run desktop:test-window-controls
 - `HotelOps arka planda calismaya devam ediyor` bildirimi istenmiyor.
 - Sadece gercek HotelOps is/operasyon bildirimleri Windows bildirimi olarak gelmeli.
 
+### 4.1 Android arka plan bildirimleri
+
+Android bildirimi kritik operasyon hattidir. Uygulama acikken web/socket bildirimi
+gelmesi yeterli degildir. Kullanici Android uygulamada hesaba giris yaptiktan sonra
+uygulamadan ciksa bile ilgili hesaba FCM push bildirimi dusmelidir.
+
+Bu hatti bozmamak icin su dokuman once okunmalidir:
+
+```text
+docs/ANDROID_PUSH_GUARDRAILS.md
+```
+
+API, Android, Firebase, notification, login token veya Raspberry Pi deploy
+akisi degistiginde zorunlu kontrol:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\workstation\test-android-push-pipeline.ps1" -Password "<demo-test-password>"
+```
+
+Bu test gecmeden bildirim sistemi tamamlanmis sayilmaz.
+
 ### 5. Raspberry Pi deploy
 
 Temiz veya yeni laptopta once bagimlilik ve build hazirlanir:
