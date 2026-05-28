@@ -3596,7 +3596,7 @@ function DashboardPage({ departmentLabelFor, departmentOptions, managementReques
           </div>
           <div className="card-body ui-body-compact">
             {users.slice(0, 6).map((user) => (
-              <button key={user.id} type="button" className="job-card" onClick={() => navigate("/users")}>
+              <button key={user.id} type="button" className="job-card personnel-dashboard-card" onClick={() => navigate("/users")}>
                 <span className={`priority-strip ${user.active ? "low" : "normal"}`} />
                 <span className="job-main">
                   <span className="job-title">{user.fullName}</span>

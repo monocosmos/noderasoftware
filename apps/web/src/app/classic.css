@@ -1856,7 +1856,7 @@ textarea.form-control {
 
 .department-accordion {
   border: 1px solid var(--classic-border);
-  border-radius: var(--classic-radius-lg);
+  border-radius: var(--classic-radius);
   background: var(--classic-white);
   overflow: hidden;
 }
@@ -1865,14 +1865,15 @@ textarea.form-control {
   width: 100%;
   border: 0;
   background: var(--classic-white);
-  padding: 14px 16px;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   cursor: pointer;
   text-align: left;
   color: var(--classic-text);
+  min-height: 44px;
 }
 
 .department-accordion-header:hover {
@@ -1881,13 +1882,13 @@ textarea.form-control {
 
 .department-accordion-header span {
   display: grid;
-  gap: 3px;
+  gap: 1px;
 }
 
 .department-accordion-header small,
 .employee-main span {
   color: var(--classic-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .accordion-chevron {
@@ -1901,8 +1902,8 @@ textarea.form-control {
 
 .department-employee-list {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
   border-top: 1px solid var(--classic-border);
   background: var(--classic-bg);
 }
@@ -1910,18 +1911,66 @@ textarea.form-control {
 .employee-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 12px;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid var(--classic-border);
-  border-radius: var(--classic-radius);
+  border-radius: 8px;
   background: var(--classic-white);
+}
+
+.employee-card .avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+}
+
+.employee-card .badge {
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.employee-card .td-actions {
+  gap: 6px;
+}
+
+.employee-card .btn-sm {
+  min-height: 28px;
+  padding: 5px 8px;
+  font-size: 11px;
 }
 
 .employee-main {
   display: grid;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
+}
+
+.employee-main strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.personnel-dashboard-card {
+  min-height: 52px;
+  padding: 9px 12px;
+  gap: 9px;
+  border-radius: var(--classic-radius);
+}
+
+.personnel-dashboard-card .job-title {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.personnel-dashboard-card .job-meta {
+  gap: 6px;
+}
+
+.personnel-dashboard-card .badge {
+  padding: 2px 7px;
+  font-size: 10px;
 }
 
 .list-toolbar {
