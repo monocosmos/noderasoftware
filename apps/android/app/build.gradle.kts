@@ -21,7 +21,7 @@ android {
         // versionName kullaniciya gorunen sade surumdur. versionCode Android'in
         // yukleme siralamasi icin monoton kalir; gizli urun build'i Kotlin
         // tarafinda HotelOpsAppVersion.BUILD ile tutulur.
-        versionCode = 2026052801
+        versionCode = 2026052802
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

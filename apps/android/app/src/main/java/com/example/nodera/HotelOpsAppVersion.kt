@@ -5,6 +5,6 @@ package com.example.nodera
 // monoton teknik guncelleme kodudur; Android paket versionCode geriye dusurulemez.
 object HotelOpsAppVersion {
     const val NAME = "1.0.0"
-    const val BUILD = 1
-    const val UPDATE_CODE = 2026052801
+    const val BUILD = 2
+    const val UPDATE_CODE = 2026052802
 }

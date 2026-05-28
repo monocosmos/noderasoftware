@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-05-28T00:00:00+03:00",
+  "updatedAt": "2026-05-28T13:10:00+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
@@ -13,8 +13,8 @@
     },
     "android": {
       "latestVersion": "1.0.0",
-      "latestCode": 2026052801,
-      "minimumCode": 2026052801,
+      "latestCode": 2026052802,
+      "minimumCode": 2026052802,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android uygulamasi guncel degil",
       "message": "HotelOps Android uygulamasinin yeni surumu hazir."

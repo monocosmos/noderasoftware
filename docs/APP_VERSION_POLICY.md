@@ -28,4 +28,4 @@ Current baseline:
 - Windows visible version: `1.0.0`
 - Windows hidden build code: `2`
 - Android visible version: `1.0.0`
-- Android hidden update code: `2026052801`
+- Android hidden update code: `2026052802`

@@ -30,16 +30,20 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.graphics.Insets
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var root: FrameLayout
+    private var systemBarInsets: Insets = Insets.NONE
 
     private val siteUrl = "https://noderasoftware.com/hotel/"
     private val notificationPermissionRequest = 4101
@@ -52,6 +56,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
         // Uygulama acilir acilmaz bildirim kanallari ve FCM kaydi hazirlanir.
         // Kullanici daha once login olduysa native prefs'teki token sync tarafinda kullanilir.
         requestNotificationPermissionIfNeeded()
@@ -68,12 +73,54 @@ class MainActivity : ComponentActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
+            systemBarInsets = bars
+            applySystemBarMargins()
+            WindowInsetsCompat.CONSUMED
         }
 
         setContentView(root)
+        ViewCompat.requestApplyInsets(root)
         showSplashThenLoadWebView()
+    }
+
+    private fun configureSystemBars() {
+        // Android 15+ edge-to-edge davranisinda WebView sistem barlarinin altina
+        // girebilir. Decor'u manuel yonetip WebView'e guvenli alan margin'i
+        // verdigimiz icin status ve navigation bar icerigi kapatmaz.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+    }
+
+    private fun applySystemBarMargins() {
+        if (!::webView.isInitialized) return
+
+        val params = webView.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (
+            params.leftMargin == systemBarInsets.left &&
+            params.topMargin == systemBarInsets.top &&
+            params.rightMargin == systemBarInsets.right &&
+            params.bottomMargin == systemBarInsets.bottom
+        ) {
+            return
+        }
+
+        params.setMargins(
+            systemBarInsets.left,
+            systemBarInsets.top,
+            systemBarInsets.right,
+            systemBarInsets.bottom
+        )
+        webView.layoutParams = params
     }
 
     private fun showSplashThenLoadWebView() {
@@ -251,8 +298,10 @@ class MainActivity : ComponentActivity() {
             addJavascriptInterface(HotelOpsAndroidBridge(applicationContext), "HotelOpsAndroidShell")
         }
 
-        root.setBackgroundColor(Color.WHITE)
+        root.setBackgroundColor(Color.rgb(5, 10, 25))
         root.addView(webView)
+        applySystemBarMargins()
+        ViewCompat.requestApplyInsets(root)
 
         onBackPressedDispatcher.addCallback(
             this,
