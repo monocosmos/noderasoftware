@@ -1,20 +1,20 @@
 {
   "schema": 1,
-  "updatedAt": "2026-05-28T13:10:00+03:00",
+  "updatedAt": "2026-05-29T00:45:00+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
       "latestVersion": "1.0.0",
-      "latestCode": 2,
-      "minimumCode": 2,
+      "latestCode": 3,
+      "minimumCode": 3,
       "downloadUrl": "/downloads/HotelOps-Setup-V1-x64.exe",
       "title": "Windows uygulamasi guncel degil",
       "message": "HotelOps Windows uygulamasinin yeni surumu hazir."
     },
     "android": {
       "latestVersion": "1.0.0",
-      "latestCode": 2026052802,
-      "minimumCode": 2026052802,
+      "latestCode": 2026052803,
+      "minimumCode": 2026052803,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android uygulamasi guncel degil",
       "message": "HotelOps Android uygulamasinin yeni surumu hazir."

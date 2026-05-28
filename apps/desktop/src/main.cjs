@@ -5,7 +5,7 @@ const packageMetadata = require("../package.json");
 
 const HOTEL_URL = process.env.HOTELOPS_URL || "https://noderasoftware.com/hotel/";
 const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
-const DESKTOP_APP_BUILD = 2;
+const DESKTOP_APP_BUILD = 3;
 const ALLOWED_HOSTS = new Set(["noderasoftware.com", "www.noderasoftware.com"]);
 const PRELOAD_PATH = path.join(__dirname, "preload.cjs");
 const OFFLINE_PATH = path.join(__dirname, "offline.html");
