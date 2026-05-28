@@ -92,12 +92,55 @@ type HotelOpsAndroidBridge = {
   app?: () => string;
   runtime?: () => string;
   version?: () => string;
+  versionCode?: () => number;
+  notifyAppUpdate?: (title?: string, body?: string) => void;
+  openDownloadUrl?: (url?: string) => boolean;
+};
+
+type HotelOpsDesktopBridge = {
+  version?: () => string;
+  versionCode?: () => number;
+  notify?: (payload: { title: string; body: string; tag?: string; path?: string }) => Promise<boolean>;
+  openDownloadUrl?: (url?: string) => Promise<boolean>;
 };
 
 type HotelOpsShellWindow = Window & {
   __HOTELOPS_SHELL__?: ShellRuntime;
   HotelOpsAndroidShell?: HotelOpsAndroidBridge;
-  hotelOpsDesktopShell?: unknown;
+  hotelOpsDesktopShell?: HotelOpsDesktopBridge;
+};
+
+type AppVersionPlatformManifest = {
+  latestVersion: string;
+  latestCode: number;
+  minimumCode?: number;
+  downloadUrl: string;
+  title: string;
+  message: string;
+};
+
+type AppVersionManifest = {
+  schema: number;
+  updatedAt: string;
+  checkIntervalMs?: number;
+  platforms: Partial<Record<"desktop" | "android", AppVersionPlatformManifest>>;
+};
+
+type ShellAppInfo = {
+  runtime: Extract<ShellRuntime, "desktop" | "android">;
+  label: string;
+  version: string;
+  versionCode: number;
+};
+
+type AppUpdateNotice = {
+  runtime: ShellAppInfo["runtime"];
+  label: string;
+  currentVersion: string;
+  latestVersion: string;
+  downloadUrl: string;
+  title: string;
+  message: string;
 };
 
 type DemoUser = {
@@ -352,6 +395,46 @@ function detectShellRuntime(): ShellRuntime {
   if (shellWindow.hotelOpsDesktopShell) return "desktop";
 
   return "web";
+}
+
+function readShellAppInfo(): ShellAppInfo | null {
+  if (typeof window === "undefined") return null;
+
+  const runtime = detectShellRuntime();
+  const shellWindow = window as HotelOpsShellWindow;
+
+  if (runtime === "desktop") {
+    const version = shellWindow.hotelOpsDesktopShell?.version?.() || "1.0.0";
+    const versionCode = Number(shellWindow.hotelOpsDesktopShell?.versionCode?.() || 0);
+    return { runtime, label: "Windows", version, versionCode };
+  }
+
+  if (runtime === "android") {
+    const version = shellWindow.HotelOpsAndroidShell?.version?.() || "1.0.0";
+    const versionCode = Number(shellWindow.HotelOpsAndroidShell?.versionCode?.() || 0);
+    return { runtime, label: "Android", version, versionCode };
+  }
+
+  return null;
+}
+
+function appVersionPlatform(runtime: ShellAppInfo["runtime"]) {
+  return runtime === "desktop" ? "desktop" : "android";
+}
+
+function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformManifest): AppUpdateNotice | null {
+  if (!Number.isFinite(info.versionCode) || !Number.isFinite(platform.latestCode)) return null;
+  if (info.versionCode >= platform.latestCode) return null;
+
+  return {
+    runtime: info.runtime,
+    label: info.label,
+    currentVersion: info.version,
+    latestVersion: platform.latestVersion,
+    downloadUrl: platform.downloadUrl,
+    title: platform.title,
+    message: platform.message
+  };
 }
 
 function useAppDownloadsVisibility() {
@@ -956,14 +1039,7 @@ function BrandLogo() {
 }
 
 function NoderaBrandFooter() {
-  return (
-    <div className="nodera-brand-footer">
-      <span className="nodera-brand-mark"><BrandLogo /></span>
-      <span className="nodera-brand-copy">
-        <a href="https://www.noderasoftware.com" target="_blank" rel="noreferrer">www.noderasoftware.com</a>
-      </span>
-    </div>
-  );
+  return null;
 }
 
 function AndroidLogo() {
@@ -1079,14 +1155,14 @@ const appDownloadGroups = [
     icon: WindowsLogo,
     items: [
       {
-        href: "/downloads/Nodera-Sistem-Setup-V1-x64.exe",
+        href: "/downloads/HotelOps-Setup-V1-x64.exe",
         icon: WindowsLogo,
         label: "Windows 64bit",
         meta: "Kurulum",
         download: true
       },
       {
-        href: "/downloads/Nodera-Sistem-Portable-V1-x64.exe",
+        href: "/downloads/HotelOps-Portable-V1-x64.exe",
         icon: WindowsLogo,
         label: "Portable 64bit",
         meta: "Kurulumsuz",
@@ -1106,7 +1182,7 @@ const appDownloadGroups = [
     icon: AndroidLogo,
     items: [
       {
-        href: "/downloads/Nodera-Sistem-Android-V1.apk",
+        href: "/downloads/HotelOps-Android-V1.apk",
         icon: AndroidLogo,
         label: "Android APK",
         meta: "Mobil",
@@ -1211,6 +1287,23 @@ function AppDownloadCards({ className = "app-download-grid" }: { className?: str
         );
       })}
       </div>
+    </div>
+  );
+}
+
+function AppUpdateCard({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate: (notice: AppUpdateNotice) => void }) {
+  return (
+    <div className="app-update-card" role="status">
+      <div className="app-update-icon">
+        <AlertTriangle size={23} />
+      </div>
+      <div className="app-update-copy">
+        <strong>{notice.title}</strong>
+        <span>{notice.message || `${notice.label} uygulaması için yeni güncelleme hazır.`}</span>
+      </div>
+      <button type="button" className="btn btn-danger app-update-btn" onClick={() => onUpdate(notice)}>
+        Güncelle
+      </button>
     </div>
   );
 }
@@ -1708,6 +1801,9 @@ export function HotelOpsSystem() {
   const [managementRequestDraft, setManagementRequestDraft] = useState<ManagementRequestDraft>(() => newManagementRequestDraft());
   const [checklistText, setChecklistText] = useState("");
   const [userDraft, setUserDraft] = useState<UserDraft>(() => newUserDraft());
+  const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
+  const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
+  const appUpdateNotifiedRef = useRef("");
 
   useEffect(() => {
     const syncPath = () => setPath(normalizeHotelPath(`${window.location.pathname}${window.location.search}`));
@@ -1767,6 +1863,58 @@ export function HotelOpsSystem() {
       window.removeEventListener("popstate", syncPath);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const info = readShellAppInfo();
+
+    setShellAppInfo(info);
+
+    if (!info) {
+      setAppUpdateNotice(null);
+      return;
+    }
+
+    const notifyNativeShell = (notice: AppUpdateNotice) => {
+      const key = `${notice.runtime}-${info.versionCode}-${notice.latestVersion}`;
+      if (appUpdateNotifiedRef.current === key) return;
+      appUpdateNotifiedRef.current = key;
+
+      const title = notice.title;
+      const body = notice.message || `${notice.label} uygulaması için yeni güncelleme hazır.`;
+      const shellWindow = window as HotelOpsShellWindow;
+
+      if (notice.runtime === "desktop") {
+        shellWindow.hotelOpsDesktopShell?.notify?.({ title, body, tag: `app-update-${info.versionCode}` })?.catch?.(() => {});
+      } else {
+        shellWindow.HotelOpsAndroidShell?.notifyAppUpdate?.(title, body);
+      }
+    };
+
+    const checkAppVersion = async () => {
+      try {
+        const response = await fetch(`/app-version.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const manifest = (await response.json()) as AppVersionManifest;
+        const platform = manifest.platforms[appVersionPlatform(info.runtime)];
+        const notice = platform ? buildAppUpdateNotice(info, platform) : null;
+
+        if (cancelled) return;
+        setAppUpdateNotice(notice);
+        if (notice) notifyNativeShell(notice);
+      } catch {
+        if (!cancelled) setAppUpdateNotice(null);
+      }
+    };
+
+    void checkAppVersion();
+    const intervalId = window.setInterval(checkAppVersion, 30 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -2325,6 +2473,21 @@ export function HotelOpsSystem() {
     }
   }
 
+  function openAppUpdateDownload(notice: AppUpdateNotice) {
+    const shellWindow = window as HotelOpsShellWindow;
+
+    if (notice.runtime === "android" && shellWindow.HotelOpsAndroidShell?.openDownloadUrl?.(notice.downloadUrl)) {
+      return;
+    }
+
+    if (notice.runtime === "desktop") {
+      shellWindow.hotelOpsDesktopShell?.openDownloadUrl?.(notice.downloadUrl)?.catch?.(() => {});
+      return;
+    }
+
+    window.location.assign(notice.downloadUrl);
+  }
+
   if (!hydrated) {
     return (
       <div className="classic-app login-page">
@@ -2342,9 +2505,11 @@ export function HotelOpsSystem() {
   if (!session) {
     return (
       <LoginScreen
+        appUpdateNotice={appUpdateNotice}
         error={loginError}
         loginPassword={loginPassword}
         loginUsername={loginUsername}
+        onAppUpdate={openAppUpdateDownload}
         remember={remember}
         setLoginPassword={setLoginPassword}
         setLoginUsername={setLoginUsername}
@@ -2390,6 +2555,16 @@ export function HotelOpsSystem() {
               </div>
               <ChevronRight size={14} color="rgba(255,255,255,.45)" />
             </button>
+            {shellAppInfo ? (
+              <button
+                type="button"
+                className={`sidebar-app-version ${appUpdateNotice ? "outdated" : ""}`}
+                onClick={() => appUpdateNotice && openAppUpdateDownload(appUpdateNotice)}
+                disabled={!appUpdateNotice}
+              >
+                {shellAppInfo.label} {shellAppInfo.version}
+              </button>
+            ) : null}
           </div>
         </aside>
 
@@ -2489,18 +2664,22 @@ export function HotelOpsSystem() {
 }
 
 function LoginScreen({
+  appUpdateNotice,
   error,
   loginPassword,
   loginUsername,
+  onAppUpdate,
   remember,
   setLoginPassword,
   setLoginUsername,
   setRemember,
   onLogin
 }: {
+  appUpdateNotice: AppUpdateNotice | null;
   error: string;
   loginPassword: string;
   loginUsername: string;
+  onAppUpdate: (notice: AppUpdateNotice) => void;
   remember: boolean;
   setLoginPassword: (value: string) => void;
   setLoginUsername: (value: string) => void;
@@ -2557,6 +2736,8 @@ function LoginScreen({
             Giriş Yap
           </button>
         </form>
+
+        {appUpdateNotice ? <AppUpdateCard notice={appUpdateNotice} onUpdate={onAppUpdate} /> : null}
 
         {showAppDownloads ? (
           <div id="app-downloads" className="app-downloads" data-visible-on="desktop-web">

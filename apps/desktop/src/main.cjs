@@ -4,7 +4,7 @@ const path = require("node:path");
 const packageMetadata = require("../package.json");
 
 const HOTEL_URL = process.env.HOTELOPS_URL || "https://noderasoftware.com/hotel/";
-const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.2";
+const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
 const ALLOWED_HOSTS = new Set(["noderasoftware.com", "www.noderasoftware.com"]);
 const PRELOAD_PATH = path.join(__dirname, "preload.cjs");
 const OFFLINE_PATH = path.join(__dirname, "offline.html");
@@ -12,6 +12,7 @@ const DESKTOP_SHELL_CSS = fs.readFileSync(path.join(__dirname, "desktop-inject.c
 const DESKTOP_SHELL_JS = fs.readFileSync(path.join(__dirname, "desktop-inject.js"), "utf8");
 const DESKTOP_BRAND_LOGO_DATA_URL = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, "brand-logo.png")).toString("base64")}`;
 const DESKTOP_BRAND_LOGO_PATH = path.join(__dirname, "brand-logo.png");
+const DESKTOP_WINDOW_ICON_PATH = path.join(__dirname, "brand-logo.png");
 const DESKTOP_TRAY_ICON_PATH = path.join(__dirname, "tray-icon.png");
 const DESKTOP_PLATFORM = process.platform;
 const IS_MAC = DESKTOP_PLATFORM === "darwin";
@@ -202,6 +203,24 @@ function isAllowedUrl(value) {
   } catch {
     return false;
   }
+}
+
+function resolveTrustedDownloadUrl(value) {
+  try {
+    const url = new URL(value || "", HOTEL_URL);
+    if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname)) return "";
+    if (!url.pathname.startsWith("/downloads/")) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function openTrustedDownloadUrl(value) {
+  const downloadUrl = resolveTrustedDownloadUrl(value);
+  if (!downloadUrl) return false;
+  shell.openExternal(downloadUrl);
+  return true;
 }
 
 function resolveDefaultApiBaseUrl() {
@@ -673,6 +692,7 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: "#f3f6fb",
     hasShadow: true,
+    icon: DESKTOP_WINDOW_ICON_PATH,
     webPreferences: {
       preload: PRELOAD_PATH,
       contextIsolation: true,
@@ -817,6 +837,7 @@ if (!gotSingleInstanceLock) {
 
 ipcMain.handle("hotelops-window-control", handleWindowControl);
 ipcMain.handle("hotelops-desktop-notify", (_event, payload) => showDesktopNotification(payload));
+ipcMain.handle("hotelops-desktop-open-download-url", (_event, url) => openTrustedDownloadUrl(url));
 ipcMain.handle("hotelops-desktop-set-auth-token", (_event, payload) => setDesktopAuthToken(payload));
 ipcMain.handle("hotelops-desktop-clear-auth-token", () => clearDesktopAuthToken());
 ipcMain.on("hotelops-window-control-child", (_event, action) => {

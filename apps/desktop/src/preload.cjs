@@ -2,8 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 const packageMetadata = require("../package.json");
 
 const validActions = new Set(["minimize", "maximize", "fullscreen", "close"]);
-const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.3";
-const appVersionCode = 2026052802;
+const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
+const appVersionCode = 1;
 
 contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
   version() {
@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
       tag: typeof payload?.tag === "string" ? payload.tag : "",
       path: typeof payload?.path === "string" ? payload.path : ""
     });
+  },
+  openDownloadUrl(url) {
+    return ipcRenderer.invoke("hotelops-desktop-open-download-url", typeof url === "string" ? url : "");
   },
   setAuthToken(payload) {
     return ipcRenderer.invoke("hotelops-desktop-set-auth-token", {

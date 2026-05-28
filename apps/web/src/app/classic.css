@@ -493,6 +493,50 @@
   align-items: center;
 }
 
+.app-update-card {
+  margin-top: 18px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 46px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(239, 68, 68, .28);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff7f7 0%, #fffafa 100%);
+  color: #7f1d1d;
+}
+
+.app-update-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(239, 68, 68, .10);
+  color: var(--classic-urgent);
+}
+
+.app-update-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.app-update-copy strong {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.app-update-copy span {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #991b1b;
+}
+
+.app-update-btn {
+  white-space: nowrap;
+}
+
 .app-downloads {
   margin-top: 18px;
   padding-top: 18px;
@@ -1053,6 +1097,30 @@
 
 .sidebar-user:hover {
   background: rgba(255,255,255,.08);
+}
+
+.sidebar-app-version {
+  width: 100%;
+  margin-top: 10px;
+  min-height: 28px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: var(--classic-radius);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.72);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+.sidebar-app-version:not(:disabled):hover {
+  background: rgba(255,255,255,.08);
+}
+
+.sidebar-app-version.outdated {
+  border-color: rgba(239,68,68,.45);
+  background: rgba(239,68,68,.14);
+  color: #fecaca;
 }
 
 .avatar {
@@ -3823,4 +3891,7 @@ textarea.form-control {
   .download-card { min-height: 68px; padding: 7px 5px; }
   .download-card strong { font-size: 10px; }
   .download-card span:last-child { font-size: 9px; }
+  .app-update-card { grid-template-columns: 42px 1fr; }
+  .app-update-icon { width: 42px; height: 42px; }
+  .app-update-btn { grid-column: 1 / -1; width: 100%; }
 }
