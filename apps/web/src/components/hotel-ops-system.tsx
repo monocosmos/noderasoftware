@@ -3324,7 +3324,7 @@ function DashboardPage({ departmentLabelFor, departmentOptions, managementReques
             {canCreateJob(session) ? (
               <>
                 {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate(isTechnicalDepartmentUser(session) ? "/jobs/new?type=Job&departmentId=housekeeping" : "/jobs/new")}>{newJobActionLabelForUser(session)}</button>}
-                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Fault&departmentId=technical" : "/jobs/new?type=Fault")}>{isHousekeepingUser ? "Tekniğe Acil Arıza Aç" : "Acil Arıza Bildir"}</button>}
+                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Fault&departmentId=technical" : "/jobs/new?type=Fault")}>{isHousekeepingUser ? "Tekniğe Arıza Aç" : "Acil Arıza Bildir"}</button>}
                 {session.departmentId === "technical" && canUseModule(session, "periodicMaintenance") && <button className="btn btn-warning btn-full" onClick={() => navigate("/jobs/new?type=PlannedMaintenance")}>Planlı Bakım Ekle</button>}
                 {session.departmentId === "housekeeping" && canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?type=PlannedHousekeeping")}>HK Planlı İş Ekle</button>}
               </>
