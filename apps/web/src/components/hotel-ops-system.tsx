@@ -1138,6 +1138,52 @@ function roleLabel(roleId: RoleId) {
   return getRole(roleId).labelTR;
 }
 
+type PersonnelRoleLevel = "manager" | "chief" | "staff";
+
+const personnelRoleLevelOptions: Array<{ id: PersonnelRoleLevel; label: string }> = [
+  { id: "manager", label: "M\u00fcd\u00fcr" },
+  { id: "chief", label: "\u015eef" },
+  { id: "staff", label: "Personel" }
+];
+
+const departmentManagerRoleMap: Partial<Record<string, RoleId>> = {
+  executive: "generalManager",
+  hr: "hrManager",
+  technical: "technicalManager",
+  housekeeping: "hkManager",
+  frontOffice: "frontOfficeManager",
+  security: "securityManager",
+  spa: "spaManager",
+  fnb: "fnbManager"
+};
+
+const departmentChiefRoleMap: Partial<Record<string, RoleId>> = {
+  technical: "technicalChief",
+  housekeeping: "floorChief"
+};
+
+function roleLevelForRole(roleId: RoleId): PersonnelRoleLevel {
+  if (roleId === "technicalChief" || roleId === "floorChief") return "chief";
+  if (roleId === "staff") return "staff";
+  return "manager";
+}
+
+function roleIdForPersonnelLevel(level: PersonnelRoleLevel, departmentId: string): RoleId {
+  if (level === "staff") return "staff";
+  if (level === "chief") return departmentChiefRoleMap[departmentId] ?? "staff";
+  return departmentManagerRoleMap[departmentId] ?? "staff";
+}
+
+function personnelRoleOptionsForDepartment(departmentId: string) {
+  const hasManager = Boolean(departmentManagerRoleMap[departmentId]);
+  const hasChief = Boolean(departmentChiefRoleMap[departmentId]);
+  return personnelRoleLevelOptions.filter((option) => {
+    if (option.id === "manager") return hasManager;
+    if (option.id === "chief") return hasChief;
+    return true;
+  });
+}
+
 function departmentLabel(departmentId: string) {
   return departments[departmentId as DepartmentId]?.labelTR ?? departmentId.replace(/-/g, " ").replace(/\b\w/g, (letter) => letter.toLocaleUpperCase("tr-TR"));
 }
@@ -5405,6 +5451,11 @@ function UsersPage({
       users: visibleUsers.filter((user) => user.departmentId === department.id)
     }))
     .filter((department) => department.users.length > 0);
+  const availablePersonnelRoleOptions = personnelRoleOptionsForDepartment(userDraft.departmentId);
+  const currentPersonnelRoleLevel = roleLevelForRole(userDraft.roleId);
+  const selectedPersonnelRoleLevel = availablePersonnelRoleOptions.some((option) => option.id === currentPersonnelRoleLevel)
+    ? currentPersonnelRoleLevel
+    : "staff";
   const startNewUserRecord = () => {
     setUserDraft(newUserDraft());
     userFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -5535,24 +5586,13 @@ function UsersPage({
             </div>
             <div className="form-group">
               <label className="form-label">Rol <span className="required">*</span></label>
-              <select className="form-control" value={userDraft.roleId} onChange={(event) => {
-                const roleId = event.target.value as RoleId;
+              <select className="form-control" value={selectedPersonnelRoleLevel} onChange={(event) => {
+                const roleLevel = event.target.value as PersonnelRoleLevel;
+                const roleId = roleIdForPersonnelLevel(roleLevel, userDraft.departmentId);
                 setUserDraft((draft) => ({ ...draft, roleId, moduleAccess: defaultModuleAccess({ roleId, departmentId: draft.departmentId }) }));
               }}>
-                {[
-                  "generalManager",
-                  "hrManager",
-                  "technicalManager",
-                  "hkManager",
-                  "frontOfficeManager",
-                  "securityManager",
-                  "technicalChief",
-                  "floorChief",
-                  "staff",
-                  "spaManager",
-                  "fnbManager"
-                ].map((roleId) => (
-                  <option key={roleId} value={roleId}>{roleLabel(roleId as RoleId)}</option>
+                {availablePersonnelRoleOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
                 ))}
               </select>
             </div>
@@ -5560,7 +5600,11 @@ function UsersPage({
               <label className="form-label">Departman</label>
               <select className="form-control" value={userDraft.departmentId} onChange={(event) => {
                 const departmentId = event.target.value;
-                setUserDraft((draft) => ({ ...draft, departmentId, moduleAccess: defaultModuleAccess({ roleId: draft.roleId, departmentId }) }));
+                setUserDraft((draft) => {
+                  const roleLevel = roleLevelForRole(draft.roleId);
+                  const roleId = roleIdForPersonnelLevel(roleLevel, departmentId);
+                  return { ...draft, departmentId, roleId, moduleAccess: defaultModuleAccess({ roleId, departmentId }) };
+                });
               }}>
                 {departmentOptions.map((department) => (
                   <option key={department.id} value={department.id}>{department.label}</option>
