@@ -9,6 +9,13 @@ Android bildirimi operasyon sisteminde kritik hattir. Uygulama acikken gelen web
 - Native taraf `/api/push-devices` endpoint'ine FCM tokeni ve kullanici oturumunu kaydeder.
 - API is, ariza, hatirlatma, talep, operasyon belgesi ve SLA bildirimlerini veritabanina yazarken Android FCM push olarak da gonderir.
 - Sadece uygulama acikken gorunen browser/socket bildirimi bu ihtiyaci karsilamaz.
+- Herkese gidecek bildirim ile tek kullaniciya gidecek bildirim ayni akistan
+  kontrolsuz gecmez. Global, departman, rol/grup ve tek kullanici hedefleri
+  ayri audience resolver ile hesaplanir.
+- Global bildirim bile tek ortak kayit olarak tutulmaz; her alici icin ayri
+  `Notification` satiri ve o kullanicinin cihazlarina ayri FCM hedeflemesi
+  kullanilir. Bu sayede okundu/okunmadi, audit ve cihaz tokeni kullanici
+  bazinda dogru kalir.
 
 ## Zorunlu kontrol komutu
 
@@ -33,6 +40,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Document
 - Raspberry Pi uzerinde Firebase Admin servis hesabi okunabilirligi.
 - Canli HTTPS API uzerinden test FCM token kaydi.
 - Veritabaninda aktif Android push cihaz kaydi.
+- Yeni bildirim akisi eklendiyse hedef kitle tipi kontrolu: tek kullanici,
+  departman, rol/grup veya tum kullanicilar.
 
 ## Kritik yorum
 
