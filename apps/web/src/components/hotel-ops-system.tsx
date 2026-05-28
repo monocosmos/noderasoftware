@@ -93,6 +93,7 @@ type HotelOpsAndroidBridge = {
   runtime?: () => string;
   version?: () => string;
   versionCode?: () => number;
+  buildNumber?: () => number;
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
 };
@@ -106,6 +107,9 @@ type HotelOpsDesktopBridge = {
 
 type HotelOpsShellWindow = Window & {
   __HOTELOPS_SHELL__?: ShellRuntime;
+  __HOTELOPS_APP_VERSION__?: string;
+  __HOTELOPS_APP_VERSION_CODE__?: number | string;
+  __HOTELOPS_APP_BUILD__?: number | string;
   HotelOpsAndroidShell?: HotelOpsAndroidBridge;
   hotelOpsDesktopShell?: HotelOpsDesktopBridge;
 };
@@ -131,6 +135,7 @@ type ShellAppInfo = {
   label: string;
   version: string;
   versionCode: number;
+  buildNumber?: number;
 };
 
 type AppUpdateNotice = {
@@ -375,6 +380,35 @@ function hasHotelOpsAndroidBridge(shellWindow: HotelOpsShellWindow) {
   }
 }
 
+function callShellString(callback?: () => string) {
+  try {
+    return callback?.() || "";
+  } catch {
+    return "";
+  }
+}
+
+function callShellNumber(callback?: () => number) {
+  try {
+    const value = Number(callback?.());
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function toShellNumber(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function readAndroidUserAgentInfo(userAgent: string) {
+  const updateCode = toShellNumber(userAgent.match(/NoderaHotelOpsAndroid\/(\d+)/i)?.[1]);
+  const version = userAgent.match(/HotelOpsAndroidVersion\/([^\s]+)/i)?.[1] || "";
+  const buildNumber = toShellNumber(userAgent.match(/HotelOpsAndroidBuild\/(\d+)/i)?.[1]);
+  return { updateCode, version, buildNumber };
+}
+
 function detectShellRuntime(): ShellRuntime {
   if (typeof window === "undefined") return "web";
 
@@ -404,15 +438,28 @@ function readShellAppInfo(): ShellAppInfo | null {
   const shellWindow = window as HotelOpsShellWindow;
 
   if (runtime === "desktop") {
-    const version = shellWindow.hotelOpsDesktopShell?.version?.() || "1.0.0";
-    const versionCode = Number(shellWindow.hotelOpsDesktopShell?.versionCode?.() || 0);
-    return { runtime, label: "Windows", version, versionCode };
+    const version = callShellString(() => shellWindow.hotelOpsDesktopShell?.version?.() || "") || "1.0.0";
+    const versionCode = callShellNumber(() => shellWindow.hotelOpsDesktopShell?.versionCode?.() || 0);
+    return { runtime, label: "Windows", version, versionCode, buildNumber: versionCode };
   }
 
   if (runtime === "android") {
-    const version = shellWindow.HotelOpsAndroidShell?.version?.() || "1.0.0";
-    const versionCode = Number(shellWindow.HotelOpsAndroidShell?.versionCode?.() || 0);
-    return { runtime, label: "Android", version, versionCode };
+    const androidUserAgent = readAndroidUserAgentInfo(navigator.userAgent || "");
+    const version =
+      callShellString(() => shellWindow.HotelOpsAndroidShell?.version?.() || "") ||
+      shellWindow.__HOTELOPS_APP_VERSION__ ||
+      androidUserAgent.version ||
+      "1.0.0";
+    const versionCode =
+      callShellNumber(() => shellWindow.HotelOpsAndroidShell?.versionCode?.() || 0) ||
+      toShellNumber(shellWindow.__HOTELOPS_APP_VERSION_CODE__) ||
+      androidUserAgent.updateCode;
+    const buildNumber =
+      callShellNumber(() => shellWindow.HotelOpsAndroidShell?.buildNumber?.() || 0) ||
+      toShellNumber(shellWindow.__HOTELOPS_APP_BUILD__) ||
+      androidUserAgent.buildNumber;
+
+    return { runtime, label: "Android", version, versionCode, buildNumber };
   }
 
   return null;
@@ -1868,16 +1915,9 @@ export function HotelOpsSystem() {
 
   useEffect(() => {
     let cancelled = false;
-    const info = readShellAppInfo();
+    const retryIds: number[] = [];
 
-    setShellAppInfo(info);
-
-    if (!info) {
-      setAppUpdateNotice(null);
-      return;
-    }
-
-    const notifyNativeShell = (notice: AppUpdateNotice) => {
+    const notifyNativeShell = (info: ShellAppInfo, notice: AppUpdateNotice) => {
       const key = `${notice.runtime}-${info.versionCode}-${notice.latestVersion}`;
       if (appUpdateNotifiedRef.current === key) return;
       appUpdateNotifiedRef.current = key;
@@ -1894,6 +1934,16 @@ export function HotelOpsSystem() {
     };
 
     const checkAppVersion = async () => {
+      const info = readShellAppInfo();
+      if (cancelled) return;
+
+      setShellAppInfo(info);
+
+      if (!info) {
+        setAppUpdateNotice(null);
+        return;
+      }
+
       try {
         const response = await fetch(`/app-version.json?t=${Date.now()}`, { cache: "no-store" });
         if (!response.ok) return;
@@ -1903,17 +1953,26 @@ export function HotelOpsSystem() {
 
         if (cancelled) return;
         setAppUpdateNotice(notice);
-        if (notice) notifyNativeShell(notice);
+        if (notice) notifyNativeShell(info, notice);
       } catch {
         if (!cancelled) setAppUpdateNotice(null);
       }
     };
 
     void checkAppVersion();
+    const onNativeShellReady = () => {
+      void checkAppVersion();
+    };
+    window.addEventListener("hotelops:native-shell-ready", onNativeShellReady);
+    [250, 1000, 2500].forEach((delay) => {
+      retryIds.push(window.setTimeout(() => void checkAppVersion(), delay));
+    });
     const intervalId = window.setInterval(checkAppVersion, 30 * 60 * 1000);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("hotelops:native-shell-ready", onNativeShellReady);
+      retryIds.forEach((id) => window.clearTimeout(id));
       window.clearInterval(intervalId);
     };
   }, []);

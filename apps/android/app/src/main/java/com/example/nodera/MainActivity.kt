@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
             settings.cacheMode = WebSettings.LOAD_DEFAULT
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
-            settings.userAgentString = "${settings.userAgentString} NoderaHotelOpsAndroid/${HotelOpsAppVersion.CODE} HotelOpsAndroid"
+            settings.userAgentString = "${settings.userAgentString} NoderaHotelOpsAndroid/${HotelOpsAppVersion.UPDATE_CODE} HotelOpsAndroidVersion/${HotelOpsAppVersion.NAME} HotelOpsAndroidBuild/${HotelOpsAppVersion.BUILD} HotelOpsAndroid"
 
             isHorizontalScrollBarEnabled = false
             isVerticalScrollBarEnabled = true
@@ -384,9 +384,9 @@ class MainActivity : ComponentActivity() {
     private fun injectHotelOpsShellBridge() {
         if (!::webView.isInitialized) return
 
-        // Web uygulamasina Android icinde calistigini ve hangi build kodunda
-        // oldugunu bildiriyoruz. Bu bilgi indirme kartlarini gizlemek ve eski
-        // APK uyarisini dogru vermek icin kullanilir.
+        // Web uygulamasina Android icinde calistigini, gorunen surumu ve gizli
+        // build bilgisini bildiriyoruz. Event, React ilk acilista bridge'i
+        // kacirsa bile sidebar surum alaninin sonradan yenilenmesini saglar.
         webView.evaluateJavascript(
             """
             (function () {
@@ -394,7 +394,9 @@ class MainActivity : ComponentActivity() {
               window.__hotelOpsAndroidBridgeInstalled = true;
               window.__HOTELOPS_SHELL__ = "android";
               window.__HOTELOPS_APP_VERSION__ = "${HotelOpsAppVersion.NAME}";
-              window.__HOTELOPS_APP_VERSION_CODE__ = ${HotelOpsAppVersion.CODE};
+              window.__HOTELOPS_APP_VERSION_CODE__ = ${HotelOpsAppVersion.UPDATE_CODE};
+              window.__HOTELOPS_APP_BUILD__ = ${HotelOpsAppVersion.BUILD};
+              window.dispatchEvent(new CustomEvent("hotelops:native-shell-ready"));
 
               function syncToken() {
                 try {

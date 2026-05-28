@@ -27,7 +27,10 @@ class HotelOpsAndroidBridge(context: Context) {
     fun version(): String = HotelOpsAppVersion.NAME
 
     @JavascriptInterface
-    fun versionCode(): Int = HotelOpsAppVersion.CODE
+    fun versionCode(): Int = HotelOpsAppVersion.UPDATE_CODE
+
+    @JavascriptInterface
+    fun buildNumber(): Int = HotelOpsAppVersion.BUILD
 
     @JavascriptInterface
     fun getAuthToken(): String = prefs.getString(HotelOpsPrefs.AUTH_TOKEN, "").orEmpty()

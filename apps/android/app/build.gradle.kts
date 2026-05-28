@@ -18,10 +18,11 @@ android {
         applicationId = "com.example.nodera"
         minSdk = 23
         targetSdk = 36
-        // versionName kullaniciya gorunen sade surumdur. versionCode ise
-        // app-version.json ile karsilastirilan gizli teknik guncelleme kodudur.
-        versionCode = 2026052705
-        versionName = "1.0.1"
+        // versionName kullaniciya gorunen sade surumdur. versionCode Android'in
+        // yukleme siralamasi icin monoton kalir; gizli urun build'i Kotlin
+        // tarafinda HotelOpsAppVersion.BUILD ile tutulur.
+        versionCode = 2026052801
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
