@@ -1,9 +1,11 @@
 ﻿import "./load-env.js";
 import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
+import admin from "firebase-admin";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import jwt from "jsonwebtoken";
@@ -11,7 +13,7 @@ import type { JwtPayload } from "jsonwebtoken";
 import { Server } from "socket.io";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import type { User } from "@prisma/client";
+import type { Notification as DbNotification, PushDevice, User } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import {
   canCreateForDepartment,
@@ -27,6 +29,13 @@ const server = http.createServer(app);
 const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? "0.0.0.0";
 const jwtSecret = process.env.JWT_SECRET ?? "dev-secret-change-me";
+const firebaseServiceAccountCandidates = [
+  process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+  "/opt/noderasoftware/secrets/firebase-service-account.json",
+  "/opt/noderasoftware-private/firebase/noderafirebase-firebase-adminsdk-fbsvc-d7fd3b1a37.json"
+].filter((value): value is string => Boolean(value));
+let firebaseMessagingUnavailableLogged = false;
+let firebaseMessagingInstance: admin.messaging.Messaging | null | undefined;
 
 type AuthContext = {
   userId: string;
@@ -127,6 +136,36 @@ function clientIp(req: express.Request) {
 
 function clientUserAgent(req: express.Request) {
   return req.headers["user-agent"] ?? "unknown";
+}
+
+function firebaseMessaging() {
+  if (firebaseMessagingInstance !== undefined) return firebaseMessagingInstance;
+
+  const serviceAccountPath = firebaseServiceAccountCandidates.find((candidate) => existsSync(candidate));
+  if (!serviceAccountPath) {
+    if (!firebaseMessagingUnavailableLogged) {
+      console.warn("Firebase service account not found; Android background push is disabled.");
+      firebaseMessagingUnavailableLogged = true;
+    }
+    firebaseMessagingInstance = null;
+    return firebaseMessagingInstance;
+  }
+
+  try {
+    if (!admin.apps.length) {
+      const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, "utf8")) as admin.ServiceAccount;
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    }
+    firebaseMessagingInstance = admin.messaging();
+    return firebaseMessagingInstance;
+  } catch (error) {
+    if (!firebaseMessagingUnavailableLogged) {
+      console.error("Firebase Admin initialization failed; Android background push is disabled.", error);
+      firebaseMessagingUnavailableLogged = true;
+    }
+    firebaseMessagingInstance = null;
+    return firebaseMessagingInstance;
+  }
 }
 
 function routeParam(req: express.Request, name: string) {
@@ -494,6 +533,21 @@ function serializeWorkOrder(
   };
 }
 
+function workOrderNotificationText(workOrder: Prisma.WorkOrderGetPayload<{ include: { department: true } }>) {
+  const title = workOrder.type === "FAULT"
+    ? "Yeni arıza"
+    : workOrder.type === "PLANNED_MAINTENANCE"
+      ? "Yeni planlı bakım"
+      : workOrder.type === "PLANNED_HOUSEKEEPING"
+        ? "Yeni HK görevi"
+        : "Yeni iş";
+  const location = [workOrder.room ? `Oda ${workOrder.room}` : "", workOrder.location].filter(Boolean).join(" - ");
+  return {
+    title,
+    body: `${workOrder.code} - ${workOrder.title}${location ? ` (${location})` : ""}`
+  };
+}
+
 async function audit(req: express.Request, entityType: string, entityId: string, action: string, before?: unknown, after?: unknown, workOrderId?: string) {
   if (!req.auth) return;
   await prisma.auditLog.create({
@@ -636,6 +690,14 @@ const operationDocumentSchema = z.object({
   operationDate: z.string().datetime(),
   description: z.string().max(4000).optional().default(""),
   document: operationDocumentFileSchema
+});
+
+const pushDeviceSchema = z.object({
+  platform: z.enum(["ANDROID", "IOS", "WINDOWS", "WEB"]).optional().default("ANDROID"),
+  fcmToken: z.string().trim().min(20).max(4096),
+  deviceId: z.string().trim().max(160).optional().default(""),
+  appVersion: z.string().trim().max(80).optional().default(""),
+  appBuild: z.number().int().min(0).max(999_999_999).optional()
 });
 
 function serializeCalendarEvent(event: Prisma.CalendarEventGetPayload<{ include: { department: true } }>) {
@@ -827,6 +889,107 @@ function serializeNotification(notification: Prisma.NotificationGetPayload<objec
   };
 }
 
+function isInvalidPushTokenError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error
+    ? String((error as { code?: string }).code)
+    : "";
+  return [
+    "messaging/invalid-argument",
+    "messaging/invalid-registration-token",
+    "messaging/registration-token-not-registered"
+  ].includes(code);
+}
+
+async function sendPushNotifications(notifications: DbNotification[]) {
+  if (!notifications.length) return;
+
+  const messaging = firebaseMessaging();
+  if (!messaging) return;
+
+  const notificationsByUserId = new Map<string, DbNotification[]>();
+  for (const notification of notifications) {
+    const current = notificationsByUserId.get(notification.userId) ?? [];
+    current.push(notification);
+    notificationsByUserId.set(notification.userId, current);
+  }
+
+  const devices = await prisma.pushDevice.findMany({
+    where: {
+      userId: { in: Array.from(notificationsByUserId.keys()) },
+      platform: "ANDROID",
+      disabledAt: null
+    }
+  });
+  if (!devices.length) return;
+
+  const messageDevices: PushDevice[] = [];
+  const messages: admin.messaging.Message[] = [];
+  for (const device of devices) {
+    const userNotifications = notificationsByUserId.get(device.userId) ?? [];
+    for (const notification of userNotifications) {
+      messageDevices.push(device);
+      messages.push({
+        token: device.fcmToken,
+        notification: {
+          title: notification.title,
+          body: notification.body
+        },
+        data: {
+          notificationId: notification.id,
+          title: notification.title,
+          body: notification.body,
+          channel: notification.channel,
+          createdAt: notification.createdAt.toISOString()
+        },
+        android: {
+          priority: "high",
+          notification: {
+            channelId: "hotelops_work_orders",
+            sound: "default"
+          }
+        }
+      });
+    }
+  }
+
+  const chunkSize = 500;
+  for (let offset = 0; offset < messages.length; offset += chunkSize) {
+    const chunk = messages.slice(offset, offset + chunkSize);
+    const chunkDevices = messageDevices.slice(offset, offset + chunkSize);
+    try {
+      const result = await messaging.sendEach(chunk);
+      const invalidDeviceIds = result.responses
+        .map((response, index) => (!response.success && isInvalidPushTokenError(response.error) ? chunkDevices[index].id : ""))
+        .filter(Boolean);
+      if (invalidDeviceIds.length) {
+        await prisma.pushDevice.updateMany({
+          where: { id: { in: invalidDeviceIds } },
+          data: { disabledAt: new Date() }
+        });
+      }
+    } catch (error) {
+      console.error("Android push delivery failed.", error);
+    }
+  }
+}
+
+async function createNotificationAndPush(data: Prisma.NotificationUncheckedCreateInput) {
+  const notification = await prisma.notification.create({ data });
+  await sendPushNotifications([notification]);
+  return notification;
+}
+
+async function createNotificationsAndPush(data: Prisma.NotificationCreateManyInput[]) {
+  if (!data.length) return [];
+
+  const notifications: DbNotification[] = [];
+  for (const payload of data) {
+    notifications.push(await prisma.notification.create({ data: payload }));
+  }
+  await sendPushNotifications(notifications);
+  return notifications;
+}
+
 async function reminderRecipientUsers(auth: AuthContext) {
   const leaderRoles = departmentLeaderRoles[auth.departmentId] ?? [];
   return prisma.user.findMany({
@@ -856,6 +1019,19 @@ async function departmentAssigneeUsers(auth: AuthContext, targetDepartmentId = a
   });
 }
 
+async function departmentNotificationUsers(auth: AuthContext, targetDepartmentId: string) {
+  return prisma.user.findMany({
+    where: {
+      hotelId: auth.hotelId,
+      deletedAt: null,
+      isActive: true,
+      id: { not: auth.userId },
+      department: { code: departmentCodeFromClientId(targetDepartmentId) }
+    },
+    orderBy: [{ role: { code: "asc" } }, { fullName: "asc" }]
+  });
+}
+
 async function processDueReminders(userId: string) {
   const now = new Date();
   const oneHourThreshold = new Date(now.getTime() + 60 * 60 * 1000);
@@ -874,22 +1050,18 @@ async function processDueReminders(userId: string) {
   for (const reminder of reminders) {
     const data: Prisma.ReminderUpdateInput = {};
     if (!reminder.oneHourNotifiedAt && reminder.remindAt <= oneHourThreshold) {
-      await prisma.notification.create({
-        data: {
-          userId,
-          title: "Hatırlatma yaklaşıyor",
-          body: `${reminder.title} için 1 saatten az kaldı.`
-        }
+      await createNotificationAndPush({
+        userId,
+        title: "Hatırlatma yaklaşıyor",
+        body: `${reminder.title} için 1 saatten az kaldı.`
       });
       data.oneHourNotifiedAt = now;
     }
     if (!reminder.dueNotifiedAt && reminder.remindAt <= now) {
-      await prisma.notification.create({
-        data: {
-          userId,
-          title: "Hatırlatma zamanı",
-          body: reminder.title
-        }
+      await createNotificationAndPush({
+        userId,
+        title: "Hatırlatma zamanı",
+        body: reminder.title
       });
       data.dueNotifiedAt = now;
     }
@@ -947,15 +1119,11 @@ async function processSlaEscalations() {
       }
     });
     const uniqueUsers = new Map(users.map((user) => [user.id, user]));
-    for (const user of uniqueUsers.values()) {
-      await prisma.notification.create({
-        data: {
-          userId: user.id,
-          title: "SLA eskalasyonu",
-          body: `${workOrder.code} - ${workOrder.title} için hedef süre aşıldı.`
-        }
-      });
-    }
+    await createNotificationsAndPush(Array.from(uniqueUsers.values()).map((user) => ({
+      userId: user.id,
+      title: "SLA eskalasyonu",
+      body: `${workOrder.code} - ${workOrder.title} için hedef süre aşıldı.`
+    })));
     await prisma.workOrderTimeline.create({
       data: {
         workOrderId: workOrder.id,
@@ -1085,6 +1253,38 @@ app.get("/auth/me", authenticate, async (req, res) => {
     scope: scopeDepartmentIds(req.auth!)
   });
 });
+
+app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
+  const payload = pushDeviceSchema.parse(req.body);
+  const appVersion = payload.appBuild === undefined
+    ? payload.appVersion
+    : `${payload.appVersion || "unknown"} build ${payload.appBuild}`;
+
+  const device = await prisma.pushDevice.upsert({
+    where: { fcmToken: payload.fcmToken },
+    update: {
+      userId: req.auth!.userId,
+      sessionId: req.auth!.sessionId,
+      platform: payload.platform,
+      deviceId: payload.deviceId || null,
+      appVersion,
+      userAgent: String(clientUserAgent(req)),
+      disabledAt: null,
+      lastSeenAt: new Date()
+    },
+    create: {
+      userId: req.auth!.userId,
+      sessionId: req.auth!.sessionId,
+      platform: payload.platform,
+      fcmToken: payload.fcmToken,
+      deviceId: payload.deviceId || null,
+      appVersion,
+      userAgent: String(clientUserAgent(req))
+    }
+  });
+
+  res.json({ ok: true, id: device.id });
+}));
 
 app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   await processDueReminders(req.auth!.userId);
@@ -1392,6 +1592,13 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
     include: workOrderInclude
   });
   await audit(req, "WorkOrder", created.code, "CREATE", null, serializeWorkOrder(created), created.id);
+  const notificationText = workOrderNotificationText(created);
+  const notificationUsers = await departmentNotificationUsers(req.auth!, payload.departmentId);
+  await createNotificationsAndPush(notificationUsers.map((user) => ({
+    userId: user.id,
+    title: notificationText.title,
+    body: notificationText.body
+  })));
   io.to(`department:${payload.departmentId}`).emit("work-order.created", serializeWorkOrder(created));
   res.status(201).json(serializeWorkOrder(created));
 });
@@ -1461,6 +1668,13 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
     include: workOrderInclude
   });
   await audit(req, "WorkOrder", created.code, "CALENDAR_CREATE", null, serializeWorkOrder(created), created.id);
+  const notificationText = workOrderNotificationText(created);
+  const notificationUsers = await departmentNotificationUsers(req.auth!, payload.departmentId);
+  await createNotificationsAndPush(notificationUsers.map((user) => ({
+    userId: user.id,
+    title: notificationText.title,
+    body: notificationText.body
+  })));
   io.to(`department:${payload.departmentId}`).emit("work-order.created", serializeWorkOrder(created));
   res.status(201).json(serializeWorkOrder(created));
 });
@@ -1729,15 +1943,13 @@ app.post("/management-requests", authenticate, requireModuleAccess("managementRe
     },
     include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } }
   });
-  await prisma.notification.createMany({
-    data: [recipient, relatedUser]
-      .filter((user): user is NonNullable<typeof relatedUser> => Boolean(user))
-      .map((user) => ({
-        userId: user.id,
-        title: "Yeni talep",
-        body: `${created.title} - ${created.createdBy.fullName}`
-      }))
-  });
+  await createNotificationsAndPush([recipient, relatedUser]
+    .filter((user): user is NonNullable<typeof relatedUser> => Boolean(user))
+    .map((user) => ({
+      userId: user.id,
+      title: "Yeni talep",
+      body: `${created.title} - ${created.createdBy.fullName}`
+    })));
   await audit(req, "ManagementRequest", created.id, "CREATE", null, serializeManagementRequest(created));
   res.status(201).json(serializeManagementRequest(created));
 }));
@@ -1787,12 +1999,10 @@ app.patch("/management-requests/:id/status", authenticate, requireModuleAccess("
     },
     include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } }
   });
-  await prisma.notification.create({
-    data: {
-      userId: updated.createdById,
-      title: payload.status === "ACCEPTED" ? "Talep kabul edildi" : payload.status === "REJECTED" ? "Talep reddedildi" : "Talep beklemeye alındı",
-      body: `${updated.title} - ${updated.recipient.fullName}`
-    }
+  await createNotificationAndPush({
+    userId: updated.createdById,
+    title: payload.status === "ACCEPTED" ? "Talep kabul edildi" : payload.status === "REJECTED" ? "Talep reddedildi" : "Talep beklemeye alındı",
+    body: `${updated.title} - ${updated.recipient.fullName}`
   });
   await audit(req, "ManagementRequest", updated.id, "STATUS", serializeManagementRequest(existing), serializeManagementRequest(updated));
   res.json(serializeManagementRequest(updated));
@@ -1843,13 +2053,11 @@ app.post("/operation-documents", authenticate, requireModuleAccess("operationDoc
 
   const notificationUsers = audience.filter((user) => user.id !== req.auth!.userId);
   if (notificationUsers.length) {
-    await prisma.notification.createMany({
-      data: notificationUsers.map((user) => ({
-        userId: user.id,
-        title: "Yeni operasyon belgesi",
-        body: `${created.operationDefinition} - ${created.createdBy.fullName}`
-      }))
-    });
+    await createNotificationsAndPush(notificationUsers.map((user) => ({
+      userId: user.id,
+      title: "Yeni operasyon belgesi",
+      body: `${created.operationDefinition} - ${created.createdBy.fullName}`
+    })));
   }
 
   const serialized = serializeOperationDocument(created, audience, req.auth!);
@@ -1944,12 +2152,10 @@ app.post("/reminders", authenticate, requireModuleAccess("reminders"), asyncHand
     include: { createdBy: { include: userInclude }, assignedTo: { include: userInclude }, department: true }
   });
 
-  await prisma.notification.create({
-    data: {
-      userId: selectedRecipient.id,
-      title: "Yeni hatırlatma",
-      body: `${created.title} - ${created.remindAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`
-    }
+  await createNotificationAndPush({
+    userId: selectedRecipient.id,
+    title: "Yeni hatırlatma",
+    body: `${created.title} - ${created.remindAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`
   });
 
   res.status(201).json(serializeReminder(created));
