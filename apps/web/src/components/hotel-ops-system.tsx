@@ -3660,6 +3660,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const canChangeRoomStatus = isRoomStatusModule && (isHousekeepingStaff(session) || isHousekeepingChief(session));
   const canChiefApprove = isRoomStatusModule && isHousekeepingChief(session);
   const canManagerApprove = isRoomStatusModule && isHousekeepingManager(session);
+  const showCreatePanel = module.id !== "announcements";
   const roomStatusWorkflowNote = isRoomStatusModule
     ? isHousekeepingStaff(session)
       ? "HK personeli oda durum kartını açar ve durumu günceller. Kayıt kat şefi onayına düşer."
@@ -3686,6 +3687,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   ];
   const visibleRecords = records.filter((record) => matchesMetric(record, activeMetric));
   const selected = visibleRecords.find((record) => record.id === selectedId) ?? visibleRecords[0];
+  const detailPanelTitle = selected ? "Kayıt Detayı" : showCreatePanel ? module.primaryAction : "Kayıt Detayı";
 
   useEffect(() => {
     try {
@@ -3915,7 +3917,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
         </div>
 
         <div className="card">
-          <div className="card-header"><span className="card-title">{selected ? "Kayıt Detayı" : module.primaryAction}</span></div>
+          <div className="card-header"><span className="card-title">{detailPanelTitle}</span></div>
           {selected && (
             <div className="card-body module-detail">
               <div className="detail-title">{selected.title}</div>
@@ -3974,7 +3976,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
           )}
         </div>
 
-        <div className="card">
+        {showCreatePanel && <div className="card">
           <div className="card-header"><span className="card-title">{module.primaryAction}</span></div>
           <div className="card-body ui-body-form">
             {isRoomStatusModule && <div className="module-helper strong">{roomStatusWorkflowNote}</div>}
@@ -4034,7 +4036,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
               Kayıt bu cihazda operasyon taslağı olarak saklanır; ana iş emri gerekiyorsa İşlerim ve Arızalar ekranından görev açılır.
             </div>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
