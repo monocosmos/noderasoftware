@@ -3418,7 +3418,7 @@ function renderPage(context: RenderContext) {
   return <DashboardPage {...context} />;
 }
 
-function DashboardPage({ departmentLabelFor, departmentOptions, managementRequests, navigate, session, users, visibleJobs }: RenderContext) {
+function DashboardPage({ departmentLabelFor, departmentOptions, departmentsList, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, users, visibleJobs }: RenderContext) {
   const isHotelWideRole = session.roleId === "generalManager" || session.roleId === "hrManager";
   const isDepartmentManager = ["technicalManager", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "fnbManager"].includes(session.roleId);
   const isChief = ["technicalChief", "floorChief"].includes(session.roleId);
@@ -3458,7 +3458,7 @@ function DashboardPage({ departmentLabelFor, departmentOptions, managementReques
     { id: "dashboardPeriodicMaintenance" as DashboardPartId, label: "Periyodik Bakım", value: periodicMaintenanceCount, type: "pending", icon: CalendarDays, path: "/jobs?view=periodic" },
     { id: "dashboardUrgentJobs" as DashboardPartId, label: "Aktif Personel", value: users.filter((user) => user.active).length, type: "completed", icon: Users, path: "/users?view=active" },
     { id: "dashboardDelayedJobs" as DashboardPartId, label: "Pasif Personel", value: users.filter((user) => !user.active).length, type: "pending", icon: Clock, path: "/users?view=inactive" },
-    { id: "dashboardPendingJobs" as DashboardPartId, label: "Departman", value: departmentOptions.length, type: "inprogress", icon: Tags, path: "/settings" },
+    { id: "dashboardPendingJobs" as DashboardPartId, label: "Departman", value: departmentOptions.length, type: "inprogress", icon: Tags, path: "/dashboard" },
     { id: "dashboardInProgressJobs" as DashboardPartId, label: "Yetki Kapalı", value: users.filter((user) => moduleOptions.some((module) => resolvedModuleAccess(user)[module.id] === false)).length, type: "high", icon: ShieldCheck, path: "/users?view=access" }
   ];
   const kpis = (session.roleId === "hrManager" ? hrKpis : operationKpis).filter((kpi) => canUseAccess(session, kpi.id));
@@ -3585,6 +3585,21 @@ function DashboardPage({ departmentLabelFor, departmentOptions, managementReques
               <div className="stat-row"><span className="stat-label">SLA riski</span><span className="stat-value">{visibleJobs.filter((job) => job.slaRisk || job.status === "Delayed").length}</span></div>
             </div>
           </div>
+        </div>
+      )}
+
+      {session.roleId === "hrManager" && (
+        <div className="ui-section">
+          <DepartmentManagementCard
+            departmentLabelFor={departmentLabelFor}
+            departmentOptions={departmentOptions}
+            departmentsList={departmentsList}
+            refreshData={refreshData}
+            session={session}
+            setAlert={setAlert}
+            setDepartmentsList={setDepartmentsList}
+            title="Departman Oluştur"
+          />
         </div>
       )}
 
@@ -6200,7 +6215,16 @@ function RemindersPage({
   );
 }
 
-function SettingsPage({ departmentLabelFor, departmentOptions, departmentsList, refreshData, session, setAlert, setDepartmentsList }: RenderContext) {
+function DepartmentManagementCard({
+  departmentLabelFor,
+  departmentOptions,
+  departmentsList,
+  refreshData,
+  session,
+  setAlert,
+  setDepartmentsList,
+  title = "Departmanlar"
+}: Pick<RenderContext, "departmentLabelFor" | "departmentOptions" | "departmentsList" | "refreshData" | "session" | "setAlert" | "setDepartmentsList"> & { title?: string }) {
   const [customDepartmentName, setCustomDepartmentName] = useState("");
 
   useEffect(() => {
@@ -6284,6 +6308,51 @@ function SettingsPage({ departmentLabelFor, departmentOptions, departmentsList, 
     return Array.from(rows.values()).sort((left, right) => left.label.localeCompare(right.label, "tr-TR"));
   }, [departmentOptions, departmentsList, existingDepartmentIds]);
 
+  if (!canManageDepartments(session)) return null;
+
+  return (
+    <div className="card">
+      <div className="card-header"><span className="card-title">{title}</span></div>
+      <div className="card-body ui-body-form">
+        {canCreateDepartments(session) && (
+          <>
+            <div className="form-row">
+              <input
+                className="form-control"
+                value={customDepartmentName}
+                onChange={(event) => setCustomDepartmentName(event.target.value)}
+                placeholder="Yeni departman adı"
+              />
+              <button type="button" className="btn btn-primary" onClick={createCustomDepartment}>
+                <Plus size={15} /> Yeni Departman Ekle
+              </button>
+            </div>
+          </>
+        )}
+        <div className="ui-list-stack-compact">
+          {visibleDepartmentRows.map((department) => (
+            <div className="stat-row dept-row" key={department.id}>
+              <span className="stat-label">{department.label}</span>
+              <span className="ui-cluster-end">
+                <span className={`badge ${department.active ? "badge-completed" : "badge-pending"}`}>
+                  {department.active ? "Aktif" : "Oluşturulmadı"}
+                </span>
+                {department.custom && <span className="badge badge-inprogress">Yeni</span>}
+                {canCreateDepartments(session) && department.active && department.id !== session.departmentId && (
+                  <button type="button" className="btn btn-danger btn-sm" onClick={() => deleteDepartment(department.id)}>
+                    <Trash2 size={13} /> Sil
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPage({ session }: RenderContext) {
   return (
     <>
       <div className="two-column-grid">
@@ -6353,46 +6422,6 @@ function SettingsPage({ departmentLabelFor, departmentOptions, departmentsList, 
             </div>
 
           </>
-        )}
-        {canManageDepartments(session) && (
-          <div className="card">
-            <div className="card-header"><span className="card-title">Departmanlar</span></div>
-            <div className="card-body ui-body-form">
-              {canCreateDepartments(session) && (
-                <>
-                  <div className="form-row">
-                    <input
-                      className="form-control"
-                      value={customDepartmentName}
-                      onChange={(event) => setCustomDepartmentName(event.target.value)}
-                      placeholder="Yeni departman adı"
-                    />
-                    <button type="button" className="btn btn-primary" onClick={createCustomDepartment}>
-                      <Plus size={15} /> Yeni Departman Ekle
-                    </button>
-                  </div>
-                </>
-              )}
-              <div className="ui-list-stack-compact">
-                {visibleDepartmentRows.map((department) => (
-                  <div className="stat-row dept-row" key={department.id}>
-                    <span className="stat-label">{department.label}</span>
-                    <span className="ui-cluster-end">
-                      <span className={`badge ${department.active ? "badge-completed" : "badge-pending"}`}>
-                        {department.active ? "Aktif" : "Oluşturulmadı"}
-                      </span>
-                      {department.custom && <span className="badge badge-inprogress">Yeni</span>}
-                      {canCreateDepartments(session) && department.active && department.id !== session.departmentId && (
-                        <button type="button" className="btn btn-danger btn-sm" onClick={() => deleteDepartment(department.id)}>
-                          <Trash2 size={13} /> Sil
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
         )}
       </div>
 
