@@ -15,7 +15,9 @@ param(
 
   [switch] $IncludeDownloads,
 
-  [switch] $SkipLocalPiBackup
+  [switch] $SkipLocalPiBackup,
+
+  [switch] $UpdateLandingPage
 )
 
 $ErrorActionPreference = "Stop"
@@ -230,17 +232,56 @@ sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
   }
   $webOutRsyncOptions = "--exclude downloads/"
   $webPublicRsyncOptions = "--exclude downloads/"
+  # HotelOps deploys update /hotel by default; the personal root page is updated only with -UpdateLandingPage.
+  $preserveLandingRoot = if ($UpdateLandingPage) { "0" } else { "1" }
 
 $remoteScript = @"
 set -Eeuo pipefail
 cleanup() {
-  sudo rm -rf '$remoteStage' '$remoteArchive'
+  sudo rm -rf '$remoteStage' '$remoteArchive' '/tmp/noderasoftware-landing-preserve-$timestamp'
 }
 trap cleanup EXIT
 
 sudo rm -rf '$remoteStage'
 sudo mkdir -p '$remoteStage'
 sudo tar -xzf '$remoteArchive' -C '$remoteStage'
+
+preserve_landing_root='$preserveLandingRoot'
+landing_preserve='/tmp/noderasoftware-landing-preserve-$timestamp'
+if [ "`$preserve_landing_root" = "1" ]; then
+  sudo rm -rf "`$landing_preserve"
+  sudo mkdir -p "`$landing_preserve"
+  for landing_file in index.html index.txt; do
+    if [ -f "/opt/noderasoftware/apps/web/out/`$landing_file" ]; then
+      sudo cp -a "/opt/noderasoftware/apps/web/out/`$landing_file" "`$landing_preserve/`$landing_file"
+    fi
+  done
+  if [ -f /opt/noderasoftware/apps/web/out/index.html ] && command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY' > "`$landing_preserve/static-files.txt"
+from html import unescape
+from pathlib import Path
+import re
+
+html = Path("/opt/noderasoftware/apps/web/out/index.html").read_text(encoding="utf-8", errors="ignore")
+for match in sorted(set(re.findall(r"/_next/static/[^\"'<>\s)]+", html))):
+    print(unescape(match).split("?")[0].lstrip("/"))
+PY
+    while IFS= read -r static_file; do
+      if [ -n "`$static_file" ] && [ -f "/opt/noderasoftware/apps/web/out/`$static_file" ]; then
+        sudo mkdir -p "`$landing_preserve/`$(dirname "`$static_file")"
+        sudo cp -a "/opt/noderasoftware/apps/web/out/`$static_file" "`$landing_preserve/`$static_file"
+      fi
+    done < "`$landing_preserve/static-files.txt"
+  fi
+  for landing_dir in personal personal-assets assets images img; do
+    if [ -d "/opt/noderasoftware/apps/web/out/`$landing_dir" ]; then
+      sudo cp -a "/opt/noderasoftware/apps/web/out/`$landing_dir" "`$landing_preserve/`$landing_dir"
+    fi
+  done
+else
+  echo 'Landing page guncellemesi aktif; root index korunmayacak'
+fi
+
 sudo rsync -a --delete '$remoteStage/apps/api/dist/' /opt/noderasoftware/apps/api/dist/
 sudo rsync -a --delete '$remoteStage/apps/api/src/' /opt/noderasoftware/apps/api/src/
 sudo rsync -a '$remoteStage/apps/api/package.json' /opt/noderasoftware/apps/api/package.json
@@ -248,6 +289,25 @@ sudo rsync -a '$remoteStage/apps/api/tsconfig.json' /opt/noderasoftware/apps/api
 sudo rsync -a --delete $webOutRsyncOptions '$remoteStage/apps/web/out/' /opt/noderasoftware/apps/web/out/
 sudo rsync -a --delete '$remoteStage/apps/web/src/' /opt/noderasoftware/apps/web/src/
 sudo rsync -a --delete $webPublicRsyncOptions '$remoteStage/apps/web/public/' /opt/noderasoftware/apps/web/public/
+
+if [ "`$preserve_landing_root" = "1" ]; then
+  for landing_file in index.html index.txt; do
+    if [ -f "`$landing_preserve/`$landing_file" ]; then
+      sudo cp -a "`$landing_preserve/`$landing_file" "/opt/noderasoftware/apps/web/out/`$landing_file"
+    fi
+  done
+  if [ -d "`$landing_preserve/_next/static" ]; then
+    sudo mkdir -p /opt/noderasoftware/apps/web/out/_next/static
+    sudo rsync -a "`$landing_preserve/_next/static/" /opt/noderasoftware/apps/web/out/_next/static/
+  fi
+  for landing_dir in personal personal-assets assets images img; do
+    if [ -d "`$landing_preserve/`$landing_dir" ]; then
+      sudo rm -rf "/opt/noderasoftware/apps/web/out/`$landing_dir"
+      sudo cp -a "`$landing_preserve/`$landing_dir" "/opt/noderasoftware/apps/web/out/`$landing_dir"
+    fi
+  done
+fi
+
 test -s '$remoteStage/apps/web/out/app-version.json'
 test -s '$remoteStage/apps/web/public/app-version.json'
 sudo install -o hotelops -g hotelops -m 644 '$remoteStage/apps/web/out/app-version.json' /opt/noderasoftware/apps/web/out/app-version.json

@@ -3,7 +3,8 @@ param(
   [switch] $SkipBuild,
   [switch] $InstallDependencies,
   [switch] $PushDatabaseSchema,
-  [switch] $SkipLocalPiBackup
+  [switch] $SkipLocalPiBackup,
+  [switch] $UpdateLandingPage
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,5 +26,7 @@ if ($IncludeDownloads) { $args += "-IncludeDownloads" }
 if ($InstallDependencies) { $args += "-InstallDependencies" }
 if ($PushDatabaseSchema) { $args += "-PushDatabaseSchema" }
 if ($SkipLocalPiBackup) { $args += "-SkipLocalPiBackup" }
+# Use -UpdateLandingPage only when intentionally publishing the personal root page.
+if ($UpdateLandingPage) { $args += "-UpdateLandingPage" }
 
 & powershell.exe @args
