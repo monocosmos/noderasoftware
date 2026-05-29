@@ -1242,6 +1242,39 @@ function NoderaBrandFooter() {
   return null;
 }
 
+function shellBuildLabel(info: ShellAppInfo) {
+  const buildNumber = info.buildNumber || info.versionCode;
+  return Number.isFinite(buildNumber) && buildNumber > 0 ? `Build ${buildNumber}` : "Build -";
+}
+
+function SidebarShellMeta({
+  appUpdateNotice,
+  onAppUpdate,
+  shellAppInfo
+}: {
+  appUpdateNotice: AppUpdateNotice | null;
+  onAppUpdate: (notice: AppUpdateNotice) => void;
+  shellAppInfo: ShellAppInfo | null;
+}) {
+  return (
+    <div className="sidebar-meta">
+      <div className="sidebar-brand-site">www.noderasoftware.com</div>
+      {shellAppInfo ? (
+        <button
+          type="button"
+          className={`sidebar-app-version ${appUpdateNotice ? "outdated" : ""}`}
+          onClick={() => appUpdateNotice && onAppUpdate(appUpdateNotice)}
+          disabled={!appUpdateNotice}
+        >
+          {appUpdateNotice ? <span className="sidebar-app-version-badge">Güncelleme</span> : null}
+          <span>{shellAppInfo.label} v{shellAppInfo.version}</span>
+          <span className="sidebar-app-version-detail">{shellBuildLabel(shellAppInfo)}</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function AndroidLogo() {
   return (
     <svg className="download-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1498,6 +1531,7 @@ function AppUpdateCard({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate
         <AlertTriangle size={23} />
       </div>
       <div className="app-update-copy">
+        <span className="app-update-kicker">Güncelleme</span>
         <strong>{notice.title}</strong>
         <span>{notice.message || `${notice.label} uygulaması için yeni güncelleme hazır.`}</span>
       </div>
@@ -2885,16 +2919,7 @@ export function HotelOpsSystem() {
               </div>
               <ChevronRight size={14} color="rgba(255,255,255,.45)" />
             </button>
-            {shellAppInfo ? (
-              <button
-                type="button"
-                className={`sidebar-app-version ${appUpdateNotice ? "outdated" : ""}`}
-                onClick={() => appUpdateNotice && openAppUpdateDownload(appUpdateNotice)}
-                disabled={!appUpdateNotice}
-              >
-                {shellAppInfo.label} v{shellAppInfo.version}
-              </button>
-            ) : null}
+            <SidebarShellMeta appUpdateNotice={appUpdateNotice} onAppUpdate={openAppUpdateDownload} shellAppInfo={shellAppInfo} />
           </div>
         </aside>
 
