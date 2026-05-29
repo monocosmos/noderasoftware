@@ -105,6 +105,9 @@ function Invoke-RemoteCommand {
   )
 
   ssh @sshPortArgs "${PiUser}@${PiHost}" $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "Uzak komut basarisiz oldu. Exit code: $LASTEXITCODE"
+  }
 }
 
 function Invoke-RemoteBashScript {
@@ -115,6 +118,9 @@ function Invoke-RemoteBashScript {
 
   $normalizedScript = $Script.Replace("`r`n", "`n").Replace("`r", "`n")
   $normalizedScript | ssh @sshPortArgs "${PiUser}@${PiHost}" "tr -d '\015' | bash -s"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Uzak bash scripti basarisiz oldu. Exit code: $LASTEXITCODE"
+  }
 }
 
 try {
@@ -242,6 +248,10 @@ sudo rsync -a '$remoteStage/apps/api/tsconfig.json' /opt/noderasoftware/apps/api
 sudo rsync -a --delete $webOutRsyncOptions '$remoteStage/apps/web/out/' /opt/noderasoftware/apps/web/out/
 sudo rsync -a --delete '$remoteStage/apps/web/src/' /opt/noderasoftware/apps/web/src/
 sudo rsync -a --delete $webPublicRsyncOptions '$remoteStage/apps/web/public/' /opt/noderasoftware/apps/web/public/
+test -s '$remoteStage/apps/web/out/app-version.json'
+test -s '$remoteStage/apps/web/public/app-version.json'
+sudo install -o hotelops -g hotelops -m 644 '$remoteStage/apps/web/out/app-version.json' /opt/noderasoftware/apps/web/out/app-version.json
+sudo install -o hotelops -g hotelops -m 644 '$remoteStage/apps/web/public/app-version.json' /opt/noderasoftware/apps/web/public/app-version.json
 sudo rsync -a '$remoteStage/apps/web/package.json' /opt/noderasoftware/apps/web/package.json
 sudo rsync -a '$remoteStage/apps/web/next.config.ts' /opt/noderasoftware/apps/web/next.config.ts
 sudo rsync -a '$remoteStage/apps/web/tailwind.config.ts' /opt/noderasoftware/apps/web/tailwind.config.ts
@@ -279,6 +289,7 @@ $databaseCommand
 sudo systemctl restart hotelops-api
 sudo nginx -t
 sudo systemctl reload nginx
+curl -k --resolve noderasoftware.com:443:127.0.0.1 -fsS https://noderasoftware.com/app-version.json | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const j=JSON.parse(s);if(!j.platforms||!j.platforms.desktop||!j.platforms.androidDirect||!j.platforms.androidPlay)process.exit(2);console.log("app-version-ok");});'
 for i in 1 2 3 4 5 6 7 8 9 10; do
   if curl -fsS http://127.0.0.1:4000/health; then
     break

@@ -26,6 +26,14 @@ HotelOps user-facing app version stays simple, while each distributable build ge
 
 Every revised Windows EXE or Android APK must increase its hidden code, even when the visible version stays `1.0.0`. Otherwise old installed apps cannot reliably detect that a newer build exists.
 
+`/app-version.json` is a release-critical file. Raspberry Pi deploys must fail if this URL does not return parseable JSON with `desktop`, `androidDirect`, and `androidPlay` platform entries. If nginx returns HTML for this path, installed apps can miss updates or show inconsistent update warnings.
+
+Post-deploy workstation check:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\workstation\test-app-version-manifest.ps1
+```
+
 Current baseline:
 
 - Windows visible version: `1.0.0`
