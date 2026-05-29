@@ -29,7 +29,7 @@ Every revised Windows EXE or Android APK must increase its hidden code, even whe
 Current baseline:
 
 - Windows visible version: `1.0.0`
-- Windows hidden build code: `3`
+- Windows hidden build code: `4`
 - Android visible version: `1.0.0`
 - Android hidden product build: `4`
 - Android hidden update code: `2026052901`
