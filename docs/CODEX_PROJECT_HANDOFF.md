@@ -150,6 +150,8 @@ Yeni Codex oturumunda su dosyalari once okut:
 ```text
 docs/CODEX_PROJECT_HANDOFF.md
 docs/DESKTOP_REGRESSION_GUARDRAILS.md
+docs/ANDROID_DISTRIBUTION_POLICY.md
+docs/ANDROID_PUSH_GUARDRAILS.md
 docs/REMOTE_WORKSTATION_WORKFLOW.md
 docs/TWO_COMPUTER_CODEX_WORKFLOW.md
 docs/RASPBERRY_PI_DEPLOYMENT.md
@@ -243,6 +245,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Document
 ```
 
 Bu test gecmeden bildirim sistemi tamamlanmis sayilmaz.
+
+### 4.2 Android yayin kanallari
+
+Android uygulama iki kanaldan uretilir:
+
+- Direct APK: `direct` flavor, paket `com.example.nodera`
+- Play Store AAB: `play` flavor, paket `com.noderasoftware.hotelops`
+
+Direct APK mevcut kurulu APK kullanicilarinin guncelleme zincirini korur. Play
+Store kanali Google Play icin profesyonel ve kalici paket adini kullanir.
+
+Degisiklik yapmadan once oku:
+
+```text
+docs/ANDROID_DISTRIBUTION_POLICY.md
+```
 
 ### 5. Raspberry Pi deploy
 

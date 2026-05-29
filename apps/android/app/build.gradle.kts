@@ -15,16 +15,33 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.nodera"
         minSdk = 23
         targetSdk = 36
         // versionName kullaniciya gorunen sade surumdur. versionCode Android'in
         // yukleme siralamasi icin monoton kalir; gizli urun build'i Kotlin
         // tarafinda HotelOpsAppVersion.BUILD ile tutulur.
-        versionCode = 2026052803
+        versionCode = 2026052901
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("direct") {
+            dimension = "distribution"
+            applicationId = "com.example.nodera"
+            buildConfigField("String", "HOTELOPS_DISTRIBUTION", "\"direct\"")
+        }
+        create("play") {
+            dimension = "distribution"
+            applicationId = "com.noderasoftware.hotelops"
+            buildConfigField("String", "HOTELOPS_DISTRIBUTION", "\"play\"")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

@@ -33,6 +33,9 @@ class HotelOpsAndroidBridge(context: Context) {
     fun buildNumber(): Int = HotelOpsAppVersion.BUILD
 
     @JavascriptInterface
+    fun channel(): String = HotelOpsAppVersion.CHANNEL
+
+    @JavascriptInterface
     fun getAuthToken(): String = prefs.getString(HotelOpsPrefs.AUTH_TOKEN, "").orEmpty()
 
     @JavascriptInterface
@@ -160,6 +163,10 @@ class HotelOpsAndroidBridge(context: Context) {
             val value = rawUrl?.trim().orEmpty()
             if (value.isBlank()) return null
 
+            if (value.startsWith("market://details?id=com.noderasoftware.hotelops")) {
+                return Uri.parse(value)
+            }
+
             val absolute = when {
                 value.startsWith("/") -> "$SITE_ORIGIN$value"
                 value.startsWith("http://") || value.startsWith("https://") -> value
@@ -168,6 +175,11 @@ class HotelOpsAndroidBridge(context: Context) {
 
             val uri = runCatching { Uri.parse(absolute) }.getOrNull() ?: return null
             val host = uri.host?.lowercase() ?: return null
+            val playStore = host == "play.google.com" &&
+                uri.path == "/store/apps/details" &&
+                uri.getQueryParameter("id") == "com.noderasoftware.hotelops"
+            if (playStore) return uri
+
             val trustedHost = host == "noderasoftware.com" || host == "www.noderasoftware.com"
             val trustedPath = uri.path?.startsWith("/downloads/") == true
             if (!trustedHost || !trustedPath) return null

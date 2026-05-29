@@ -17,7 +17,10 @@ HotelOps user-facing app version stays simple, while each distributable build ge
 - Android hidden update code is stored in:
   - `apps/android/app/build.gradle.kts` as `versionCode`
   - `apps/android/app/src/main/java/com/example/nodera/HotelOpsAppVersion.kt` as `UPDATE_CODE`
-  - `apps/web/public/app-version.json` as `platforms.android.latestCode`
+  - `apps/web/public/app-version.json` as `platforms.androidDirect.latestCode` and `platforms.androidPlay.latestCode`
+- Android has two distribution channels:
+  - Direct APK flavor: `direct`, package `com.example.nodera`
+  - Play Store AAB flavor: `play`, package `com.noderasoftware.hotelops`
 
 ## Required rule
 
@@ -28,4 +31,5 @@ Current baseline:
 - Windows visible version: `1.0.0`
 - Windows hidden build code: `3`
 - Android visible version: `1.0.0`
-- Android hidden update code: `2026052803`
+- Android hidden product build: `4`
+- Android hidden update code: `2026052901`

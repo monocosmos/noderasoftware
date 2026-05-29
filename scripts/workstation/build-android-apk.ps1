@@ -206,22 +206,23 @@ $credentials = Get-KeystoreCredentials
 
 Write-Host "==> Android APK build basliyor" -ForegroundColor Cyan
 Write-Host "Android kaynak: $androidDir"
+Write-Host "Kanal: direct APK"
 Write-Host "Keystore: $keystorePath"
 Write-Host "Beklenen sertifika: $expectedCertSha256"
 
 if (-not $SkipGradleBuild) {
   Push-Location $androidDir
   try {
-    & .\gradlew.bat :app:assembleRelease
+    & .\gradlew.bat :app:assembleDirectRelease
     if ($LASTEXITCODE -ne 0) {
-      throw "Gradle release build basarisiz oldu."
+      throw "Gradle direct release build basarisiz oldu."
     }
   } finally {
     Pop-Location
   }
 }
 
-$unsignedApk = Join-Path $androidDir "app\build\outputs\apk\release\app-release-unsigned.apk"
+$unsignedApk = Join-Path $androidDir "app\build\outputs\apk\direct\release\app-direct-release-unsigned.apk"
 if (-not (Test-Path -LiteralPath $unsignedApk)) {
   throw "Unsigned release APK bulunamadi: $unsignedApk"
 }

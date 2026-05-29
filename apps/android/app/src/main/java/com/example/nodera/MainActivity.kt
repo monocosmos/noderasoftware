@@ -281,7 +281,7 @@ class MainActivity : ComponentActivity() {
             settings.cacheMode = WebSettings.LOAD_DEFAULT
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
-            settings.userAgentString = "${settings.userAgentString} NoderaHotelOpsAndroid/${HotelOpsAppVersion.UPDATE_CODE} HotelOpsAndroidVersion/${HotelOpsAppVersion.NAME} HotelOpsAndroidBuild/${HotelOpsAppVersion.BUILD} HotelOpsAndroid"
+            settings.userAgentString = "${settings.userAgentString} NoderaHotelOpsAndroid/${HotelOpsAppVersion.UPDATE_CODE} HotelOpsAndroidVersion/${HotelOpsAppVersion.NAME} HotelOpsAndroidBuild/${HotelOpsAppVersion.BUILD} HotelOpsAndroidChannel/${HotelOpsAppVersion.CHANNEL} HotelOpsAndroid"
 
             isHorizontalScrollBarEnabled = false
             isVerticalScrollBarEnabled = true
@@ -445,6 +445,7 @@ class MainActivity : ComponentActivity() {
               window.__HOTELOPS_APP_VERSION__ = "${HotelOpsAppVersion.NAME}";
               window.__HOTELOPS_APP_VERSION_CODE__ = ${HotelOpsAppVersion.UPDATE_CODE};
               window.__HOTELOPS_APP_BUILD__ = ${HotelOpsAppVersion.BUILD};
+              window.__HOTELOPS_APP_CHANNEL__ = "${HotelOpsAppVersion.CHANNEL}";
               window.dispatchEvent(new CustomEvent("hotelops:native-shell-ready"));
 
               function syncToken() {

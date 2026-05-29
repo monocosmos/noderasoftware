@@ -45,7 +45,7 @@ object HotelOpsPushRegistrar {
                 val payload = JSONObject()
                     .put("platform", "ANDROID")
                     .put("fcmToken", fcmToken)
-                    .put("appVersion", HotelOpsAppVersion.NAME)
+                    .put("appVersion", "${HotelOpsAppVersion.NAME} ${HotelOpsAppVersion.CHANNEL}")
                     .put("appBuild", HotelOpsAppVersion.BUILD)
 
                 // Push token kaydi HTTPS API'ye yapilir; Firebase sadece cihaz
@@ -57,7 +57,7 @@ object HotelOpsPushRegistrar {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setRequestProperty("Accept", "application/json")
-                connection.setRequestProperty("User-Agent", "NoderaHotelOpsAndroid/${HotelOpsAppVersion.UPDATE_CODE} HotelOpsAndroidVersion/${HotelOpsAppVersion.NAME} HotelOpsAndroidBuild/${HotelOpsAppVersion.BUILD}")
+                connection.setRequestProperty("User-Agent", "NoderaHotelOpsAndroid/${HotelOpsAppVersion.UPDATE_CODE} HotelOpsAndroidVersion/${HotelOpsAppVersion.NAME} HotelOpsAndroidBuild/${HotelOpsAppVersion.BUILD} HotelOpsAndroidChannel/${HotelOpsAppVersion.CHANNEL}")
                 connection.outputStream.use { output ->
                     output.write(payload.toString().toByteArray(Charsets.UTF_8))
                 }

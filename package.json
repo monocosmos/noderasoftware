@@ -13,6 +13,8 @@
     "desktop:pack": "npm run pack --workspace @hotel-ops/desktop",
     "desktop:dist": "npm run dist --workspace @hotel-ops/desktop",
     "desktop:test-window-controls": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\test-desktop-window-controls.ps1",
+    "android:apk": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-android-apk.ps1",
+    "android:play-aab": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-android-play-aab.ps1",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
   },

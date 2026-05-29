@@ -95,6 +95,7 @@ type HotelOpsAndroidBridge = {
   version?: () => string;
   versionCode?: () => number;
   buildNumber?: () => number;
+  channel?: () => string;
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
 };
@@ -111,6 +112,7 @@ type HotelOpsShellWindow = Window & {
   __HOTELOPS_APP_VERSION__?: string;
   __HOTELOPS_APP_VERSION_CODE__?: number | string;
   __HOTELOPS_APP_BUILD__?: number | string;
+  __HOTELOPS_APP_CHANNEL__?: string;
   HotelOpsAndroidShell?: HotelOpsAndroidBridge;
   hotelOpsDesktopShell?: HotelOpsDesktopBridge;
 };
@@ -128,11 +130,12 @@ type AppVersionManifest = {
   schema: number;
   updatedAt: string;
   checkIntervalMs?: number;
-  platforms: Partial<Record<"desktop" | "android", AppVersionPlatformManifest>>;
+  platforms: Partial<Record<"desktop" | "android" | "androidDirect" | "androidPlay", AppVersionPlatformManifest>>;
 };
 
 type ShellAppInfo = {
   runtime: Extract<ShellRuntime, "desktop" | "android">;
+  channel?: "direct" | "play";
   label: string;
   version: string;
   versionCode: number;
@@ -141,6 +144,7 @@ type ShellAppInfo = {
 
 type AppUpdateNotice = {
   runtime: ShellAppInfo["runtime"];
+  channel?: ShellAppInfo["channel"];
   label: string;
   currentVersion: string;
   latestVersion: string;
@@ -441,7 +445,9 @@ function readAndroidUserAgentInfo(userAgent: string) {
   const updateCode = toShellNumber(userAgent.match(/NoderaHotelOpsAndroid\/(\d+)/i)?.[1]);
   const version = userAgent.match(/HotelOpsAndroidVersion\/([^\s]+)/i)?.[1] || "";
   const buildNumber = toShellNumber(userAgent.match(/HotelOpsAndroidBuild\/(\d+)/i)?.[1]);
-  return { updateCode, version, buildNumber };
+  const rawChannel = userAgent.match(/HotelOpsAndroidChannel\/([^\s]+)/i)?.[1] || "";
+  const channel = rawChannel === "play" ? "play" : rawChannel === "direct" ? "direct" : undefined;
+  return { updateCode, version, buildNumber, channel };
 }
 
 function readDesktopUserAgentInfo(userAgent: string) {
@@ -497,6 +503,12 @@ function readShellAppInfo(): ShellAppInfo | null {
 
   if (runtime === "android") {
     const androidUserAgent = readAndroidUserAgentInfo(navigator.userAgent || "");
+    const rawChannel =
+      callShellString(() => shellWindow.HotelOpsAndroidShell?.channel?.() || "") ||
+      String(shellWindow.__HOTELOPS_APP_CHANNEL__ || "") ||
+      androidUserAgent.channel ||
+      "direct";
+    const channel = rawChannel === "play" ? "play" : "direct";
     const version =
       callShellString(() => shellWindow.HotelOpsAndroidShell?.version?.() || "") ||
       shellWindow.__HOTELOPS_APP_VERSION__ ||
@@ -511,14 +523,15 @@ function readShellAppInfo(): ShellAppInfo | null {
       toShellNumber(shellWindow.__HOTELOPS_APP_BUILD__) ||
       androidUserAgent.buildNumber;
 
-    return { runtime, label: "Android", version, versionCode, buildNumber };
+    return { runtime, channel, label: "Android", version, versionCode, buildNumber };
   }
 
   return null;
 }
 
-function appVersionPlatform(runtime: ShellAppInfo["runtime"]) {
-  return runtime === "desktop" ? "desktop" : "android";
+function appVersionPlatform(info: ShellAppInfo) {
+  if (info.runtime === "desktop") return "desktop";
+  return info.channel === "play" ? "androidPlay" : "androidDirect";
 }
 
 function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformManifest): AppUpdateNotice | null {
@@ -527,6 +540,7 @@ function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformMa
 
   return {
     runtime: info.runtime,
+    channel: info.channel,
     label: info.label,
     currentVersion: info.version,
     latestVersion: platform.latestVersion,
@@ -2135,7 +2149,8 @@ export function HotelOpsSystem() {
         const response = await fetch(`/app-version.json?t=${Date.now()}`, { cache: "no-store" });
         if (!response.ok) return;
         const manifest = (await response.json()) as AppVersionManifest;
-        const platform = manifest.platforms[appVersionPlatform(info.runtime)];
+        const platform = manifest.platforms[appVersionPlatform(info)] ??
+          (info.runtime === "android" ? manifest.platforms.android : undefined);
         const notice = platform ? buildAppUpdateNotice(info, platform) : null;
 
         if (cancelled) return;
