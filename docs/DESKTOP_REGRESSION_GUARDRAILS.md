@@ -19,7 +19,7 @@ Sebep:
 - Ayri child-window ile cizilen butonlar piksel hizasi ve tooltip tasmasi uretebilir.
 - Electron `titleBarOverlay` sag uste iyi oturur, ancak Windows'ta min/max hover arka planini tutarli sekilde gostermeyebilir.
 - In-page custom caption, sifira sifir hizalama ve min/max/close hover renklerini birlikte kontrol eder.
-- Gercek `transparent: true` Windows penceresi testte maximize hattini bozdugu icin varsayilan yontem degildir. Glass/blur hissi istenirse pencere transparan yapilmayacak; `backgroundMaterial: "acrylic"` ve desktop-only CSS katmani kullanilacak.
+- Gercek `transparent: true` Windows penceresi testte maximize hattini bozdugu icin varsayilan yontem degildir. Windows tarafinda glass/blur/acrylic katmani da kullanici tarafindan begenilmedigi icin varsayilan tema solid Mica/normal arka planla kalir.
 
 ## Kural 2: Desktop degisikliginden sonra otomatik buton testi kosulacak
 

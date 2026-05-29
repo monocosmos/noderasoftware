@@ -5,7 +5,7 @@ const packageMetadata = require("../package.json");
 
 const HOTEL_URL = process.env.HOTELOPS_URL || "https://noderasoftware.com/hotel/";
 const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
-const DESKTOP_APP_BUILD = 4;
+const DESKTOP_APP_BUILD = 5;
 const ALLOWED_HOSTS = new Set(["noderasoftware.com", "www.noderasoftware.com"]);
 const PRELOAD_PATH = path.join(__dirname, "preload.cjs");
 const OFFLINE_PATH = path.join(__dirname, "offline.html");
@@ -485,10 +485,10 @@ function applyWindowsBackdrop(win) {
 
   try {
     if (typeof win.setBackgroundMaterial === "function") {
-      win.setBackgroundMaterial("acrylic");
+      win.setBackgroundMaterial("mica");
     }
   } catch {
-    // Older Windows builds simply render the same frameless shell without Acrylic.
+    // Older Windows builds simply render the same frameless shell without Mica.
   }
 }
 
@@ -674,7 +674,7 @@ function createWindow() {
         }
       : {
           thickFrame: true,
-          backgroundMaterial: "acrylic"
+          backgroundMaterial: "mica"
         }),
     resizable: true,
     minimizable: true,
@@ -682,7 +682,7 @@ function createWindow() {
     fullscreenable: true,
     closable: true,
     autoHideMenuBar: true,
-    backgroundColor: process.platform === "win32" ? "#00f3f6fb" : "#f3f6fb",
+    backgroundColor: "#f3f6fb",
     hasShadow: true,
     icon: DESKTOP_WINDOW_ICON_PATH,
     webPreferences: {

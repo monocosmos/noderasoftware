@@ -1,51 +1,9 @@
 html.hotelops-desktop-shell {
   --hotelops-window-controls-width: 138px;
-  background: transparent !important;
 }
 
 html.hotelops-platform-darwin {
   --hotelops-window-controls-width: 0px;
-}
-
-html.hotelops-desktop-shell body,
-html.hotelops-desktop-shell #__next,
-html.hotelops-desktop-shell .classic-app {
-  background: transparent !important;
-}
-
-html.hotelops-desktop-shell .login-page {
-  background:
-    linear-gradient(135deg, rgba(15, 23, 42, .74) 0%, rgba(30, 58, 95, .66) 50%, rgba(37, 99, 235, .60) 100%) !important;
-  backdrop-filter: blur(18px) saturate(122%) !important;
-}
-
-html.hotelops-desktop-shell .layout-wrapper {
-  background: rgba(248, 250, 252, .68) !important;
-  backdrop-filter: blur(18px) saturate(122%) !important;
-}
-
-html.hotelops-desktop-shell .main-content,
-html.hotelops-desktop-shell .page-content {
-  background: rgba(248, 250, 252, .60) !important;
-}
-
-html.hotelops-desktop-shell .site-header {
-  background: rgba(255, 255, 255, .82) !important;
-  backdrop-filter: blur(18px) saturate(122%) !important;
-}
-
-html.hotelops-desktop-shell .sidebar {
-  background: rgba(15, 23, 42, .90) !important;
-  backdrop-filter: blur(18px) saturate(122%) !important;
-}
-
-html.hotelops-desktop-shell .login-box,
-html.hotelops-desktop-shell .card,
-html.hotelops-desktop-shell .side-card,
-html.hotelops-desktop-shell .modal-panel,
-html.hotelops-desktop-shell .notif-dropdown {
-  background: rgba(255, 255, 255, .88) !important;
-  backdrop-filter: blur(16px) saturate(118%) !important;
 }
 
 html.hotelops-desktop-shell .layout-wrapper {
