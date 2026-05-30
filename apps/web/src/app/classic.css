@@ -569,7 +569,9 @@
 
 .platform-admin-login {
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 28px;
+  display: flex;
   align-items: center;
   justify-content: center;
   background:
@@ -578,28 +580,27 @@
 }
 
 .platform-admin-login-panel {
-  width: min(1040px, 100%);
+  width: min(1040px, calc(100% - 32px));
+  min-height: 520px;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) 430px;
-  gap: 24px;
-  align-items: stretch;
-}
-
-.platform-admin-login-copy,
-.platform-admin-login-card {
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 28px;
+  align-items: center;
+  padding: 34px;
+  border-radius: 24px;
   border: 1px solid rgba(148, 163, 184, .20);
+  background: linear-gradient(145deg, rgba(15, 23, 42, .94), rgba(15, 23, 42, .76));
   box-shadow: 0 28px 80px rgba(0, 0, 0, .32);
 }
 
 .platform-admin-login-copy {
-  min-height: 500px;
-  border-radius: 22px;
-  padding: 38px;
+  min-height: auto;
+  padding: 22px 8px 22px 6px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  gap: 68px;
   color: #e5eefb;
-  background: linear-gradient(145deg, rgba(15, 23, 42, .92), rgba(15, 23, 42, .64));
 }
 
 .platform-admin-badge {
@@ -655,12 +656,15 @@
 }
 
 .platform-admin-login-card {
-  border-radius: 22px;
+  min-height: 420px;
+  border: 1px solid rgba(226, 232, 240, .9);
+  border-radius: 18px;
   padding: 30px;
-  background: #fff;
+  background: rgba(255, 255, 255, .96);
   display: grid;
   align-content: center;
   gap: 16px;
+  box-shadow: none;
 }
 
 .platform-admin-logo-row {
@@ -4039,20 +4043,25 @@ textarea.form-control {
   .page-content { padding: 12px 12px calc(96px + var(--classic-safe-bottom)); }
   .platform-admin-login {
     padding: 14px;
-    align-items: stretch;
+    align-items: flex-start;
   }
   .platform-admin-login-panel {
     grid-template-columns: 1fr;
+    width: 100%;
+    min-height: auto;
+    padding: 20px;
+    gap: 20px;
   }
   .platform-admin-login-copy {
     min-height: auto;
-    padding: 22px;
-    gap: 28px;
+    padding: 4px 2px 0;
+    gap: 18px;
   }
   .platform-admin-lock-grid {
     grid-template-columns: 1fr;
   }
   .platform-admin-login-card {
+    min-height: auto;
     padding: 22px;
   }
   .platform-admin-topbar {

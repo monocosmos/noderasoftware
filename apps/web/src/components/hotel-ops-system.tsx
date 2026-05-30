@@ -2555,8 +2555,8 @@ export function HotelOpsSystem() {
         const platformAdmin = isPlatformAdminUser(bootstrap.user);
         if (platformPanelRequest && !platformAdmin) {
           clearApiToken();
-          setLoginUsername(PLATFORM_ADMIN_USERNAME);
-          setLoginError("Bu panel yalnÄ±zca NODERADMIN hesabÄ± ile aÃ§Ä±lÄ±r.");
+          setLoginUsername("");
+          setLoginError("Bu panel yalnızca yetkili platform hesabı ile açılır.");
           setSession(null);
           setHydrated(true);
           return;
@@ -3005,20 +3005,20 @@ export function HotelOpsSystem() {
     setLoginError("");
 
     try {
-      const usernameForLogin = loginUsername.trim() || (isPlatformPanelPath(pathRef.current) ? PLATFORM_ADMIN_USERNAME : "");
+      const platformLogin = isPlatformPanelPath(pathRef.current);
+      const usernameForLogin = platformLogin ? PLATFORM_ADMIN_USERNAME : loginUsername.trim();
       const login = await apiRequest<LoginResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ username: usernameForLogin, password: loginPassword })
       });
       storeApiToken(login.token, remember);
       const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
-      const platformLogin = isPlatformPanelPath(pathRef.current);
       const platformAdmin = isPlatformAdminUser(bootstrap.user);
       if (platformLogin && !platformAdmin) {
         clearApiToken();
         setSession(null);
         setLoginPassword("");
-        setLoginError("Bu panel yalnÄ±zca NODERADMIN hesabÄ± ile aÃ§Ä±lÄ±r.");
+        setLoginError("Bu panel yalnızca yetkili platform hesabı ile açılır.");
         return;
       }
       setUsers(bootstrap.users);
@@ -3373,9 +3373,7 @@ export function HotelOpsSystem() {
         <PlatformAdminLoginScreen
           error={loginError}
           loginPassword={loginPassword}
-          loginUsername={loginUsername || PLATFORM_ADMIN_USERNAME}
           setLoginPassword={setLoginPassword}
-          setLoginUsername={setLoginUsername}
           onLogin={handleLoginApi}
         />
       );
@@ -3403,11 +3401,9 @@ export function HotelOpsSystem() {
   if (platformPanelRequest && !isPlatformAdminUser(session)) {
     return (
       <PlatformAdminLoginScreen
-        error={loginError || "Aktif oturum bu panele yetkili deÄŸil. NODERADMIN ile giriÅŸ yapÄ±n."}
+        error={loginError || "Aktif oturum bu panele yetkili değil. Yetkili platform hesabı ile giriş yapın."}
         loginPassword={loginPassword}
-        loginUsername={loginUsername || PLATFORM_ADMIN_USERNAME}
         setLoginPassword={setLoginPassword}
-        setLoginUsername={setLoginUsername}
         onLogin={handleLoginApi}
         activeHotelUser={session.fullName}
       />
@@ -3421,7 +3417,6 @@ export function HotelOpsSystem() {
         alertSecondsRemaining={alertSecondsRemaining}
         dismissAlert={dismissAlert}
         logout={logoutApi}
-        session={session}
       >
         <HotelPanelPage session={session} setAlert={setAlert} />
       </PlatformAdminShell>
@@ -3672,17 +3667,13 @@ function PlatformAdminLoginScreen({
   activeHotelUser,
   error,
   loginPassword,
-  loginUsername,
   setLoginPassword,
-  setLoginUsername,
   onLogin
 }: {
   activeHotelUser?: string;
   error: string;
   loginPassword: string;
-  loginUsername: string;
   setLoginPassword: (value: string) => void;
-  setLoginUsername: (value: string) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }) {
   return (
@@ -3695,12 +3686,12 @@ function PlatformAdminLoginScreen({
           </div>
           <div>
             <h1>Nodera Tenant Console</h1>
-            <p>Otel kurulumları, tenant kayıtları ve sistem sahibi işlemleri yalnızca NODERADMIN hesabı ile yönetilir.</p>
+            <p>Otel kurulumları, tenant kayıtları ve sistem sahibi işlemleri güvenli platform hesabı ile yönetilir.</p>
           </div>
           <div className="platform-admin-lock-grid">
-            <div><LockKeyhole size={17} /><span>Tek sahip hesabı</span></div>
+            <div><LockKeyhole size={17} /><span>Tek sahip erişimi</span></div>
             <div><KeyRound size={17} /><span>Rol devredilemez</span></div>
-            <div><Users size={17} /><span>GM ve İK görünmez</span></div>
+            <div><Users size={17} /><span>Otel kullanıcılarına kapalı</span></div>
           </div>
         </div>
 
@@ -3708,8 +3699,8 @@ function PlatformAdminLoginScreen({
           <div className="platform-admin-logo-row">
             <span className="logo-mark logo-mark-image"><BrandLogo /></span>
             <div>
-              <strong>NODERADMIN</strong>
-              <span>Platform sahibi girişi</span>
+              <strong>Platform Girişi</strong>
+              <span>Yetkili sistem hesabı</span>
             </div>
           </div>
 
@@ -3727,18 +3718,6 @@ function PlatformAdminLoginScreen({
           )}
 
           <div className="form-group">
-            <label className="form-label" htmlFor="platformAdminUsername">Admin Hesabı</label>
-            <input
-              id="platformAdminUsername"
-              className="form-control"
-              value={loginUsername}
-              onChange={(event) => setLoginUsername(event.target.value)}
-              placeholder={PLATFORM_ADMIN_USERNAME}
-              autoCapitalize="characters"
-              autoFocus
-            />
-          </div>
-          <div className="form-group">
             <label className="form-label" htmlFor="platformAdminPassword">Şifre</label>
             <input
               id="platformAdminPassword"
@@ -3747,10 +3726,11 @@ function PlatformAdminLoginScreen({
               value={loginPassword}
               onChange={(event) => setLoginPassword(event.target.value)}
               placeholder="Platform şifresi"
+              autoFocus
             />
           </div>
           <button type="submit" className="btn btn-primary btn-lg btn-full">
-            Site Admin Paneline Gir
+            Giriş
           </button>
         </form>
       </section>
@@ -3763,15 +3743,13 @@ function PlatformAdminShell({
   alertSecondsRemaining,
   children,
   dismissAlert,
-  logout,
-  session
+  logout
 }: {
   alert: string;
   alertSecondsRemaining: number;
   children: ReactNode;
   dismissAlert: () => void;
   logout: () => void | Promise<void>;
-  session: DemoUser;
 }) {
   return (
     <main className="classic-app platform-admin-shell">
@@ -3780,7 +3758,7 @@ function PlatformAdminShell({
           <span className="logo-mark logo-mark-image"><BrandLogo /></span>
           <div>
             <strong>Nodera Tenant Console</strong>
-            <span>{session.username} / Site Admin</span>
+            <span>Platform Admin / Site Admin</span>
           </div>
         </div>
         <button type="button" className="btn btn-ghost" onClick={() => void logout()}>
@@ -3791,7 +3769,7 @@ function PlatformAdminShell({
       <section className="platform-admin-content">
         <div className="platform-admin-hero">
           <div>
-            <span className="dashboard-eyebrow">NODERADMIN</span>
+            <span className="dashboard-eyebrow">Platform Sahibi</span>
             <h1>Site Admin Paneli</h1>
             <p>Bu ekran yalnızca platform sahibine açıktır. Otel genel müdürleri ve İK kullanıcıları bu paneli göremez, yetkilendiremez veya devredemez.</p>
           </div>
