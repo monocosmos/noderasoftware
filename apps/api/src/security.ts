@@ -26,6 +26,7 @@ export const departmentIdToCode: Record<string, string> = {
 };
 
 export const roleScopes: Record<string, string[]> = {
+  siteAdmin: ["executive", "hr", "technical", "housekeeping", "frontOffice", "security", "spa", "sales", "fnb"],
   generalManager: ["executive", "hr", "technical", "housekeeping", "frontOffice", "security", "spa", "sales", "fnb"],
   hrManager: ["hr"],
   technicalManager: ["technical"],
@@ -41,6 +42,7 @@ export const roleScopes: Record<string, string[]> = {
 };
 
 export const roleLabels: Record<string, string> = {
+  siteAdmin: "Site Admin",
   generalManager: "Genel Müdür",
   hrManager: "İnsan Kaynakları Müdürü",
   technicalManager: "Teknik Müdür",
@@ -77,6 +79,7 @@ export const permissions = [
 export type PermissionCode = (typeof permissions)[number];
 
 export const rolePermissions: Record<string, PermissionCode[]> = {
+  siteAdmin: ["dashboard:read", "settings:read", "audit:read"],
   generalManager: ["dashboard:read", "work-orders:read", "calendar:read", "reports:read", "audit:read", "departments:read", "settings:read"],
   hrManager: ["dashboard:read", "users:read", "users:write", "users:reset-password", "work-orders:read", "calendar:read", "calendar:write", "reports:read", "audit:read", "departments:read", "departments:write", "settings:read"],
   technicalManager: ["dashboard:read", "work-orders:read", "work-orders:create", "work-orders:update", "calendar:read", "calendar:write", "reports:read", "settings:read"],
@@ -101,6 +104,6 @@ export function can(user: Pick<User, "roleId"> & { role: { code: string } }, per
 }
 
 export function canCreateForDepartment(roleId: string, _ownDepartmentId: string, targetDepartmentId: string) {
-  if (roleId === "generalManager") return false;
+  if (roleId === "generalManager" || roleId === "siteAdmin") return false;
   return Boolean(targetDepartmentId || _ownDepartmentId);
 }

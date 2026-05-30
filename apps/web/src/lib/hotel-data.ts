@@ -363,6 +363,7 @@ export const formBlueprints: Record<string, string[]> = {
 };
 
 export const roleDemoUsers: Record<RoleId, string> = {
+  siteAdmin: "Hasan Fırat Keskin",
   generalManager: "Aylin Karaca",
   hrManager: "Mert Demir",
   technicalManager: "Selim Arslan",

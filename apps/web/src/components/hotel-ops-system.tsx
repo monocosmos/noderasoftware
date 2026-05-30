@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   AlertTriangle,
@@ -46,6 +46,7 @@ type Priority = "Urgent" | "High" | "Normal" | "Low";
 type JobStatus = "Pending" | "InProgress" | "Completed" | "Delayed" | "Cancelled";
 type ShellRuntime = "web" | "desktop" | "android";
 type ModuleId =
+  | "hotelPanel"
   | "dashboard"
   | "jobs"
   | "maintenance"
@@ -88,6 +89,7 @@ type FeatureAccessId =
   | "featureDailyReport";
 type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
 type ModuleAccess = Record<AccessId, boolean>;
+type PageTransitionDirection = "none" | "forward" | "back";
 
 type HotelOpsAndroidBridge = {
   app?: () => string;
@@ -98,6 +100,7 @@ type HotelOpsAndroidBridge = {
   channel?: () => string;
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
+  saveImageToGallery?: (dataUrl?: string, fileName?: string) => boolean;
 };
 
 type HotelOpsDesktopBridge = {
@@ -156,6 +159,9 @@ type AppUpdateNotice = {
 
 type DemoUser = {
   id: string;
+  hotelId?: string;
+  hotelCode?: string;
+  hotelName?: string;
   username: string;
   password: string;
   fullName: string;
@@ -181,6 +187,7 @@ type JobRecord = {
   guestImpact?: boolean;
   slaRisk?: boolean;
   createdBy: string;
+  createdByDepartmentId?: string;
   description: string;
   tags: string;
   checklist: string[];
@@ -216,13 +223,23 @@ type JobApproval = {
   updatedAt: string;
 };
 
-type PhotoAttachment = {
-  id?: string;
+type PhotoQualityMode = "STANDARD" | "HD";
+
+type PhotoUploadVariant = {
   name: string;
   mimeType: string;
   size: number;
   dataUrl: string;
+};
+
+type PhotoAttachment = PhotoUploadVariant & {
+  id?: string;
+  clientId?: string;
   phase?: "GENERAL" | "BEFORE" | "AFTER";
+  qualityMode?: PhotoQualityMode;
+  standardVariant?: PhotoUploadVariant;
+  hdVariant?: PhotoUploadVariant;
+  hdPreparing?: boolean;
 };
 
 type CalendarRecord = {
@@ -343,6 +360,32 @@ type DepartmentRecord = {
   createdAt: string;
 };
 
+type HotelRecord = {
+  id: string;
+  name: string;
+  code: string;
+  timezone: string;
+  createdAt: string;
+  updatedAt: string;
+  counts: {
+    departments: number;
+    users: number;
+    reminders: number;
+    managementRequests: number;
+    operationDocuments: number;
+  };
+};
+
+type HotelDraft = {
+  name: string;
+  code: string;
+  timezone: string;
+  adminFullName: string;
+  adminUsername: string;
+  adminEmail: string;
+  adminPassword: string;
+};
+
 type UserDraft = {
   editId: string;
   fullName: string;
@@ -362,6 +405,8 @@ const SESSION_TOKEN = "hotelops.api.session-token";
 const STORAGE_SHELL = "hotelops.shell";
 const HOTEL_BASE_PATH = "/hotel";
 const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
+const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/reminders"] as const;
+const ALERT_AUTO_DISMISS_SECONDS = 10;
 
 type LoginResponse = {
   token: string;
@@ -397,6 +442,28 @@ function hotelUrl(path: string) {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   if (normalized === "/") return HOTEL_BASE_PATH;
   return `${HOTEL_BASE_PATH}${normalized}`;
+}
+
+function mobileTabIndexForPath(path: string) {
+  const normalizedPath = (path.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+  return MOBILE_TAB_PATHS.findIndex((tabPath) => (
+    normalizedPath === tabPath ||
+    (tabPath === "/dashboard" && normalizedPath === "/") ||
+    (tabPath !== "/dashboard" && normalizedPath.startsWith(`${tabPath}/`))
+  ));
+}
+
+function isNavPathActive(currentPath: string, itemPath: string) {
+  if (itemPath.includes("?")) return currentPath === itemPath;
+
+  const currentPathname = (currentPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+  const itemPathname = (itemPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+
+  if (itemPathname === "/dashboard") {
+    return currentPathname === "/" || currentPathname === "/dashboard" || currentPathname === "/login";
+  }
+
+  return currentPathname === itemPathname || currentPathname.startsWith(`${itemPathname}/`);
 }
 
 function apiBaseUrl() {
@@ -709,45 +776,211 @@ async function apiRequest<T>(path: string, options: RequestInit = {}) {
   return (await response.json()) as T;
 }
 
-function compressImage(file: File): Promise<PhotoAttachment> {
+const PHOTO_STANDARD_TARGET_BYTES = 900 * 1024;
+const PHOTO_STANDARD_MAX_SIDE = 1440;
+const PHOTO_STANDARD_MIN_SIDE = 720;
+const PHOTO_HD_TARGET_BYTES = 1_000_000;
+const PHOTO_HD_MAX_SIDE = 2048;
+const PHOTO_HD_MIN_SIDE = 720;
+const PHOTO_STANDARD_QUALITY_STEPS = [0.72, 0.64, 0.56, 0.48, 0.4, 0.34];
+const PHOTO_HD_QUALITY_STEPS = [0.82, 0.76, 0.7, 0.64, 0.58, 0.52, 0.46, 0.4, 0.34, 0.28, 0.22, 0.18];
+
+type PhotoCompressionProfile = {
+  targetBytes: number;
+  maxSide: number;
+  minSide: number;
+  qualitySteps: number[];
+};
+
+const photoCompressionProfiles: Record<PhotoQualityMode, PhotoCompressionProfile> = {
+  STANDARD: {
+    targetBytes: PHOTO_STANDARD_TARGET_BYTES,
+    maxSide: PHOTO_STANDARD_MAX_SIDE,
+    minSide: PHOTO_STANDARD_MIN_SIDE,
+    qualitySteps: PHOTO_STANDARD_QUALITY_STEPS
+  },
+  HD: {
+    targetBytes: PHOTO_HD_TARGET_BYTES,
+    maxSide: PHOTO_HD_MAX_SIDE,
+    minSide: PHOTO_HD_MIN_SIDE,
+    qualitySteps: PHOTO_HD_QUALITY_STEPS
+  }
+};
+
+function dataUrlByteSize(dataUrl: string) {
+  const base64 = dataUrl.split(",", 2)[1] ?? "";
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function compressedPhotoName(name: string) {
+  const fallback = name || `foto-${Date.now()}.jpg`;
+  return fallback.includes(".") ? fallback.replace(/\.[^.]+$/, ".jpg") : `${fallback}.jpg`;
+}
+
+function fileToPhotoVariant(file: File): Promise<PhotoUploadVariant> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const source = String(reader.result ?? "");
-      const image = new window.Image();
-      image.onload = () => {
-        const maxSide = 1024;
-        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
-        const width = Math.max(1, Math.round(image.width * ratio));
-        const height = Math.max(1, Math.round(image.height * ratio));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d")?.drawImage(image, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", .72);
-        resolve({
-          name: (file.name || `foto-${Date.now()}.jpg`).replace(/\.[^.]+$/, ".jpg"),
-          mimeType: "image/jpeg",
-          size: Math.round((dataUrl.length * 3) / 4),
-          dataUrl
-        });
-      };
-      image.onerror = () => resolve({
-        name: file.name || `foto-${Date.now()}.jpg`,
-        mimeType: file.type || "image/jpeg",
-        size: file.size,
-        dataUrl: source
-      });
-      image.src = source;
-    };
+    reader.onload = () => resolve({
+      name: file.name || `foto-${Date.now()}.jpg`,
+      mimeType: file.type || "image/jpeg",
+      size: file.size,
+      dataUrl: String(reader.result ?? "")
+    });
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
 }
 
-async function filesToPhotos(files: FileList | null) {
-  const selected = Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
-  return Promise.all(selected.map(compressImage));
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("IMAGE_DECODE_FAILED"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function canvasForImage(image: HTMLImageElement, maxSide: number) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const ratio = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * ratio));
+  const height = Math.max(1, Math.round(sourceHeight * ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("CANVAS_CONTEXT_FAILED");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+async function compressImage(file: File, mode: PhotoQualityMode = "STANDARD"): Promise<PhotoUploadVariant> {
+  const profile = photoCompressionProfiles[mode];
+
+  try {
+    const image = await loadImage(file);
+    const sourceLongSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
+    let maxSide = Math.min(profile.maxSide, sourceLongSide);
+    let best: { dataUrl: string; size: number } | null = null;
+    let shouldContinue = true;
+
+    while (shouldContinue) {
+      const canvas = canvasForImage(image, maxSide);
+
+      for (const quality of profile.qualitySteps) {
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const size = dataUrlByteSize(dataUrl);
+        if (!best || size < best.size) {
+          best = { dataUrl, size };
+        }
+        if (size <= profile.targetBytes) {
+          return {
+            name: compressedPhotoName(file.name),
+            mimeType: "image/jpeg",
+            size,
+            dataUrl
+          };
+        }
+      }
+
+      if (Math.max(canvas.width, canvas.height) <= profile.minSide) break;
+      maxSide = Math.max(profile.minSide, Math.round(maxSide * 0.82));
+      shouldContinue = maxSide >= 1;
+    }
+
+    if (best) {
+      return {
+        name: compressedPhotoName(file.name),
+        mimeType: "image/jpeg",
+        size: best.size,
+        dataUrl: best.dataUrl
+      };
+    }
+  } catch {
+    return fileToPhotoVariant(file);
+  }
+
+  return fileToPhotoVariant(file);
+}
+
+type PhotoSelection = {
+  photo: PhotoAttachment;
+  sourceFile: File;
+};
+
+function newPhotoClientId() {
+  return `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function photoFromVariant(variant: PhotoUploadVariant, qualityMode: PhotoQualityMode, clientId = newPhotoClientId()): PhotoAttachment {
+  return {
+    ...variant,
+    clientId,
+    qualityMode,
+    standardVariant: qualityMode === "STANDARD" ? variant : undefined,
+    hdVariant: qualityMode === "HD" ? variant : undefined
+  };
+}
+
+function applyPhotoVariant(photo: PhotoAttachment, variant: PhotoUploadVariant, qualityMode: PhotoQualityMode): PhotoAttachment {
+  return {
+    ...photo,
+    ...variant,
+    qualityMode,
+    standardVariant: qualityMode === "STANDARD" ? variant : photo.standardVariant,
+    hdVariant: qualityMode === "HD" ? variant : photo.hdVariant,
+    hdPreparing: false
+  };
+}
+
+function currentPhotoVariant(photo: PhotoAttachment): PhotoUploadVariant {
+  return {
+    name: photo.name,
+    mimeType: photo.mimeType,
+    size: photo.size,
+    dataUrl: photo.dataUrl
+  };
+}
+
+async function filesToPhotoSelections(files: FileList | null) {
+  const selected = Array.from(files ?? []).filter((file) => file.type.startsWith("image/")).slice(0, 6);
+  const selections: PhotoSelection[] = [];
+
+  for (const file of selected) {
+    const standardVariant = await compressImage(file, "STANDARD");
+    selections.push({ photo: photoFromVariant(standardVariant, "STANDARD"), sourceFile: file });
+  }
+
+  return selections;
+}
+
+function photoUploadPayload(photo: PhotoAttachment): PhotoAttachment {
+  return {
+    name: photo.name,
+    mimeType: photo.mimeType,
+    size: photo.size,
+    dataUrl: photo.dataUrl,
+    phase: photo.phase ?? "GENERAL"
+  };
+}
+
+function photosUploadPayload(photos: PhotoAttachment[] = []) {
+  return photos.map(photoUploadPayload);
+}
+
+function hasPendingPhotoProcessing(photos: PhotoAttachment[] = []) {
+  return photos.some((photo) => photo.hdPreparing);
 }
 
 const operationDocumentAccept = ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx";
@@ -762,6 +995,85 @@ function fileSizeLabel(size: number) {
   if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   if (size >= 1024) return `${Math.round(size / 1024)} KB`;
   return `${size} B`;
+}
+
+function photoDownloadName(photo: PhotoAttachment) {
+  const fallback = `hotelops-foto-${Date.now()}.jpg`;
+  const name = (photo.name || fallback).trim();
+  if (/\.(jpe?g|png|webp|heic|heif)$/i.test(name)) return name;
+  const extension = photo.mimeType === "image/png" ? "png" : photo.mimeType === "image/webp" ? "webp" : "jpg";
+  return `${name || "hotelops-foto"}.${extension}`;
+}
+
+function PhotoLightbox({ photo, onClose }: { photo: PhotoAttachment | null; onClose: () => void }) {
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed">("idle");
+
+  useEffect(() => {
+    if (!photo) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [photo, onClose]);
+
+  useEffect(() => {
+    setSaveStatus("idle");
+  }, [photo?.dataUrl]);
+
+  const handleSave = () => {
+    if (!photo) return;
+    const fileName = photoDownloadName(photo);
+    const shell = (window as HotelOpsShellWindow).HotelOpsAndroidShell;
+
+    if (shell?.saveImageToGallery) {
+      const saved = shell.saveImageToGallery(photo.dataUrl, fileName);
+      setSaveStatus(saved ? "saved" : "failed");
+      return;
+    }
+
+    try {
+      const link = document.createElement("a");
+      link.href = photo.dataUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setSaveStatus("saved");
+    } catch {
+      setSaveStatus("failed");
+    }
+  };
+
+  if (!photo) return null;
+
+  return (
+    <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="Fotoğraf önizleme" onClick={onClose}>
+      <button type="button" className="photo-lightbox-close" onClick={onClose} aria-label="Fotoğrafı kapat">
+        <X size={20} />
+      </button>
+      <div className="photo-lightbox-frame" onClick={(event) => event.stopPropagation()}>
+        <Image src={photo.dataUrl} alt={photo.name || "Fotoğraf"} width={1280} height={960} unoptimized />
+        <div className="photo-lightbox-footer">
+          <div className="photo-lightbox-caption">
+            <span>{photo.name || "Fotoğraf"}</span>
+            <span>{fileSizeLabel(photo.size)}</span>
+          </div>
+          <div className="photo-lightbox-actions">
+            {saveStatus !== "idle" ? <span className={`photo-save-status ${saveStatus}`}>{saveStatus === "saved" ? "Kaydedildi" : "Kaydedilemedi"}</span> : null}
+            <button type="button" className="photo-lightbox-save" onClick={handleSave}>
+              <Save size={16} /> Kaydet
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function fileToOperationDocument(file: File): Promise<OperationDocumentFile> {
@@ -917,6 +1229,18 @@ function isUnknownModulePath(path: string) {
 }
 
 const initialUsers: DemoUser[] = [
+  {
+    id: "USR-000",
+    username: "siteadmin",
+    password: "",
+    fullName: "Hasan Fırat Keskin",
+    email: "siteadmin@noderasoftware.com",
+    roleId: "siteAdmin",
+    departmentId: "executive",
+    hotelCode: "NODERA",
+    active: true,
+    lastLogin: "-"
+  },
   {
     id: "USR-001",
     username: "admin",
@@ -1779,6 +2103,15 @@ function canViewDepartment(user: DemoUser, departmentId: string) {
   return getRole(user.roleId).visibleDepartments.includes(departmentId as DepartmentId) || user.departmentId === departmentId;
 }
 
+function canTrackDepartmentOriginatedJobs(user: Pick<DemoUser, "roleId">) {
+  return user.roleId !== "staff";
+}
+
+function canViewOriginatedJob(user: DemoUser, job: Pick<JobRecord, "createdBy" | "createdByDepartmentId">) {
+  if (job.createdBy === user.username) return true;
+  return canTrackDepartmentOriginatedJobs(user) && job.createdByDepartmentId === user.departmentId;
+}
+
 function canManageUsers(user: DemoUser) {
   return user.roleId === "generalManager" || user.roleId === "hrManager";
 }
@@ -1855,11 +2188,56 @@ function canWriteDepartmentCalendar(user: DemoUser) {
 }
 
 function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): ModuleAccess {
+  if (user.roleId === "siteAdmin") {
+    return {
+      hotelPanel: true,
+      dashboard: true,
+      jobs: false,
+      maintenance: false,
+      periodicMaintenance: false,
+      housekeeping: false,
+      departmentCalendar: false,
+      reminders: false,
+      users: false,
+      reports: false,
+      settings: false,
+      inventory: false,
+      roomStatus: false,
+      lostFound: false,
+      guestRequests: false,
+      operationDocuments: false,
+      managementRequests: false,
+      trainingCertificates: false,
+      minibar: false,
+      equipmentAssignments: false,
+      announcements: false,
+      vipRequests: false,
+      dashboardUrgentJobs: false,
+      dashboardFaultRecords: false,
+      dashboardDelayedJobs: false,
+      dashboardInProgressJobs: false,
+      dashboardPendingJobs: false,
+      dashboardWeeklyLoad: false,
+      dashboardPeriodicMaintenance: false,
+      dashboardDepartmentDistribution: false,
+      dashboardQuickActions: false,
+      dashboardRecentJobs: false,
+      featureSlaEscalation: false,
+      featureRoomHistory: false,
+      featureBeforeAfterPhotos: false,
+      featureAdvancedFilters: false,
+      featureGuestImpact: false,
+      featureAuditLogs: false,
+      featureDailyReport: false
+    };
+  }
+
   const isManager = user.roleId === "generalManager";
   const canUseTechnical = isManager || user.departmentId === "technical" || ["frontOfficeManager", "securityManager", "spaManager", "fnbManager", "hkManager"].includes(user.roleId);
   const canUseHousekeeping = isManager || user.departmentId === "housekeeping" || ["frontOfficeManager", "securityManager", "spaManager", "fnbManager"].includes(user.roleId);
 
   return {
+    hotelPanel: false,
     dashboard: true,
     jobs: true,
     maintenance: canUseTechnical,
@@ -1902,7 +2280,8 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
 }
 
 function resolvedModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAccess">): ModuleAccess {
-  return { ...defaultModuleAccess(user), ...(user.moduleAccess ?? {}), managementRequests: true, reports: true, featureDailyReport: true };
+  if (user.roleId === "siteAdmin") return { ...defaultModuleAccess(user), ...(user.moduleAccess ?? {}), dashboard: true, hotelPanel: true };
+  return { ...defaultModuleAccess(user), ...(user.moduleAccess ?? {}), dashboard: true, managementRequests: true, reports: true, featureDailyReport: true };
 }
 
 function canUseAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAccess">, accessId: AccessId) {
@@ -2011,9 +2390,43 @@ function newUserDraft(): UserDraft {
   };
 }
 
+function newHotelDraft(): HotelDraft {
+  return {
+    name: "",
+    code: "",
+    timezone: "Europe/Istanbul",
+    adminFullName: "",
+    adminUsername: "",
+    adminEmail: "",
+    adminPassword: ""
+  };
+}
+
+function normalizeHotelCodeInput(value: string) {
+  return value
+    .trim()
+    .replace(/[İIı]/g, "I")
+    .replace(/[Şş]/g, "S")
+    .replace(/[Ğğ]/g, "G")
+    .replace(/[Üü]/g, "U")
+    .replace(/[Öö]/g, "O")
+    .replace(/[Çç]/g, "C")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32);
+}
+
+function isPlatformAdminUser(user: Pick<DemoUser, "roleId">) {
+  return user.roleId === "siteAdmin";
+}
+
 export function HotelOpsSystem() {
   const [hydrated, setHydrated] = useState(false);
   const [path, setPath] = useState("/");
+  const [pageTransitionDirection, setPageTransitionDirection] = useState<PageTransitionDirection>("none");
   const [session, setSession] = useState<DemoUser | null>(null);
   const [users, setUsers] = useState<DemoUser[]>(initialUsers);
   const [jobs, setJobs] = useState<JobRecord[]>(initialJobs);
@@ -2027,7 +2440,9 @@ export function HotelOpsSystem() {
   const [departmentsList, setDepartmentsList] = useState<DepartmentRecord[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
-  const [alert, setAlert] = useState<string>("");
+  const [alert, setAlertMessage] = useState<string>("");
+  const [alertResetKey, setAlertResetKey] = useState(0);
+  const [alertSecondsRemaining, setAlertSecondsRemaining] = useState(ALERT_AUTO_DISMISS_SECONDS);
   const [loginError, setLoginError] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -2051,10 +2466,59 @@ export function HotelOpsSystem() {
   const [userDraft, setUserDraft] = useState<UserDraft>(() => newUserDraft());
   const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
+  const pathRef = useRef("/");
+  const didSyncInitialPathRef = useRef(false);
   const appUpdateNotifiedRef = useRef("");
 
+  const setAlert = useCallback((value: string) => {
+    setAlertMessage(value);
+    setAlertSecondsRemaining(ALERT_AUTO_DISMISS_SECONDS);
+    setAlertResetKey((current) => current + 1);
+  }, []);
+
+  const dismissAlert = useCallback(() => {
+    setAlertMessage("");
+    setAlertResetKey((current) => current + 1);
+  }, []);
+
+  function applyPath(nextPath: string) {
+    const normalizedPath = normalizeHotelPath(nextPath);
+    const previousPath = pathRef.current;
+    const previousTabIndex = mobileTabIndexForPath(previousPath);
+    const nextTabIndex = mobileTabIndexForPath(normalizedPath);
+    const nextDirection =
+      didSyncInitialPathRef.current &&
+      previousTabIndex >= 0 &&
+      nextTabIndex >= 0 &&
+      previousTabIndex !== nextTabIndex
+        ? nextTabIndex > previousTabIndex ? "forward" : "back"
+        : "none";
+
+    didSyncInitialPathRef.current = true;
+    pathRef.current = normalizedPath;
+    setPageTransitionDirection(nextDirection);
+    setPath(normalizedPath);
+  }
+
   useEffect(() => {
-    const syncPath = () => setPath(normalizeHotelPath(`${window.location.pathname}${window.location.search}`));
+    if (!alert) return;
+
+    setAlertSecondsRemaining(ALERT_AUTO_DISMISS_SECONDS);
+    const deadline = Date.now() + ALERT_AUTO_DISMISS_SECONDS * 1000;
+    const intervalId = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setAlertSecondsRemaining(remaining);
+      if (remaining <= 0) {
+        window.clearInterval(intervalId);
+        setAlertMessage("");
+      }
+    }, 250);
+
+    return () => window.clearInterval(intervalId);
+  }, [alert, alertResetKey]);
+
+  useEffect(() => {
+    const syncPath = () => applyPath(`${window.location.pathname}${window.location.search}`);
     syncPath();
     window.addEventListener("popstate", syncPath);
     setIsOnline(navigator.onLine);
@@ -2299,7 +2763,7 @@ export function HotelOpsSystem() {
   useEffect(() => {
     if (!hydrated || !isUnknownModulePath(currentPath)) return;
     window.history.replaceState(null, "", hotelUrl("/dashboard"));
-    setPath("/dashboard");
+    applyPath("/dashboard");
   }, [currentPath, hydrated]);
 
   async function refreshAppData() {
@@ -2344,7 +2808,7 @@ export function HotelOpsSystem() {
 
   const visibleJobs = useMemo(() => {
     if (!session) return [];
-    return jobs.filter((job) => canViewDepartment(session, job.departmentId) || job.createdBy === session.username);
+    return jobs.filter((job) => canViewDepartment(session, job.departmentId) || canViewOriginatedJob(session, job));
   }, [jobs, session]);
 
   const filteredJobs = useMemo(() => {
@@ -2372,7 +2836,7 @@ export function HotelOpsSystem() {
   function navigate(nextPath: string) {
     const normalizedPath = normalizeHotelPath(nextPath);
     window.history.pushState(null, "", hotelUrl(normalizedPath));
-    setPath(normalizedPath);
+    applyPath(normalizedPath);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -2535,7 +2999,7 @@ export function HotelOpsSystem() {
       setDepartmentsList(bootstrap.departments ?? []);
       setSession(bootstrap.user);
       setJobDraft(newJobDraft(bootstrap.user));
-      navigate("/dashboard");
+      navigate(isPlatformAdminUser(bootstrap.user) ? "/hotelpanel" : "/dashboard");
     } catch (error) {
       clearApiToken();
       setLoginError(loginErrorMessage(error));
@@ -2576,6 +3040,11 @@ export function HotelOpsSystem() {
       return;
     }
 
+    if (hasPendingPhotoProcessing(jobDraft.photos ?? [])) {
+      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      return;
+    }
+
     const allowedDepartments = jobDepartmentsForType(session, jobDraft.type);
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
@@ -2585,7 +3054,7 @@ export function HotelOpsSystem() {
       const endpoint = isPlannedJobType(jobDraft.type) ? "/calendar/work-orders" : "/work-orders";
       const created = await apiRequest<JobRecord>(endpoint, {
         method: "POST",
-        body: JSON.stringify({ ...jobDraft, departmentId, assigneeId: jobDraft.assignee })
+        body: JSON.stringify({ ...jobDraft, photos: photosUploadPayload(jobDraft.photos ?? []), departmentId, assigneeId: jobDraft.assignee })
       });
       setJobs((current) => [created, ...current]);
       emitWorkOrderNotification(created);
@@ -2611,11 +3080,16 @@ export function HotelOpsSystem() {
       return;
     }
 
+    if (hasPendingPhotoProcessing(reminderDraft.photos)) {
+      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      return;
+    }
+
     const assignedToId = reminderDraft.assignedToId || session.id;
     try {
       const created = await apiRequest<ReminderRecord>("/reminders", {
         method: "POST",
-        body: JSON.stringify({ ...reminderDraft, assignedToId, remindAt: new Date(reminderDraft.remindAt).toISOString() })
+        body: JSON.stringify({ ...reminderDraft, photos: photosUploadPayload(reminderDraft.photos), assignedToId, remindAt: new Date(reminderDraft.remindAt).toISOString() })
       });
       setReminders((current) => [created, ...current]);
       setReminderDraft(newReminderDraft());
@@ -2946,65 +3420,76 @@ export function HotelOpsSystem() {
               </div>
             )}
             {alert && (
-              <div className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}>
-                {alert}
+              <div
+                className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}
+                role={alert.includes("zorunlu") || alert.includes("zaten") ? "alert" : "status"}
+              >
+                <span className="alert-message">{alert}</span>
+                <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
+                  {alertSecondsRemaining} sn
+                </span>
+                <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
+                  <X size={14} />
+                </button>
               </div>
             )}
-            {renderPage({
-              alert,
-              checklistText,
-              currentPath,
-              filteredJobs,
-              filters,
-              departmentOptions: activeDepartmentOptions,
-              departmentAssignees,
-              departmentsList,
-              departmentLabelFor: activeDepartmentLabel,
-              jobDraft,
-              jobs,
-              notifications,
-              operationDocumentDraft,
-              operationDocuments,
-              managementRequestDraft,
-              managementRequestRecipients,
-              managementRequests,
-              queryParams,
-              reminderDraft,
-              reminderRecipients,
-              reminders,
-              session,
-              setAlert,
-              setChecklistText,
-              setDepartmentsList,
-              setFilters,
-              setJobDraft,
-              setManagementRequestDraft,
-              setOperationDocumentDraft,
-              setJobs,
-              setNotifications,
-              setReminderDraft,
-              setUserDraft,
-              users,
-              userDraft,
-              visibleJobs,
-              navigate,
-              refreshData: refreshAppDataQuietly,
-              handleCreateJob: handleCreateJobApi,
-              handleCreateManagementRequest: handleCreateManagementRequestApi,
-              handleCreateOperationDocument: handleCreateOperationDocumentApi,
-              markOperationDocumentRead: markOperationDocumentReadApi,
-              updateManagementRequestStatus: updateManagementRequestStatusApi,
-              handleCreateReminder: handleCreateReminderApi,
-              completeReminder: completeReminderApi,
-              markNotificationRead: markNotificationReadApi,
-              markNotificationsRead: markNotificationsReadApi,
-              handleSaveUser: handleSaveUserApi,
-              editUser,
-              deleteUser: deleteUserApi,
-              resetPassword: resetPasswordApi,
-              toggleUser: toggleUserApi
-            })}
-            <NoderaBrandFooter />
+            <div key={path} className={`page-transition page-transition-${pageTransitionDirection}`}>
+              {renderPage({
+                alert,
+                checklistText,
+                currentPath,
+                filteredJobs,
+                filters,
+                departmentOptions: activeDepartmentOptions,
+                departmentAssignees,
+                departmentsList,
+                departmentLabelFor: activeDepartmentLabel,
+                jobDraft,
+                jobs,
+                notifications,
+                operationDocumentDraft,
+                operationDocuments,
+                managementRequestDraft,
+                managementRequestRecipients,
+                managementRequests,
+                queryParams,
+                reminderDraft,
+                reminderRecipients,
+                reminders,
+                session,
+                setAlert,
+                setChecklistText,
+                setDepartmentsList,
+                setFilters,
+                setJobDraft,
+                setManagementRequestDraft,
+                setOperationDocumentDraft,
+                setJobs,
+                setNotifications,
+                setReminderDraft,
+                setUserDraft,
+                users,
+                userDraft,
+                visibleJobs,
+                navigate,
+                refreshData: refreshAppDataQuietly,
+                handleCreateJob: handleCreateJobApi,
+                handleCreateManagementRequest: handleCreateManagementRequestApi,
+                handleCreateOperationDocument: handleCreateOperationDocumentApi,
+                markOperationDocumentRead: markOperationDocumentReadApi,
+                updateManagementRequestStatus: updateManagementRequestStatusApi,
+                handleCreateReminder: handleCreateReminderApi,
+                completeReminder: completeReminderApi,
+                markNotificationRead: markNotificationReadApi,
+                markNotificationsRead: markNotificationsReadApi,
+                handleSaveUser: handleSaveUserApi,
+                editUser,
+                deleteUser: deleteUserApi,
+                resetPassword: resetPasswordApi,
+                toggleUser: toggleUserApi
+              })}
+              <NoderaBrandFooter />
+            </div>
           </div>
         </div>
       </div>
@@ -3160,6 +3645,7 @@ function SidebarNav({
   const urgentJobsLabel = urgentJobsLabelFor(session);
   const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Oda Durumu", Home, undefined, "oda housekeeping önbüro");
   const priorityItems = [
+    entry("dashboard", "dashboard", "/dashboard", "Ana Sayfa", LayoutDashboard, undefined, "dashboard ana ekran ozet"),
     ...(prioritizeRoomStatus ? [roomStatusEntry] : []),
     ...(session.roleId === "staff" ? [entry("assigned", "jobs", "/jobs?view=assigned", "Bana Atanan", Wrench, assignedJobs.length, "benim işlerim görev")] : []),
     ...(can("managementRequests") ? [entry("requests-priority", "managementRequests", "/modules/requests", unreadRequestCount ? "Okunmamış Talepler" : "Talepler", MessageSquareText, unreadRequestCount || requestCount, "onay yönetici talep")] : []),
@@ -3206,6 +3692,7 @@ function SidebarNav({
     {
       title: "Sistem",
       items: [
+        ...(isPlatformAdminUser(session) ? [entry("hotel-panel", "hotelPanel", "/hotelpanel", "Otel Paneli", LayoutDashboard, undefined, "otel tenant hotel admin panel")] : []),
         entry("reports", "reports", "/reports", "Raporlar", BarChart3, undefined, "kpi audit"),
         entry("settings", "settings", "/settings", "Ayarlar", Settings, undefined, "sistem departman")
       ]
@@ -3244,9 +3731,7 @@ function SidebarNav({
           {open && (
             <div className="nav-section-items">
           {section.items.map((item) => {
-            const active = item.path.includes("?")
-              ? currentPath === item.path
-              : currentPath.split("?")[0] === item.path || (item.path !== "/dashboard" && currentPath.split("?")[0].startsWith(item.path));
+            const active = isNavPathActive(currentPath, item.path);
             return <NavItem key={item.id} {...item} active={active} navigate={navigate} />;
           })}
             </div>
@@ -3276,13 +3761,28 @@ function MobileBottomNav({
     { path: "/calendar/department", label: "Takvim", icon: CalendarDays, moduleId: "departmentCalendar" },
     { path: "/reminders", label: "Uyarılar", icon: Bell, moduleId: "reminders", badge: unreadCount || undefined }
   ] satisfies Array<{ path: string; label: string; icon: LucideIcon; moduleId: ModuleId; badge?: number }>).filter((item) => canUseModule(session, item.moduleId));
+  const activeIndex = items.findIndex((item) => isNavPathActive(currentPath, item.path));
+  const indicatorWidth = `calc((100% - 12px - ${Math.max(items.length - 1, 0) * 4}px) / ${Math.max(items.length, 1)})`;
+  const indicatorTransform = `translateX(calc(${Math.max(activeIndex, 0) * 100}% + ${Math.max(activeIndex, 0) * 4}px))`;
+  const navGridTemplate = `repeat(${Math.max(items.length, 1)}, minmax(0, 1fr))`;
 
   return (
     <>
-      <nav className={`mobile-bottom-nav ${hidden ? "hidden" : ""}`} aria-label="Mobil ana menü">
+      <nav
+        className={`mobile-bottom-nav ${hidden ? "hidden" : ""}`}
+        aria-label="Mobil ana menü"
+        style={{ gridTemplateColumns: navGridTemplate }}
+      >
+        {activeIndex >= 0 ? (
+          <span
+            className="mobile-nav-indicator"
+            aria-hidden="true"
+            style={{ width: indicatorWidth, transform: indicatorTransform }}
+          />
+        ) : null}
         {items.map((item) => {
           const Icon = item.icon;
-          const active = currentPath === item.path || (item.path !== "/dashboard" && currentPath.startsWith(item.path));
+          const active = isNavPathActive(currentPath, item.path);
           return (
             <button key={item.path} type="button" className={`mobile-nav-item ${active ? "active" : ""}`} onClick={() => navigate(item.path)}>
               <Icon size={18} />
@@ -3343,6 +3843,7 @@ function getPageTitle(path: string) {
   if (path === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
+  if (path === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
   if (path === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
   if (path === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
   const operationalModule = operationalModules.find((module) => module.path === path);
@@ -3425,6 +3926,7 @@ function moduleForPath(path: string): ModuleId {
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
   if (path === "/settings") return "settings";
+  if (path === "/hotelpanel") return "settings";
   if (path === "/modules/requests") return "managementRequests";
   if (path === "/modules/operation-documents") return "operationDocuments";
   const operationalModule = operationalModules.find((module) => module.path === path);
@@ -3449,6 +3951,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
+  if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
   if (currentPath === "/modules/requests") return <ManagementRequestsPage {...context} />;
   if (currentPath === "/modules/operation-documents") return <OperationDocumentsPage {...context} />;
   const operationalModule = operationalModules.find((module) => module.path === currentPath);
@@ -4605,8 +5108,26 @@ function PhotoPicker({
   photos: PhotoAttachment[];
   setPhotos: (updater: (photos: PhotoAttachment[]) => PhotoAttachment[]) => void;
 }) {
+  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
+  const sourceFilesRef = useRef<Map<string, File>>(new Map());
+
+  useEffect(() => {
+    const activeClientIds = new Set(photos.map((photo) => photo.clientId).filter(Boolean) as string[]);
+    for (const clientId of Array.from(sourceFilesRef.current.keys())) {
+      if (!activeClientIds.has(clientId)) {
+        sourceFilesRef.current.delete(clientId);
+      }
+    }
+  }, [photos]);
+
+  const photoKey = (photo: PhotoAttachment, index: number) => photo.clientId ?? photo.id ?? `${photo.name}-${index}`;
+
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const nextPhotos = (await filesToPhotos(event.target.files)).map((photo) => ({ ...photo, phase }));
+    const nextPhotos = (await filesToPhotoSelections(event.target.files)).map(({ photo, sourceFile }) => {
+      const nextPhoto = { ...photo, phase };
+      if (nextPhoto.clientId) sourceFilesRef.current.set(nextPhoto.clientId, sourceFile);
+      return nextPhoto;
+    });
     if (nextPhotos.length) {
       setPhotos((current) => [...current, ...nextPhotos].slice(0, 6));
     }
@@ -4614,11 +5135,59 @@ function PhotoPicker({
   };
 
   const handleReplaceFile = async (index: number, event: ChangeEvent<HTMLInputElement>) => {
-    const [nextPhoto] = (await filesToPhotos(event.target.files)).map((photo) => ({ ...photo, phase }));
-    if (nextPhoto) {
-      setPhotos((current) => current.map((photo, itemIndex) => (itemIndex === index ? nextPhoto : photo)));
+    const [selection] = await filesToPhotoSelections(event.target.files);
+    if (selection) {
+      const nextPhoto = { ...selection.photo, phase };
+      if (nextPhoto.clientId) sourceFilesRef.current.set(nextPhoto.clientId, selection.sourceFile);
+      setPhotos((current) => {
+        const previousPhoto = current[index];
+        if (previousPhoto?.clientId) sourceFilesRef.current.delete(previousPhoto.clientId);
+        return current.map((photo, itemIndex) => (itemIndex === index ? nextPhoto : photo));
+      });
     }
     event.target.value = "";
+  };
+
+  const handleHdToggle = async (photo: PhotoAttachment, checked: boolean) => {
+    const clientId = photo.clientId;
+    if (!clientId) return;
+
+    if (!checked) {
+      const standardVariant = photo.standardVariant ?? currentPhotoVariant(photo);
+      setPhotos((current) => current.map((item) => (
+        item.clientId === clientId ? applyPhotoVariant(item, standardVariant, "STANDARD") : item
+      )));
+      return;
+    }
+
+    if (photo.hdVariant) {
+      setPhotos((current) => current.map((item) => (
+        item.clientId === clientId ? applyPhotoVariant(item, photo.hdVariant!, "HD") : item
+      )));
+      return;
+    }
+
+    const sourceFile = sourceFilesRef.current.get(clientId);
+    if (!sourceFile) return;
+
+    setPhotos((current) => current.map((item) => (
+      item.clientId === clientId ? { ...item, qualityMode: "HD", hdPreparing: true } : item
+    )));
+
+    try {
+      const hdVariant = await compressImage(sourceFile, "HD");
+      setPhotos((current) => current.map((item) => {
+        if (item.clientId !== clientId) return item;
+        if (item.qualityMode !== "HD" && !item.hdPreparing) {
+          return { ...item, hdVariant, hdPreparing: false };
+        }
+        return applyPhotoVariant(item, hdVariant, "HD");
+      }));
+    } catch {
+      setPhotos((current) => current.map((item) => (
+        item.clientId === clientId ? { ...item, qualityMode: "STANDARD", hdPreparing: false } : item
+      )));
+    }
   };
 
   return (
@@ -4629,26 +5198,42 @@ function PhotoPicker({
           <input className="native-photo-input" type="file" accept="image/*" capture="environment" onChange={handleFiles} />
         </label>
         <label className="btn btn-ghost btn-sm photo-input-trigger">
-          <ImageIcon size={14} /> Albüm
+          <ImageIcon size={14} /> Galeri / Dosya
           <input className="native-photo-input" type="file" accept="image/*" multiple onChange={handleFiles} />
         </label>
       </div>
       {photos.length > 0 && (
         <div className="photo-preview-grid">
           {photos.map((photo, index) => (
-            <div className="photo-preview" key={`${photo.name}-${index}`}>
-              <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
+            <div className="photo-preview-item" key={photoKey(photo, index)}>
+              <div className="photo-preview">
+                <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
+              <button type="button" className="photo-open" onClick={() => setPreviewPhoto(photo)} aria-label="Fotoğrafı büyüt">
+                <Search size={12} />
+              </button>
               <label className="photo-change">
                 <ImageIcon size={12} />
                 <input className="native-photo-input" type="file" accept="image/*" onChange={(event) => handleReplaceFile(index, event)} />
               </label>
-              <button type="button" className="photo-remove" onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
-                <X size={12} />
-              </button>
+                <button type="button" className="photo-remove" onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                  <X size={12} />
+                </button>
+              </div>
+              <label className="photo-hd-toggle">
+                <input
+                  type="checkbox"
+                  checked={photo.qualityMode === "HD"}
+                  disabled={photo.hdPreparing}
+                  onChange={(event) => void handleHdToggle(photo, event.target.checked)}
+                />
+                <span>HD kalitede gönder</span>
+                <span className="photo-quality-size">{photo.hdPreparing ? "HD hazırlanıyor" : fileSizeLabel(photo.size)}</span>
+              </label>
             </div>
           ))}
         </div>
       )}
+      <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
     </div>
   );
 }
@@ -4861,6 +5446,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
   const [transferTo, setTransferTo] = useState("");
   const [beforePhotos, setBeforePhotos] = useState<PhotoAttachment[]>([]);
   const [afterPhotos, setAfterPhotos] = useState<PhotoAttachment[]>([]);
+  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
   const [roomHistory, setRoomHistory] = useState<Array<{ code: string; title: string; status: JobStatus; priority: Priority; createdAt: string; assignee: string }>>([]);
 
   useEffect(() => {
@@ -4941,10 +5527,14 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
   const uploadPhotos = async (phase: "BEFORE" | "AFTER") => {
     const photos = phase === "BEFORE" ? beforePhotos : afterPhotos;
     if (!photos.length) return;
+    if (hasPendingPhotoProcessing(photos)) {
+      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      return;
+    }
     try {
       const updated = await apiRequest<JobRecord>(`/work-orders/${job.id}/attachments`, {
         method: "POST",
-        body: JSON.stringify({ photos })
+        body: JSON.stringify({ photos: photosUploadPayload(photos) })
       });
       setJobs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       if (phase === "BEFORE") setBeforePhotos([]);
@@ -5055,10 +5645,10 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
                     </div>}
                     <div className="photo-grid">
                       {job.photos?.length ? job.photos.map((photo, index) => (
-                        <div className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`}>
+                        <button type="button" className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || "Fotoğraf"} büyüt`}>
                           <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
                           <span className="badge badge-pending">{photo.phase === "BEFORE" ? "Önce" : photo.phase === "AFTER" ? "Sonra" : "Genel"}</span>
-                        </div>
+                        </button>
                       )) : <EmptyState title="Fotoğraf yok" description="Bu kayıt için fotoğraf eklenmemiş." />}
                     </div>
                   </div>
@@ -5164,12 +5754,18 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
           </div>
         </div>
       </div>
+      <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
     </>
   );
 }
 
 function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }: RenderContext) {
   const records = visibleJobs.filter((job) => job.departmentId === "housekeeping" || job.type === "PlannedHousekeeping");
+  const transferredTechnicalRecords = visibleJobs.filter((job) => (
+    job.departmentId === "technical" &&
+    job.createdByDepartmentId === "housekeeping" &&
+    canViewOriginatedJob(session, job)
+  ));
   return (
     <>
       <div className="filter-bar">
@@ -5193,6 +5789,20 @@ function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }
         </div>
         <div className="card-body">
           {records.length ? <JobCardList jobs={records} navigate={navigate} departmentLabelFor={departmentLabelFor} /> : <EmptyState title="HK planlı iş bulunamadı" description="Yeni HK planlı iş ekleyebilirsiniz." />}
+        </div>
+      </div>
+
+      <div className="card ui-section-top-sm">
+        <div className="card-header">
+          <span className="card-title">Tekniğe Paslanan İşler</span>
+          <span className="ui-meta">{transferredTechnicalRecords.length} kayıt</span>
+        </div>
+        <div className="card-body">
+          {transferredTechnicalRecords.length ? (
+            <JobCardList jobs={transferredTechnicalRecords} navigate={navigate} departmentLabelFor={departmentLabelFor} />
+          ) : (
+            <EmptyState title="Tekniğe paslanan iş yok" description="HK tarafından teknik servise açılan arızalar burada takip edilir." />
+          )}
         </div>
       </div>
     </>
@@ -6115,6 +6725,7 @@ function RemindersPage({
   setReminderDraft
 }: RenderContext) {
   const [formOpen, setFormOpen] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
   const visibleReminders = reminders.filter((reminder) => reminder.assignedTo.id === session.id || reminder.createdBy.id === session.id);
   const unreadCount = notifications.filter((notification) => !notification.readAt).length;
   const dueReminderCount = visibleReminders.filter((reminder) => !reminder.completedAt && new Date(reminder.remindAt).getTime() <= Date.now() + 60 * 60 * 1000).length;
@@ -6207,9 +6818,9 @@ function RemindersPage({
                   {reminder.photos.length > 0 && (
                     <div className="photo-preview-grid compact">
                       {reminder.photos.map((photo, index) => (
-                        <div className="photo-preview" key={photo.id ?? `${photo.name}-${index}`}>
+                        <button type="button" className="photo-preview photo-preview-button" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || "Fotoğraf"} büyüt`}>
                           <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
-                        </div>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -6249,6 +6860,204 @@ function RemindersPage({
               </button>
             )) : <div className="ui-empty-inline ui-empty-inline-lg">Bildirim yok</div>}
           </div>
+        </div>
+      </div>
+      <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
+    </div>
+  );
+}
+
+function HotelPanelPage({ session, setAlert }: RenderContext) {
+  const [hotels, setHotels] = useState<HotelRecord[]>([]);
+  const [hotelDraft, setHotelDraft] = useState<HotelDraft>(() => newHotelDraft());
+  const [createdAdmin, setCreatedAdmin] = useState<{ hotel: HotelRecord; admin: DemoUser; temporaryPassword: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isPlatformAdminUser(session)) return;
+    let cancelled = false;
+    const loadHotels = async () => {
+      setLoading(true);
+      try {
+        const response = await apiRequest<{ items: HotelRecord[] }>("/hotels");
+        if (!cancelled) setHotels(response.items);
+      } catch {
+        if (!cancelled) {
+          setHotels([]);
+          setAlert("Otel kayıtları yüklenemedi.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadHotels();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, setAlert]);
+
+  if (!isPlatformAdminUser(session)) {
+    return <AccessDenied message="Bu panel sadece siteyi kuran Site Admin hesabı tarafından kullanılabilir." />;
+  }
+
+  const totalUsers = hotels.reduce((sum, hotel) => sum + hotel.counts.users, 0);
+  const totalDepartments = hotels.reduce((sum, hotel) => sum + hotel.counts.departments, 0);
+
+  const updateDraft = (patch: Partial<HotelDraft>) => {
+    setHotelDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const handleCreateHotel = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (saving) return;
+    if (!hotelDraft.name.trim()) {
+      setAlert("Otel adı zorunludur.");
+      return;
+    }
+    if (!hotelDraft.adminFullName.trim() || !hotelDraft.adminUsername.trim()) {
+      setAlert("Admin ad soyad ve kullanıcı adı zorunludur.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = {
+        ...hotelDraft,
+        code: normalizeHotelCodeInput(hotelDraft.code || hotelDraft.name),
+        adminUsername: hotelDraft.adminUsername.trim().toLocaleLowerCase("tr-TR"),
+        adminEmail: hotelDraft.adminEmail.trim(),
+        adminPassword: hotelDraft.adminPassword.trim()
+      };
+      const response = await apiRequest<{ item: HotelRecord; admin: DemoUser; temporaryPassword: string }>("/hotels", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      setHotels((current) => [response.item, ...current.filter((hotel) => hotel.id !== response.item.id)]);
+      setCreatedAdmin({ hotel: response.item, admin: response.admin, temporaryPassword: response.temporaryPassword });
+      setHotelDraft(newHotelDraft());
+      setAlert(`${response.item.name} oteli oluşturuldu. Admin: ${response.admin.username} / Geçici şifre: ${response.temporaryPassword}`);
+    } catch (error) {
+      if (isApiRequestError(error) && error.code === "DUPLICATE_USERNAME") {
+        setAlert("Bu admin kullanıcı adı zaten kullanılıyor. Otel koduyla benzersiz bir kullanıcı adı girin.");
+      } else if (isApiRequestError(error) && error.code === "DUPLICATE_EMAIL") {
+        setAlert("Bu admin e-posta adresi zaten kullanılıyor.");
+      } else if (isApiRequestError(error) && error.code === "DUPLICATE_RECORD") {
+        setAlert("Bu otel kodu zaten kullanılıyor.");
+      } else {
+        setAlert("Otel kaydı oluşturulamadı. Bilgileri ve API bağlantısını kontrol edin.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="ui-list-stack">
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-icon completed"><LayoutDashboard size={19} /></div>
+          <div className="kpi-value">{hotels.length}</div>
+          <div className="kpi-label">Otel</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-icon inprogress"><Users size={19} /></div>
+          <div className="kpi-value">{totalUsers}</div>
+          <div className="kpi-label">Kullanıcı</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-icon high"><Tags size={19} /></div>
+          <div className="kpi-value">{totalDepartments}</div>
+          <div className="kpi-label">Departman</div>
+        </div>
+      </div>
+
+      <div className="two-column-grid">
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Otel Kaydı</span>
+          </div>
+          <form className="card-body ui-body-form" onSubmit={handleCreateHotel}>
+            <div className="form-group">
+              <label className="form-label">Otel Adı <span className="required">*</span></label>
+              <input className="form-control" value={hotelDraft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="Örn: A Otel" />
+            </div>
+            <div className="form-row">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Otel Kodu</label>
+                <input className="form-control" value={hotelDraft.code} onChange={(event) => updateDraft({ code: normalizeHotelCodeInput(event.target.value) })} placeholder="A_OTEL" />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Zaman Dilimi</label>
+                <input className="form-control" value={hotelDraft.timezone} onChange={(event) => updateDraft({ timezone: event.target.value })} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Admin Ad Soyad <span className="required">*</span></label>
+              <input className="form-control" value={hotelDraft.adminFullName} onChange={(event) => updateDraft({ adminFullName: event.target.value })} placeholder="Otel genel müdürü" />
+            </div>
+            <div className="form-row">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Admin Kullanıcı Adı <span className="required">*</span></label>
+                <input className="form-control" value={hotelDraft.adminUsername} onChange={(event) => updateDraft({ adminUsername: event.target.value.toLocaleLowerCase("tr-TR") })} placeholder="a.admin" />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Admin E-posta</label>
+                <input className="form-control" type="email" value={hotelDraft.adminEmail} onChange={(event) => updateDraft({ adminEmail: event.target.value })} placeholder="ops@aotel.com" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Geçici Şifre</label>
+              <input className="form-control" type="text" value={hotelDraft.adminPassword} onChange={(event) => updateDraft({ adminPassword: event.target.value })} placeholder="Boş kalırsa otomatik üretilir" />
+            </div>
+            <button type="submit" className="btn btn-primary btn-full" disabled={saving}>
+              <Plus size={15} /> {saving ? "Oluşturuluyor" : "Otel Kaydı Oluştur"}
+            </button>
+          </form>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Son Oluşturulan</span>
+          </div>
+          <div className="card-body">
+            {createdAdmin ? (
+              <div className="ui-list-stack-compact">
+                <div className="stat-row"><span className="stat-label">Otel</span><span className="stat-value">{createdAdmin.hotel.name}</span></div>
+                <div className="stat-row"><span className="stat-label">Kod</span><span className="badge badge-inprogress">{createdAdmin.hotel.code}</span></div>
+                <div className="stat-row"><span className="stat-label">Admin</span><span className="stat-value">{createdAdmin.admin.username}</span></div>
+                <div className="stat-row"><span className="stat-label">Şifre</span><span className="badge badge-pending">{createdAdmin.temporaryPassword}</span></div>
+              </div>
+            ) : (
+              <EmptyState title="Yeni kayıt yok" description="Otel oluşturulduğunda admin bilgisi burada görünür." />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Oteller</span>
+          <span className="ui-meta">{loading ? "Yükleniyor" : `${hotels.length} kayıt`}</span>
+        </div>
+        <div className="card-body ui-list-stack-compact">
+          {hotels.length ? hotels.map((hotel) => (
+            <div className="job-card" key={hotel.id}>
+              <span className="priority-strip normal" />
+              <span className="job-main">
+                <span className="job-title">{hotel.name}</span>
+                <span className="job-meta">
+                  <span className="badge badge-inprogress">{hotel.code}</span>
+                  <span className="job-meta-item">{hotel.timezone}</span>
+                  <span className="job-meta-item">{hotel.counts.users} kullanıcı</span>
+                  <span className="job-meta-item">{hotel.counts.departments} departman</span>
+                  <span className="job-meta-item">{formatDateTime(hotel.createdAt)}</span>
+                </span>
+              </span>
+            </div>
+          )) : (
+            <EmptyState title={loading ? "Yükleniyor" : "Otel kaydı yok"} description="Yeni otel kaydı oluşturabilirsiniz." />
+          )}
         </div>
       </div>
     </div>

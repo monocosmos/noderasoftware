@@ -13,7 +13,7 @@ import type { JwtPayload } from "jsonwebtoken";
 import { Server } from "socket.io";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import type { Notification as DbNotification, PushDevice, User } from "@prisma/client";
+import type { DepartmentCode, Notification as DbNotification, PushDevice, User } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import {
   canCreateForDepartment,
@@ -46,6 +46,7 @@ type AuthContext = {
 };
 
 type AuthedUser = User & {
+  hotel: { code: string; name: string };
   role: { code: string };
   department: { code: string };
 };
@@ -198,7 +199,7 @@ async function authenticate(req: express.Request, res: express.Response, next: e
 
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      include: { role: true, department: true }
+      include: userInclude
     });
     if (!user || !user.isActive || user.deletedAt) {
       res.status(401).json({ error: "USER_DISABLED" });
@@ -265,6 +266,72 @@ function scopeDepartmentIds(auth: AuthContext) {
   return visibleDepartmentIds(auth.roleId, auth.departmentId);
 }
 
+function scopeDepartmentCodes(auth: AuthContext) {
+  return scopeDepartmentIds(auth).map(departmentCodeFromClientId);
+}
+
+function departmentSocketRoom(hotelId: string, departmentId: string) {
+  return `hotel:${hotelId}:department:${departmentId}`;
+}
+
+function canTrackScopedDepartmentOrigin(auth: AuthContext) {
+  return auth.roleId !== "staff";
+}
+
+function workOrderVisibilityWhere(auth: AuthContext): Prisma.WorkOrderWhereInput {
+  const departmentCodes = scopeDepartmentCodes(auth);
+  const scopedOrigin = canTrackScopedDepartmentOrigin(auth)
+    ? [{ createdBy: { hotelId: auth.hotelId, department: { code: { in: departmentCodes } } } }]
+    : [];
+
+  return {
+    deletedAt: null,
+    AND: [
+      { department: { hotelId: auth.hotelId } },
+      {
+        OR: [
+          { department: { code: { in: departmentCodes } } },
+          { createdById: auth.userId },
+          ...scopedOrigin
+        ]
+      }
+    ]
+  };
+}
+
+function isPlatformAdmin(req: express.Request) {
+  return req.auth?.roleId === "siteAdmin";
+}
+
+function requirePlatformAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!isPlatformAdmin(req)) {
+    res.status(403).json({ error: "PLATFORM_ADMIN_REQUIRED" });
+    return;
+  }
+  next();
+}
+
+function canAccessWorkOrder(
+  auth: AuthContext,
+  workOrder: {
+    department: { code: string; hotelId: string };
+    createdById: string;
+    createdBy?: { hotelId?: string; department?: { code: string } | null } | null;
+  }
+) {
+  if (workOrder.department.hotelId !== auth.hotelId) return false;
+  const departmentIds = scopeDepartmentIds(auth);
+  const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
+  if (departmentIds.includes(departmentId)) return true;
+  if (workOrder.createdById === auth.userId) return true;
+  if (workOrder.createdBy?.hotelId && workOrder.createdBy.hotelId !== auth.hotelId) return false;
+
+  const createdByDepartmentId = workOrder.createdBy?.department?.code
+    ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+    : "";
+  return canTrackScopedDepartmentOrigin(auth) && departmentIds.includes(createdByDepartmentId);
+}
+
 function canManageWorkOrderStatus(auth: AuthContext, departmentId: string) {
   const statusManagerRoles = new Set([
     "technicalManager",
@@ -328,6 +395,38 @@ function serializeDepartment(department: { id?: string; code: string; name: stri
   };
 }
 
+function serializeHotel(hotel: {
+  id: string;
+  name: string;
+  code: string;
+  timezone: string;
+  createdAt: Date;
+  updatedAt: Date;
+  _count?: {
+    departments?: number;
+    users?: number;
+    reminders?: number;
+    managementRequests?: number;
+    operationDocuments?: number;
+  };
+}) {
+  return {
+    id: hotel.id,
+    name: hotel.name,
+    code: hotel.code,
+    timezone: hotel.timezone,
+    createdAt: hotel.createdAt.toISOString(),
+    updatedAt: hotel.updatedAt.toISOString(),
+    counts: {
+      departments: hotel._count?.departments ?? 0,
+      users: hotel._count?.users ?? 0,
+      reminders: hotel._count?.reminders ?? 0,
+      managementRequests: hotel._count?.managementRequests ?? 0,
+      operationDocuments: hotel._count?.operationDocuments ?? 0
+    }
+  };
+}
+
 function departmentName(departmentId: string) {
   const names: Record<string, string> = {
     executive: "Genel Yönetim",
@@ -360,6 +459,36 @@ function normalizeDepartmentCode(value: string) {
     .replace(/^_+|_+$/g, "")
     .slice(0, 48);
 }
+
+const defaultHotelDepartmentIds = [
+  "executive",
+  "hr",
+  "technical",
+  "housekeeping",
+  "frontOffice",
+  "security",
+  "spa",
+  "sales",
+  "fnb"
+] as const;
+
+function normalizeHotelCode(value: string) {
+  return value
+    .trim()
+    .replace(/[İIı]/g, "I")
+    .replace(/[Şş]/g, "S")
+    .replace(/[Ğğ]/g, "G")
+    .replace(/[Üü]/g, "U")
+    .replace(/[Öö]/g, "O")
+    .replace(/[Çç]/g, "C")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32);
+}
+
 function customDepartmentIdFromCode(code: string) {
   return code.toLowerCase().replace(/_/g, "-");
 }
@@ -444,7 +573,7 @@ function mapStatusToDb(status: string) {
   return map[status] ?? "REPORTED";
 }
 
-function serializeUser(user: User & { role: { code: string }; department: { code: string } }) {
+function serializeUser(user: User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }) {
   let moduleAccess: Record<string, boolean> = {};
   try {
     moduleAccess = JSON.parse(user.moduleAccessJson || "{}") as Record<string, boolean>;
@@ -454,6 +583,9 @@ function serializeUser(user: User & { role: { code: string }; department: { code
 
   return {
     id: user.id,
+    hotelId: user.hotelId,
+    hotelCode: user.hotel?.code ?? "",
+    hotelName: user.hotel?.name ?? "",
     username: user.username,
     password: "",
     fullName: user.fullName,
@@ -470,7 +602,7 @@ function serializeWorkOrder(
   workOrder: Prisma.WorkOrderGetPayload<{
     include: {
       department: true;
-      createdBy: true;
+      createdBy: { include: { department: true } };
       assignedTo: true;
       comments: { include: { author: true } };
       timeline: true;
@@ -495,6 +627,7 @@ function serializeWorkOrder(
     guestImpact: workOrder.guestImpact,
     slaRisk,
     createdBy: workOrder.createdBy.username,
+    createdByDepartmentId: clientDepartmentIdFromCode(workOrder.createdBy.department.code),
     description: workOrder.description ?? "",
     tags: workOrder.tags ?? "",
     checklist: parseChecklist(workOrder.checklistJson),
@@ -567,7 +700,7 @@ async function audit(req: express.Request, entityType: string, entityId: string,
 
 const workOrderInclude = {
   department: true,
-  createdBy: true,
+  createdBy: { include: { department: true } },
   assignedTo: true,
   comments: { include: { author: true }, where: { deletedAt: null }, orderBy: { createdAt: "asc" as const } },
   timeline: { orderBy: { createdAt: "asc" as const } },
@@ -575,7 +708,7 @@ const workOrderInclude = {
   attachments: true
 } as const;
 
-const userInclude = { role: true, department: true } as const;
+const userInclude = { hotel: true, role: true, department: true } as const;
 
 const operationDocumentInclude = {
   createdBy: { include: userInclude },
@@ -601,6 +734,19 @@ const userSchema = z.object({
   roleId: z.string().min(1),
   departmentId: z.string().min(1),
   moduleAccess: z.record(z.boolean()).optional()
+});
+
+const hotelSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  code: z.string().trim().max(32).optional().default(""),
+  timezone: z.string().trim().min(3).max(80).optional().default("Europe/Istanbul"),
+  adminFullName: z.string().trim().min(2).max(120),
+  adminUsername: z.string().trim().min(2).max(80).transform((value) => value.toLocaleLowerCase("tr-TR")),
+  adminEmail: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().email().optional()
+  ),
+  adminPassword: z.string().min(6).optional().or(z.literal(""))
 });
 
 function generatedUserEmail(username: string) {
@@ -1254,6 +1400,97 @@ app.get("/auth/me", authenticate, async (req, res) => {
   });
 });
 
+app.get("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (_req, res) => {
+  const hotels = await prisma.hotel.findMany({
+    include: {
+      _count: {
+        select: {
+          departments: true,
+          users: true,
+          reminders: true,
+          managementRequests: true,
+          operationDocuments: true
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  res.json({ items: hotels.map(serializeHotel) });
+}));
+
+app.post("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
+  const payload = hotelSchema.parse(req.body);
+  const code = normalizeHotelCode(payload.code || payload.name);
+  if (!code || code.length < 2) {
+    res.status(422).json({ error: "INVALID_HOTEL_CODE" });
+    return;
+  }
+
+  const temporaryPassword = payload.adminPassword || crypto.randomBytes(9).toString("base64url");
+  const adminEmail = payload.adminEmail ?? generatedUserEmail(`${code}.${payload.adminUsername}`);
+  const created = await prisma.$transaction(async (tx) => {
+    const hotel = await tx.hotel.create({
+      data: {
+        code,
+        name: payload.name,
+        timezone: payload.timezone
+      }
+    });
+
+    const departments = new Map<string, string>();
+    for (const departmentId of defaultHotelDepartmentIds) {
+      const departmentCode = departmentCodeFromClientId(departmentId) as DepartmentCode;
+      const department = await tx.department.create({
+        data: {
+          hotelId: hotel.id,
+          code: departmentCode,
+          name: departmentName(departmentId)
+        }
+      });
+      departments.set(departmentCode, department.id);
+    }
+
+    const role = await tx.role.findUniqueOrThrow({ where: { code: "generalManager" } });
+    const admin = await tx.user.create({
+      data: {
+        hotelId: hotel.id,
+        departmentId: departments.get("EXECUTIVE")!,
+        roleId: role.id,
+        username: payload.adminUsername,
+        email: adminEmail,
+        passwordHash: await bcrypt.hash(temporaryPassword, 12),
+        fullName: payload.adminFullName,
+        isActive: true
+      },
+      include: userInclude
+    });
+
+    return { hotel, admin };
+  });
+
+  await audit(req, "Hotel", created.hotel.id, "CREATE", null, { code: created.hotel.code, name: created.hotel.name, adminUsername: created.admin.username });
+  const hotelWithCount = await prisma.hotel.findUniqueOrThrow({
+    where: { id: created.hotel.id },
+    include: {
+      _count: {
+        select: {
+          departments: true,
+          users: true,
+          reminders: true,
+          managementRequests: true,
+          operationDocuments: true
+        }
+      }
+    }
+  });
+
+  res.status(201).json({
+    item: serializeHotel(hotelWithCount),
+    admin: serializeUser(created.admin),
+    temporaryPassword
+  });
+}));
+
 app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
   const payload = pushDeviceSchema.parse(req.body);
   const appVersion = payload.appBuild === undefined
@@ -1289,11 +1526,10 @@ app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
 app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   await processDueReminders(req.auth!.userId);
   const departments = scopeDepartmentIds(req.auth!);
-  const departmentCodes = departments.map(departmentCodeFromClientId);
 
   const [workOrders, notifications, reminders, users, activeDepartments] = await Promise.all([
     prisma.workOrder.findMany({
-      where: { deletedAt: null, department: { code: { in: departmentCodes } } },
+      where: workOrderVisibilityWhere(req.auth!),
       include: workOrderInclude,
       orderBy: [{ priority: "desc" }, { createdAt: "desc" }]
     }),
@@ -1304,6 +1540,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     }),
     prisma.reminder.findMany({
       where: {
+        hotelId: req.auth!.hotelId,
         deletedAt: null,
         department: { code: departmentCodeFromClientId(req.auth!.departmentId) },
         OR: [{ assignedToId: req.auth!.userId }, { createdById: req.auth!.userId }]
@@ -1312,7 +1549,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
       orderBy: { remindAt: "asc" }
     }),
     canManageUsers(req.auth!.roleId)
-      ? prisma.user.findMany({ where: { deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } })
+      ? prisma.user.findMany({ where: { hotelId: req.auth!.hotelId, deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } })
       : Promise.resolve([]),
     prisma.department.findMany({
       where: { hotelId: req.auth!.hotelId, deletedAt: null },
@@ -1332,8 +1569,8 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   });
 }));
 
-app.get("/users", authenticate, requirePermission("users:read"), async (_req, res) => {
-  const users = await prisma.user.findMany({ where: { deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } });
+app.get("/users", authenticate, requirePermission("users:read"), async (req, res) => {
+  const users = await prisma.user.findMany({ where: { hotelId: req.auth!.hotelId, deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } });
   res.json({ items: users.map(serializeUser) });
 });
 
@@ -1375,6 +1612,10 @@ app.post("/users", authenticate, requirePermission("users:write"), asyncHandler(
 app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
   const payload = userSchema.partial({ password: true, username: true }).parse(req.body);
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   const data: Prisma.UserUpdateInput = {};
   if (payload.fullName) data.fullName = payload.fullName;
   if (payload.email) data.email = payload.email;
@@ -1393,8 +1634,13 @@ app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHan
 
 app.post("/users/:id/reset-password", authenticate, requirePermission("users:reset-password"), async (req, res) => {
   const temporaryPassword = crypto.randomBytes(9).toString("base64url");
+  const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   const updated = await prisma.user.update({
-    where: { id: routeParam(req, "id") },
+    where: { id: existing.id },
     data: { passwordHash: await bcrypt.hash(temporaryPassword, 12) },
     include: userInclude
   });
@@ -1404,8 +1650,13 @@ app.post("/users/:id/reset-password", authenticate, requirePermission("users:res
 
 app.patch("/users/:id/status", authenticate, requirePermission("users:write"), async (req, res) => {
   const payload = z.object({ active: z.boolean() }).parse(req.body);
+  const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   const updated = await prisma.user.update({
-    where: { id: routeParam(req, "id") },
+    where: { id: existing.id },
     data: { isActive: payload.active },
     include: userInclude
   });
@@ -1420,6 +1671,10 @@ app.delete("/users/:id", authenticate, requirePermission("users:write"), async (
     return;
   }
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: userId }, include: userInclude });
+  if (existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   const deletedAt = new Date();
   const suffix = `deleted-${deletedAt.getTime()}`;
   const updated = await prisma.user.update({
@@ -1502,9 +1757,8 @@ app.delete("/departments/:departmentId", authenticate, requirePermission("depart
 });
 
 app.get("/work-orders", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
-  const departmentCodes = scopeDepartmentIds(req.auth!).map(departmentCodeFromClientId);
   const workOrders = await prisma.workOrder.findMany({
-    where: { deletedAt: null, department: { code: { in: departmentCodes } } },
+    where: workOrderVisibilityWhere(req.auth!),
     include: workOrderInclude,
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }]
   });
@@ -1513,13 +1767,12 @@ app.get("/work-orders", authenticate, requirePermission("work-orders:read"), req
 
 app.get("/work-orders/:code", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
   const workOrder = await prisma.workOrder.findUnique({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
-  if (!workOrder || workOrder.deletedAt) {
+  if (!workOrder || workOrder.deletedAt || workOrder.department.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
   }
 
-  const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
-  if (!scopeDepartmentIds(req.auth!).includes(departmentId)) {
+  if (!canAccessWorkOrder(req.auth!, workOrder)) {
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
   }
@@ -1599,7 +1852,7 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
     title: notificationText.title,
     body: notificationText.body
   })));
-  io.to(`department:${payload.departmentId}`).emit("work-order.created", serializeWorkOrder(created));
+  io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
   res.status(201).json(serializeWorkOrder(created));
 });
 
@@ -1675,7 +1928,7 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
     title: notificationText.title,
     body: notificationText.body
   })));
-  io.to(`department:${payload.departmentId}`).emit("work-order.created", serializeWorkOrder(created));
+  io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
   res.status(201).json(serializeWorkOrder(created));
 });
 
@@ -1683,7 +1936,11 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
   const payload = workOrderSchema.partial().extend({ status: z.enum(["Pending", "InProgress", "Completed", "Delayed", "Cancelled"]).optional() }).parse(req.body);
   const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
   const departmentId = clientDepartmentIdFromCode(existing.department.code);
-  if (!scopeDepartmentIds(req.auth!).includes(departmentId)) {
+  if (existing.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  if (!canAccessWorkOrder(req.auth!, existing)) {
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
   }
@@ -1740,7 +1997,7 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
     include: workOrderInclude
   });
   await audit(req, "WorkOrder", updated.code, "UPDATE", serializeWorkOrder(existing), serializeWorkOrder(updated), updated.id);
-  io.to(`department:${departmentId}`).emit("work-order.updated", serializeWorkOrder(updated));
+  io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
   res.json(serializeWorkOrder(updated));
 });
 
@@ -1748,6 +2005,10 @@ app.patch("/calendar/work-orders/:code/status", authenticate, requirePermission(
   const payload = z.object({ status: z.enum(["Pending", "InProgress", "Completed", "Delayed", "Cancelled"]) }).parse(req.body);
   const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
   const departmentId = clientDepartmentIdFromCode(existing.department.code);
+  if (existing.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   if (!scopeDepartmentIds(req.auth!).includes(departmentId)) {
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
@@ -1773,15 +2034,22 @@ app.patch("/calendar/work-orders/:code/status", authenticate, requirePermission(
     include: workOrderInclude
   });
   await audit(req, "WorkOrder", updated.code, "CALENDAR_STATUS_UPDATE", serializeWorkOrder(existing), serializeWorkOrder(updated), updated.id);
-  io.to(`department:${departmentId}`).emit("work-order.updated", serializeWorkOrder(updated));
+  io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
   res.json(serializeWorkOrder(updated));
 });
 
 app.post("/work-orders/:code/comments", authenticate, requirePermission("work-orders:update"), requireModuleAccess("jobs"), async (req, res) => {
   const payload = z.object({ body: z.string().min(1) }).parse(req.body);
-  const workOrder = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: { department: true } });
+  const workOrder = await prisma.workOrder.findUniqueOrThrow({
+    where: { code: routeParam(req, "code") },
+    include: { department: true, createdBy: { include: { department: true } } }
+  });
   const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
-  if (!scopeDepartmentIds(req.auth!).includes(departmentId)) {
+  if (workOrder.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  if (!canAccessWorkOrder(req.auth!, workOrder)) {
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
   }
@@ -1791,15 +2059,22 @@ app.post("/work-orders/:code/comments", authenticate, requirePermission("work-or
     include: { author: true }
   });
   await audit(req, "Comment", comment.id, "CREATE", null, { body: comment.body }, workOrder.id);
-  io.to(`department:${departmentId}`).emit("work-order.comment.created", { workOrderCode: workOrder.code, comment });
+  io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("work-order.comment.created", { workOrderCode: workOrder.code, comment });
   res.status(201).json(comment);
 });
 
 app.post("/work-orders/:code/attachments", authenticate, requirePermission("work-orders:update"), requireModuleAccess("jobs"), requireFeatureAccess("featureBeforeAfterPhotos"), async (req, res) => {
   const payload = z.object({ photos: z.array(photoSchema).min(1).max(6) }).parse(req.body);
-  const workOrder = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: { department: true } });
+  const workOrder = await prisma.workOrder.findUniqueOrThrow({
+    where: { code: routeParam(req, "code") },
+    include: { department: true, createdBy: { include: { department: true } } }
+  });
   const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
-  if (!scopeDepartmentIds(req.auth!).includes(departmentId)) {
+  if (workOrder.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  if (!canAccessWorkOrder(req.auth!, workOrder)) {
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
   }
@@ -1825,6 +2100,10 @@ app.post("/work-orders/:code/attachments", authenticate, requirePermission("work
 
 app.delete("/work-orders/:code", authenticate, requirePermission("work-orders:delete-own"), requireModuleAccess("jobs"), async (req, res) => {
   const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
+  if (existing.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   if (existing.createdById !== req.auth!.userId) {
     res.status(403).json({ error: "ONLY_OWN_WORK_ORDER_CAN_BE_DELETED" });
     return;
@@ -1843,7 +2122,7 @@ app.get("/calendar-events", authenticate, requirePermission("calendar:read"), re
   const events = await prisma.calendarEvent.findMany({
     where: {
       deletedAt: null,
-      department: { code: { in: departmentCodes } }
+      department: { hotelId: req.auth!.hotelId, code: { in: departmentCodes } }
     },
     include: { department: true },
     orderBy: { startsAt: "asc" }
@@ -1875,7 +2154,7 @@ app.post("/calendar-events", authenticate, requirePermission("calendar:write"), 
     include: { department: true }
   });
   await audit(req, "CalendarEvent", created.id, "CREATE", null, serializeCalendarEvent(created));
-  io.to(`department:${payload.departmentId}`).emit("calendar-event.created", serializeCalendarEvent(created));
+  io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("calendar-event.created", serializeCalendarEvent(created));
   res.status(201).json(serializeCalendarEvent(created));
 });
 
@@ -1963,6 +2242,10 @@ app.patch("/management-requests/:id/read", authenticate, requireModuleAccess("ma
     where: { id: routeParam(req, "id") },
     include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } }
   });
+  if (existing.hotelId !== req.auth!.hotelId || existing.deletedAt) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   const canRead = [existing.recipientId, existing.relatedUserId].filter(Boolean).includes(req.auth!.userId);
   if (!canRead) {
     res.status(403).json({ error: "REQUEST_READ_SCOPE_DENIED" });
@@ -2063,7 +2346,7 @@ app.post("/operation-documents", authenticate, requireModuleAccess("operationDoc
   const serialized = serializeOperationDocument(created, audience, req.auth!);
   const departmentRooms = new Set(notificationUsers.map((user) => clientDepartmentIdFromCode(user.department.code)));
   for (const departmentId of departmentRooms) {
-    io.to(`department:${departmentId}`).emit("operation-document.created", serialized);
+    io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("operation-document.created", serialized);
   }
 
   await audit(req, "OperationDocument", created.id, "CREATE", null, serialized);
@@ -2166,6 +2449,10 @@ app.patch("/reminders/:id/complete", authenticate, requireModuleAccess("reminder
     where: { id: routeParam(req, "id") },
     include: { createdBy: { include: userInclude }, assignedTo: { include: userInclude }, department: true }
   });
+  if (existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
   if (existing.assignedToId !== req.auth!.userId && existing.createdById !== req.auth!.userId) {
     res.status(403).json({ error: "REMINDER_SCOPE_DENIED" });
     return;
@@ -2192,7 +2479,7 @@ app.patch("/reminders/:id/complete", authenticate, requireModuleAccess("reminder
 app.get("/reports/overview", authenticate, requirePermission("reports:read"), requireModuleAccess("reports"), async (req, res) => {
   const departmentCodes = scopeDepartmentIds(req.auth!).map(departmentCodeFromClientId);
   const workOrders = await prisma.workOrder.findMany({
-    where: { deletedAt: null, department: { code: { in: departmentCodes } } },
+    where: { deletedAt: null, department: { hotelId: req.auth!.hotelId, code: { in: departmentCodes } } },
     include: { department: true }
   });
 
@@ -2231,7 +2518,7 @@ app.get("/reports/daily", authenticate, requirePermission("reports:read"), requi
   const workOrders = await prisma.workOrder.findMany({
     where: {
       deletedAt: null,
-      department: { code: { in: departmentCodes } },
+      department: { hotelId: req.auth!.hotelId, code: { in: departmentCodes } },
       OR: [{ createdAt: { gte: since } }, { updatedAt: { gte: since } }, { completedAt: { gte: since } }]
     },
     include: { department: true, assignedTo: true },
@@ -2271,7 +2558,7 @@ app.get("/rooms/:number/history", authenticate, requirePermission("work-orders:r
     where: {
       deletedAt: null,
       room: roomNumber,
-      department: { code: { in: departmentCodes } }
+      department: { hotelId: req.auth!.hotelId, code: { in: departmentCodes } }
     },
     include: { department: true, assignedTo: true },
     orderBy: { createdAt: "desc" },
@@ -2325,7 +2612,9 @@ app.patch("/notifications/:id/read", authenticate, async (req, res) => {
 
 app.get("/audit-logs", authenticate, requirePermission("audit:read"), requireModuleAccess("reports"), requireFeatureAccess("featureAuditLogs"), async (req, res) => {
   const logs = await prisma.auditLog.findMany({
-    where: req.auth!.roleId === "generalManager" ? {} : { actor: { department: { code: departmentCodeFromClientId(req.auth!.departmentId) } } },
+    where: req.auth!.roleId === "generalManager"
+      ? { actor: { hotelId: req.auth!.hotelId } }
+      : { actor: { hotelId: req.auth!.hotelId, department: { code: departmentCodeFromClientId(req.auth!.departmentId) } } },
     include: { actor: { include: { role: true, department: true } } },
     orderBy: { createdAt: "desc" },
     take: 100
@@ -2376,7 +2665,7 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   const auth = socket.data.auth as AuthContext;
   const scope = scopeDepartmentIds(auth);
-  scope.forEach((departmentId) => socket.join(`department:${departmentId}`));
+  scope.forEach((departmentId) => socket.join(departmentSocketRoom(auth.hotelId, departmentId)));
   socket.emit("session.ready", { scope });
 });
 

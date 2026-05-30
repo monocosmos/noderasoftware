@@ -12,6 +12,7 @@ export type DepartmentId =
   | "accounting";
 
 export type RoleId =
+  | "siteAdmin"
   | "generalManager"
   | "hrManager"
   | "technicalManager"
@@ -76,6 +77,14 @@ export const departments: Record<DepartmentId, { labelTR: string; labelEN: strin
 };
 
 export const roles: RoleDefinition[] = [
+  {
+    id: "siteAdmin",
+    labelTR: "Site Admin",
+    labelEN: "Site Admin",
+    department: "executive",
+    visibleDepartments: Object.keys(departments) as DepartmentId[],
+    permissions: ["system.view_all", "reports.view_all", "calendar.view_all", "approvals.manage"]
+  },
   {
     id: "generalManager",
     labelTR: "Genel Müdür",

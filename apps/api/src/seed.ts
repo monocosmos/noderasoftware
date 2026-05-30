@@ -21,6 +21,7 @@ const departments: Array<{ code: DepartmentCode; name: string }> = [
 ];
 
 const roleDepartments: Record<string, DepartmentCode | null> = {
+  siteAdmin: "EXECUTIVE",
   generalManager: "EXECUTIVE",
   hrManager: "HR",
   technicalManager: "TECHNICAL",
@@ -36,6 +37,7 @@ const roleDepartments: Record<string, DepartmentCode | null> = {
 };
 
 const users = [
+  { username: "siteadmin", fullName: "Hasan Fırat Keskin", email: "siteadmin@noderasoftware.com", role: "siteAdmin", department: "EXECUTIVE" as DepartmentCode },
   { username: "admin", fullName: "Aylin Karaca", email: "aylin.karaca@hotelops.local", role: "generalManager", department: "EXECUTIVE" as DepartmentCode },
   { username: "manager", fullName: "Murat Erdem", email: "murat.erdem@hotelops.local", role: "generalManager", department: "EXECUTIVE" as DepartmentCode },
   { username: "ik.mudur", fullName: "Mert Demir", email: "mert.demir@hotelops.local", role: "hrManager", department: "HR" as DepartmentCode },
@@ -214,7 +216,7 @@ async function main() {
     });
     userMap.set(user.username, created.id);
 
-    if (!["generalManager", "frontOfficeManager", "securityManager", "salesManager", "fnbManager"].includes(user.role)) {
+    if (!["siteAdmin", "generalManager", "frontOfficeManager", "securityManager", "salesManager", "fnbManager"].includes(user.role)) {
       await prisma.staffProfile.upsert({
         where: { userId: created.id },
         update: { title: roleLabels[user.role] ?? "Personel" },
