@@ -63,6 +63,7 @@ teknik kod birlikte artar:
 - `apps/web/public/app-version.json` icindeki `androidDirect` ve `androidPlay` kodlari
 
 Alt surumler `0` ile `99` arasinda kalir. `1.0.99` sonrasinda `1.1.0` kullanilir.
+Gizli build/update kodlari arayuzde gosterilmez; sadece guncelleme kontrolunde kullanilir.
 
 ## Update davranisi
 

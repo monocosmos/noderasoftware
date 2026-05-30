@@ -3,6 +3,7 @@ package com.example.nodera
 import android.Manifest
 import android.app.Activity
 import android.annotation.SuppressLint
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -52,6 +53,8 @@ class MainActivity : ComponentActivity() {
     private var pendingFilePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraPhotoUri: Uri? = null
     private var pendingCameraPermissionRequest: PermissionRequest? = null
+    private var pendingFileChooserCapture = false
+    private var pendingFileChooserAllowMultiple = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -215,15 +218,15 @@ class MainActivity : ComponentActivity() {
 
                     val capture = fileChooserParams?.isCaptureEnabled == true
                     val allowMultiple = fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                    pendingFileChooserCapture = capture
+                    pendingFileChooserAllowMultiple = allowMultiple
 
-                    return runCatching {
-                        startActivityForResult(createImageChooserIntent(capture, allowMultiple), fileChooserRequest)
-                        true
-                    }.getOrElse {
-                        pendingFilePathCallback = null
-                        filePathCallback.onReceiveValue(null)
-                        false
+                    if (capture && !hasCameraPermission()) {
+                        requestPermissions(arrayOf(Manifest.permission.CAMERA), cameraPermissionRequest)
+                        return true
                     }
+
+                    return launchFileChooser(capture, allowMultiple)
                 }
             }
 
@@ -341,8 +344,26 @@ class MainActivity : ComponentActivity() {
         }.getOrDefault(false)
     }
 
+    private fun launchFileChooser(capture: Boolean, allowMultiple: Boolean): Boolean {
+        return runCatching {
+            startActivityForResult(createImageChooserIntent(capture, allowMultiple), fileChooserRequest)
+            true
+        }.getOrElse {
+            cancelPendingFileChooser()
+            false
+        }
+    }
+
+    private fun cancelPendingFileChooser() {
+        pendingFilePathCallback?.onReceiveValue(null)
+        pendingFilePathCallback = null
+        pendingCameraPhotoUri = null
+        pendingFileChooserCapture = false
+        pendingFileChooserAllowMultiple = false
+    }
+
     private fun createImageChooserIntent(capture: Boolean, allowMultiple: Boolean): Intent {
-        val cameraIntent = createCameraCaptureIntent()
+        val cameraIntent = if (hasCameraPermission()) createCameraCaptureIntent() else null
         if (capture && cameraIntent != null) return cameraIntent
 
         val contentIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -362,10 +383,19 @@ class MainActivity : ComponentActivity() {
         val outputUri = createCameraOutputUri() ?: return null
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
+            clipData = ClipData.newUri(contentResolver, "HotelOps camera", outputUri)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
-        return if (intent.resolveActivity(packageManager) != null) {
+        val cameraActivities = packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        return if (cameraActivities.isNotEmpty()) {
+            cameraActivities.forEach { activity ->
+                grantUriPermission(
+                    activity.activityInfo.packageName,
+                    outputUri,
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
             pendingCameraPhotoUri = outputUri
             intent
         } else {
@@ -407,8 +437,13 @@ class MainActivity : ComponentActivity() {
         }
 
         callback.onReceiveValue(selectedUris.takeIf { it.isNotEmpty() }?.toTypedArray())
+        pendingCameraPhotoUri?.let {
+            revokeUriPermission(it, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         pendingFilePathCallback = null
         pendingCameraPhotoUri = null
+        pendingFileChooserCapture = false
+        pendingFileChooserAllowMultiple = false
     }
 
     override fun onRequestPermissionsResult(
@@ -420,13 +455,23 @@ class MainActivity : ComponentActivity() {
 
         if (requestCode != cameraPermissionRequest) return
 
-        val request = pendingCameraPermissionRequest ?: return
-        pendingCameraPermissionRequest = null
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
 
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
-        } else {
-            request.deny()
+        pendingCameraPermissionRequest?.let { request ->
+            pendingCameraPermissionRequest = null
+            if (granted) {
+                request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+            } else {
+                request.deny()
+            }
+        }
+
+        if (pendingFilePathCallback != null) {
+            if (granted) {
+                launchFileChooser(pendingFileChooserCapture, pendingFileChooserAllowMultiple)
+            } else {
+                cancelPendingFileChooser()
+            }
         }
     }
 

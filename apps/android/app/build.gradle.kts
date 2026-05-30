@@ -17,11 +17,9 @@ android {
     defaultConfig {
         minSdk = 23
         targetSdk = 36
-        // versionName kullaniciya gorunen sade surumdur. versionCode Android'in
-        // yukleme siralamasi icin monoton kalir; gizli urun build'i Kotlin
-        // tarafinda HotelOpsAppVersion.BUILD ile tutulur.
-        versionCode = 2026052901
-        versionName = "1.0.0"
+        // versionName kullaniciya gorunen surumdur; versionCode teknik guncelleme sirasidir.
+        versionCode = 2026053001
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-05-30T01:16:40+03:00",
+  "updatedAt": "2026-05-30T03:10:00+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
@@ -12,25 +12,25 @@
       "message": "HotelOps Windows uygulamasinin yeni surumu hazir."
     },
     "android": {
-      "latestVersion": "1.0.0",
-      "latestCode": 2026052901,
-      "minimumCode": 2026052901,
+      "latestVersion": "1.0.1",
+      "latestCode": 2026053001,
+      "minimumCode": 2026053001,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android uygulamasi guncel degil",
       "message": "HotelOps Android uygulamasinin yeni surumu hazir."
     },
     "androidDirect": {
-      "latestVersion": "1.0.0",
-      "latestCode": 2026052901,
-      "minimumCode": 2026052901,
+      "latestVersion": "1.0.1",
+      "latestCode": 2026053001,
+      "minimumCode": 2026053001,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android APK uygulamasi guncel degil",
       "message": "HotelOps Android APK kanalinin yeni surumu hazir."
     },
     "androidPlay": {
-      "latestVersion": "1.0.0",
-      "latestCode": 2026052901,
-      "minimumCode": 2026052901,
+      "latestVersion": "1.0.1",
+      "latestCode": 2026053001,
+      "minimumCode": 2026053001,
       "downloadUrl": "https://play.google.com/store/apps/details?id=com.noderasoftware.hotelops",
       "title": "Android Play Store uygulamasi guncel degil",
       "message": "HotelOps Android Play Store kanalinin yeni surumu hazir."

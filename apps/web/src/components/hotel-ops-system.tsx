@@ -1242,11 +1242,6 @@ function NoderaBrandFooter() {
   return null;
 }
 
-function shellBuildLabel(info: ShellAppInfo) {
-  const buildNumber = info.buildNumber || info.versionCode;
-  return Number.isFinite(buildNumber) && buildNumber > 0 ? `Build ${buildNumber}` : "Build -";
-}
-
 function SidebarShellMeta({
   appUpdateNotice,
   onAppUpdate,
@@ -1270,7 +1265,6 @@ function SidebarShellMeta({
         >
           {appUpdateNotice ? <span className="sidebar-app-version-badge">Güncelleme</span> : null}
           <span>{shellAppInfo.label} v{shellAppInfo.version}</span>
-          <span className="sidebar-app-version-detail">{shellBuildLabel(shellAppInfo)}</span>
         </button>
       ) : null}
     </div>
