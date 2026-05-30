@@ -278,6 +278,45 @@ function canTrackScopedDepartmentOrigin(auth: AuthContext) {
   return auth.roleId !== "staff";
 }
 
+function normalizedPlatformUsername(username: string) {
+  return username.trim().toLocaleUpperCase("tr-TR");
+}
+
+function isPlatformAdminUsername(username: string) {
+  return normalizedPlatformUsername(username) === platformAdminUsername;
+}
+
+function isPlatformAdminAccount(user: Pick<User, "username"> & { role: { code: string } }) {
+  return user.role.code === platformAdminRole && isPlatformAdminUsername(user.username);
+}
+
+function isReservedPlatformUser(user: Pick<User, "username"> & { role: { code: string } }) {
+  return user.role.code === platformAdminRole || isPlatformAdminUsername(user.username);
+}
+
+function visibleManageableUsersWhere(auth: AuthContext): Prisma.UserWhereInput {
+  return {
+    hotelId: auth.hotelId,
+    deletedAt: null,
+    NOT: [
+      { role: { code: platformAdminRole } },
+      { username: { equals: platformAdminUsername, mode: "insensitive" } }
+    ]
+  };
+}
+
+function rejectReservedPlatformRole(roleId: string | undefined, res: express.Response) {
+  if (roleId !== platformAdminRole) return false;
+  res.status(403).json({ error: "RESERVED_PLATFORM_ROLE" });
+  return true;
+}
+
+function hideReservedPlatformUser(user: Pick<User, "username"> & { role: { code: string } }, res: express.Response) {
+  if (!isReservedPlatformUser(user)) return false;
+  res.status(404).json({ error: "NOT_FOUND" });
+  return true;
+}
+
 function workOrderVisibilityWhere(auth: AuthContext): Prisma.WorkOrderWhereInput {
   const departmentCodes = scopeDepartmentCodes(auth);
   const scopedOrigin = canTrackScopedDepartmentOrigin(auth)
@@ -300,7 +339,7 @@ function workOrderVisibilityWhere(auth: AuthContext): Prisma.WorkOrderWhereInput
 }
 
 function isPlatformAdmin(req: express.Request) {
-  return req.auth?.roleId === "siteAdmin";
+  return Boolean(req.user && isPlatformAdminAccount(req.user));
 }
 
 function requirePlatformAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -709,6 +748,8 @@ const workOrderInclude = {
 } as const;
 
 const userInclude = { hotel: true, role: true, department: true } as const;
+const platformAdminUsername = "NODERADMIN";
+const platformAdminRole = "siteAdmin";
 
 const operationDocumentInclude = {
   createdBy: { include: userInclude },
@@ -1354,6 +1395,11 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     return;
   }
 
+  if (user.role.code === platformAdminRole && !isPlatformAdminAccount(user)) {
+    res.status(401).json({ error: "INVALID_CREDENTIALS" });
+    return;
+  }
+
   const refreshToken = crypto.randomBytes(48).toString("hex");
   const session = await prisma.authSession.create({
     data: {
@@ -1549,7 +1595,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
       orderBy: { remindAt: "asc" }
     }),
     canManageUsers(req.auth!.roleId)
-      ? prisma.user.findMany({ where: { hotelId: req.auth!.hotelId, deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } })
+      ? prisma.user.findMany({ where: visibleManageableUsersWhere(req.auth!), include: userInclude, orderBy: { fullName: "asc" } })
       : Promise.resolve([]),
     prisma.department.findMany({
       where: { hotelId: req.auth!.hotelId, deletedAt: null },
@@ -1570,7 +1616,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
 }));
 
 app.get("/users", authenticate, requirePermission("users:read"), async (req, res) => {
-  const users = await prisma.user.findMany({ where: { hotelId: req.auth!.hotelId, deletedAt: null }, include: userInclude, orderBy: { fullName: "asc" } });
+  const users = await prisma.user.findMany({ where: visibleManageableUsersWhere(req.auth!), include: userInclude, orderBy: { fullName: "asc" } });
   res.json({ items: users.map(serializeUser) });
 });
 
@@ -1588,6 +1634,7 @@ app.get("/department-assignees", authenticate, asyncHandler(async (req, res) => 
 
 app.post("/users", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
   const payload = userSchema.parse(req.body);
+  if (rejectReservedPlatformRole(payload.roleId, res)) return;
   const role = await prisma.role.findUniqueOrThrow({ where: { code: payload.roleId } });
   const department = await departmentForClientId(req.auth!.hotelId, payload.departmentId);
   const temporaryPassword = payload.password || crypto.randomBytes(9).toString("base64url");
@@ -1611,7 +1658,9 @@ app.post("/users", authenticate, requirePermission("users:write"), asyncHandler(
 
 app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
   const payload = userSchema.partial({ password: true, username: true }).parse(req.body);
+  if (rejectReservedPlatformRole(payload.roleId, res)) return;
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (hideReservedPlatformUser(existing, res)) return;
   if (existing.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
@@ -1635,6 +1684,7 @@ app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHan
 app.post("/users/:id/reset-password", authenticate, requirePermission("users:reset-password"), async (req, res) => {
   const temporaryPassword = crypto.randomBytes(9).toString("base64url");
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (hideReservedPlatformUser(existing, res)) return;
   if (existing.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
@@ -1651,6 +1701,7 @@ app.post("/users/:id/reset-password", authenticate, requirePermission("users:res
 app.patch("/users/:id/status", authenticate, requirePermission("users:write"), async (req, res) => {
   const payload = z.object({ active: z.boolean() }).parse(req.body);
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (hideReservedPlatformUser(existing, res)) return;
   if (existing.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
@@ -1671,6 +1722,7 @@ app.delete("/users/:id", authenticate, requirePermission("users:write"), async (
     return;
   }
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: userId }, include: userInclude });
+  if (hideReservedPlatformUser(existing, res)) return;
   if (existing.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;

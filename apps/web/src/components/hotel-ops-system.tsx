@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   AlertTriangle,
@@ -405,6 +405,7 @@ const SESSION_TOKEN = "hotelops.api.session-token";
 const STORAGE_SHELL = "hotelops.shell";
 const HOTEL_BASE_PATH = "/hotel";
 const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
+const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
 const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/reminders"] as const;
 const ALERT_AUTO_DISMISS_SECONDS = 10;
 
@@ -1231,10 +1232,10 @@ function isUnknownModulePath(path: string) {
 const initialUsers: DemoUser[] = [
   {
     id: "USR-000",
-    username: "siteadmin",
+    username: PLATFORM_ADMIN_USERNAME,
     password: "",
     fullName: "Hasan Fırat Keskin",
-    email: "siteadmin@noderasoftware.com",
+    email: "noderadmin@noderasoftware.com",
     roleId: "siteAdmin",
     departmentId: "executive",
     hotelCode: "NODERA",
@@ -2419,8 +2420,12 @@ function normalizeHotelCodeInput(value: string) {
     .slice(0, 32);
 }
 
-function isPlatformAdminUser(user: Pick<DemoUser, "roleId">) {
-  return user.roleId === "siteAdmin";
+function isPlatformPanelPath(path: string) {
+  return (path.split("?")[0] || "/") === "/hotelpanel";
+}
+
+function isPlatformAdminUser(user: Pick<DemoUser, "roleId" | "username">) {
+  return user.roleId === "siteAdmin" && user.username.trim().toLocaleUpperCase("tr-TR") === PLATFORM_ADMIN_USERNAME;
 }
 
 export function HotelOpsSystem() {
@@ -2546,6 +2551,16 @@ export function HotelOpsSystem() {
 
       try {
         const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
+        const platformPanelRequest = isPlatformPanelPath(pathRef.current);
+        const platformAdmin = isPlatformAdminUser(bootstrap.user);
+        if (platformPanelRequest && !platformAdmin) {
+          clearApiToken();
+          setLoginUsername(PLATFORM_ADMIN_USERNAME);
+          setLoginError("Bu panel yalnÄ±zca NODERADMIN hesabÄ± ile aÃ§Ä±lÄ±r.");
+          setSession(null);
+          setHydrated(true);
+          return;
+        }
         setSession(bootstrap.user);
         setUsers(bootstrap.users);
         setJobs(bootstrap.jobs);
@@ -2555,6 +2570,10 @@ export function HotelOpsSystem() {
         setNotifications(bootstrap.notifications ?? []);
         setDepartmentsList(bootstrap.departments ?? []);
         setJobDraft(newJobDraft(bootstrap.user));
+        if (platformAdmin && !platformPanelRequest) {
+          applyPath("/hotelpanel");
+          window.history.replaceState(null, "", hotelUrl("/hotelpanel"));
+        }
       } catch {
         clearApiToken();
         setSession(null);
@@ -2986,12 +3005,22 @@ export function HotelOpsSystem() {
     setLoginError("");
 
     try {
+      const usernameForLogin = loginUsername.trim() || (isPlatformPanelPath(pathRef.current) ? PLATFORM_ADMIN_USERNAME : "");
       const login = await apiRequest<LoginResponse>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword })
+        body: JSON.stringify({ username: usernameForLogin, password: loginPassword })
       });
       storeApiToken(login.token, remember);
       const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
+      const platformLogin = isPlatformPanelPath(pathRef.current);
+      const platformAdmin = isPlatformAdminUser(bootstrap.user);
+      if (platformLogin && !platformAdmin) {
+        clearApiToken();
+        setSession(null);
+        setLoginPassword("");
+        setLoginError("Bu panel yalnÄ±zca NODERADMIN hesabÄ± ile aÃ§Ä±lÄ±r.");
+        return;
+      }
       setUsers(bootstrap.users);
       setJobs(bootstrap.jobs);
       setReminders(bootstrap.reminders ?? []);
@@ -2999,7 +3028,7 @@ export function HotelOpsSystem() {
       setDepartmentsList(bootstrap.departments ?? []);
       setSession(bootstrap.user);
       setJobDraft(newJobDraft(bootstrap.user));
-      navigate(isPlatformAdminUser(bootstrap.user) ? "/hotelpanel" : "/dashboard");
+      navigate(platformAdmin ? "/hotelpanel" : "/dashboard");
     } catch (error) {
       clearApiToken();
       setLoginError(loginErrorMessage(error));
@@ -3010,6 +3039,7 @@ export function HotelOpsSystem() {
   }
 
   async function logoutApi() {
+    const shouldReturnToPlatformLogin = isPlatformPanelPath(pathRef.current) || Boolean(session && isPlatformAdminUser(session));
     try {
       await apiRequest<{ ok: boolean }>("/auth/logout", { method: "POST" });
     } catch {
@@ -3025,7 +3055,7 @@ export function HotelOpsSystem() {
     setManagementRequestRecipients([]);
     setDepartmentAssignees([]);
     setDepartmentsList([]);
-    navigate("/login");
+    navigate(shouldReturnToPlatformLogin ? "/hotelpanel" : "/login");
   }
 
   async function handleCreateJobApi(event: FormEvent<HTMLFormElement>) {
@@ -3335,7 +3365,22 @@ export function HotelOpsSystem() {
     );
   }
 
+  const platformPanelRequest = isPlatformPanelPath(currentPath);
+
   if (!session) {
+    if (platformPanelRequest) {
+      return (
+        <PlatformAdminLoginScreen
+          error={loginError}
+          loginPassword={loginPassword}
+          loginUsername={loginUsername || PLATFORM_ADMIN_USERNAME}
+          setLoginPassword={setLoginPassword}
+          setLoginUsername={setLoginUsername}
+          onLogin={handleLoginApi}
+        />
+      );
+    }
+
     return (
       <LoginScreen
         appUpdateNotice={appUpdateNotice}
@@ -3354,6 +3399,34 @@ export function HotelOpsSystem() {
 
   const pageTitle = getPageTitle(currentPath);
   const unreadNotificationCount = notifications.filter((notification) => !notification.readAt).length;
+
+  if (platformPanelRequest && !isPlatformAdminUser(session)) {
+    return (
+      <PlatformAdminLoginScreen
+        error={loginError || "Aktif oturum bu panele yetkili deÄŸil. NODERADMIN ile giriÅŸ yapÄ±n."}
+        loginPassword={loginPassword}
+        loginUsername={loginUsername || PLATFORM_ADMIN_USERNAME}
+        setLoginPassword={setLoginPassword}
+        setLoginUsername={setLoginUsername}
+        onLogin={handleLoginApi}
+        activeHotelUser={session.fullName}
+      />
+    );
+  }
+
+  if (platformPanelRequest && isPlatformAdminUser(session)) {
+    return (
+      <PlatformAdminShell
+        alert={alert}
+        alertSecondsRemaining={alertSecondsRemaining}
+        dismissAlert={dismissAlert}
+        logout={logoutApi}
+        session={session}
+      >
+        <HotelPanelPage session={session} setAlert={setAlert} />
+      </PlatformAdminShell>
+    );
+  }
 
   return (
     <main className="classic-app">
@@ -3591,6 +3664,160 @@ function LoginScreen({
 
         <NoderaBrandFooter />
       </div>
+    </main>
+  );
+}
+
+function PlatformAdminLoginScreen({
+  activeHotelUser,
+  error,
+  loginPassword,
+  loginUsername,
+  setLoginPassword,
+  setLoginUsername,
+  onLogin
+}: {
+  activeHotelUser?: string;
+  error: string;
+  loginPassword: string;
+  loginUsername: string;
+  setLoginPassword: (value: string) => void;
+  setLoginUsername: (value: string) => void;
+  onLogin: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+}) {
+  return (
+    <main className="classic-app platform-admin-login">
+      <section className="platform-admin-login-panel">
+        <div className="platform-admin-login-copy">
+          <div className="platform-admin-badge">
+            <ShieldCheck size={15} />
+            Site Admin Paneli
+          </div>
+          <div>
+            <h1>Nodera Tenant Console</h1>
+            <p>Otel kurulumları, tenant kayıtları ve sistem sahibi işlemleri yalnızca NODERADMIN hesabı ile yönetilir.</p>
+          </div>
+          <div className="platform-admin-lock-grid">
+            <div><LockKeyhole size={17} /><span>Tek sahip hesabı</span></div>
+            <div><KeyRound size={17} /><span>Rol devredilemez</span></div>
+            <div><Users size={17} /><span>GM ve İK görünmez</span></div>
+          </div>
+        </div>
+
+        <form className="platform-admin-login-card" onSubmit={onLogin}>
+          <div className="platform-admin-logo-row">
+            <span className="logo-mark logo-mark-image"><BrandLogo /></span>
+            <div>
+              <strong>NODERADMIN</strong>
+              <span>Platform sahibi girişi</span>
+            </div>
+          </div>
+
+          {activeHotelUser ? (
+            <div className="platform-admin-session-note">
+              Aktif oturum: {activeHotelUser}. Bu alan otel kullanıcılarına kapalıdır.
+            </div>
+          ) : null}
+
+          {error && (
+            <div className="login-error">
+              <AlertTriangle size={16} />
+              {error}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="platformAdminUsername">Admin Hesabı</label>
+            <input
+              id="platformAdminUsername"
+              className="form-control"
+              value={loginUsername}
+              onChange={(event) => setLoginUsername(event.target.value)}
+              placeholder={PLATFORM_ADMIN_USERNAME}
+              autoCapitalize="characters"
+              autoFocus
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="platformAdminPassword">Şifre</label>
+            <input
+              id="platformAdminPassword"
+              className="form-control"
+              type="password"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              placeholder="Platform şifresi"
+            />
+          </div>
+          <button type="submit" className="btn btn-primary btn-lg btn-full">
+            Site Admin Paneline Gir
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PlatformAdminShell({
+  alert,
+  alertSecondsRemaining,
+  children,
+  dismissAlert,
+  logout,
+  session
+}: {
+  alert: string;
+  alertSecondsRemaining: number;
+  children: ReactNode;
+  dismissAlert: () => void;
+  logout: () => void | Promise<void>;
+  session: DemoUser;
+}) {
+  return (
+    <main className="classic-app platform-admin-shell">
+      <header className="platform-admin-topbar">
+        <div className="platform-admin-title">
+          <span className="logo-mark logo-mark-image"><BrandLogo /></span>
+          <div>
+            <strong>Nodera Tenant Console</strong>
+            <span>{session.username} / Site Admin</span>
+          </div>
+        </div>
+        <button type="button" className="btn btn-ghost" onClick={() => void logout()}>
+          <LogOut size={16} /> Çıkış
+        </button>
+      </header>
+
+      <section className="platform-admin-content">
+        <div className="platform-admin-hero">
+          <div>
+            <span className="dashboard-eyebrow">NODERADMIN</span>
+            <h1>Site Admin Paneli</h1>
+            <p>Bu ekran yalnızca platform sahibine açıktır. Otel genel müdürleri ve İK kullanıcıları bu paneli göremez, yetkilendiremez veya devredemez.</p>
+          </div>
+          <div className="platform-admin-hero-lock">
+            <ShieldCheck size={22} />
+            <span>Tek hesap yetkisi</span>
+          </div>
+        </div>
+
+        {alert && (
+          <div
+            className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}
+            role={alert.includes("zorunlu") || alert.includes("zaten") ? "alert" : "status"}
+          >
+            <span className="alert-message">{alert}</span>
+            <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
+              {alertSecondsRemaining} sn
+            </span>
+            <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {children}
+      </section>
     </main>
   );
 }
@@ -6867,7 +7094,7 @@ function RemindersPage({
   );
 }
 
-function HotelPanelPage({ session, setAlert }: RenderContext) {
+function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "setAlert">) {
   const [hotels, setHotels] = useState<HotelRecord[]>([]);
   const [hotelDraft, setHotelDraft] = useState<HotelDraft>(() => newHotelDraft());
   const [createdAdmin, setCreatedAdmin] = useState<{ hotel: HotelRecord; admin: DemoUser; temporaryPassword: string } | null>(null);
