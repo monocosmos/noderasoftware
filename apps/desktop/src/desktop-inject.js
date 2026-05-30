@@ -3,6 +3,7 @@
   const styleId = "hotelops-desktop-shell-style";
   const controlsId = "hotelops-desktop-window-controls";
   const controlsHitZoneId = "hotelops-desktop-window-controls-hit-zone";
+  const loginDragStripId = "hotelops-desktop-login-drag-strip";
   const hiddenHrefAttribute = "data-hotelops-desktop-href";
   const hiddenTitleAttribute = "data-hotelops-desktop-title";
   const platformClass = `hotelops-platform-${String(window.__HOTELOPS_DESKTOP_PLATFORM__ || "unknown")
@@ -146,6 +147,28 @@
     hitZone.id = controlsHitZoneId;
     hitZone.setAttribute("aria-hidden", "true");
     header.appendChild(hitZone);
+  }
+
+  function syncLoginDragStrip() {
+    if (window.__HOTELOPS_NATIVE_WINDOW_CONTROLS__ || window.__HOTELOPS_DESKTOP_PLATFORM__ === "darwin") {
+      document.getElementById(loginDragStripId)?.remove();
+      return;
+    }
+
+    const isLoginScreen = Boolean(document.querySelector(".login-page"));
+    const existing = document.getElementById(loginDragStripId);
+
+    if (!isLoginScreen) {
+      existing?.remove();
+      return;
+    }
+
+    if (!document.body || existing) return;
+
+    const dragStrip = document.createElement("div");
+    dragStrip.id = loginDragStripId;
+    dragStrip.setAttribute("aria-hidden", "true");
+    document.body.appendChild(dragStrip);
   }
 
   function installBrandLogo() {
@@ -359,6 +382,7 @@
     installStyle();
     installControls();
     installControlsHitZone();
+    syncLoginDragStrip();
     bindWindowControls();
     installBrandLogo();
     suppressImageDrag();
@@ -390,6 +414,7 @@
       installStyle();
       installControls();
       installControlsHitZone();
+      syncLoginDragStrip();
       installBrandLogo();
       suppressImageDrag();
       hideAllLinkChrome();

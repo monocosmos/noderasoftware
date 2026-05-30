@@ -43,8 +43,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\workstation\test
 
 Current baseline:
 
-- Windows visible version: `1.0.0`
-- Windows hidden build code: `5`
+- Windows visible version: `1.0.1`
+- Windows hidden build code: `6`
 - Android visible version: `1.0.1`
 - Android hidden product build: `5`
 - Android hidden update code: `2026053001`

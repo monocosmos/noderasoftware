@@ -53,10 +53,6 @@ html.hotelops-desktop-shell .site-header {
   padding-right: calc(env(titlebar-area-width, var(--hotelops-window-controls-width)) + 18px) !important;
 }
 
-html.hotelops-desktop-shell .login-page {
-  -webkit-app-region: drag !important;
-}
-
 html.hotelops-desktop-shell .login-box {
   -webkit-app-region: no-drag !important;
 }
@@ -190,6 +186,27 @@ html.hotelops-desktop-shell #sidebar-app-downloads {
   outline: 0 !important;
   cursor: default !important;
   -webkit-app-region: no-drag !important;
+}
+
+#hotelops-desktop-window-controls,
+#hotelops-desktop-window-controls * {
+  -webkit-app-region: no-drag !important;
+}
+
+#hotelops-desktop-login-drag-strip {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: var(--hotelops-window-controls-width) !important;
+  height: 56px !important;
+  z-index: 2147483645 !important;
+  display: block !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+  -webkit-app-region: drag !important;
 }
 
 #hotelops-desktop-window-controls .window-control-btn:focus,
