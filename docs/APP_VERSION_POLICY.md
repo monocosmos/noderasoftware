@@ -1,12 +1,13 @@
 # App Version Policy
 
-HotelOps user-facing app version stays simple, while each distributable build gets a hidden monotonic build code.
+HotelOps user-facing app version and technical build code must move together for distributable app releases.
 
 ## User-facing version
 
-- Windows desktop: `1.0.0`, shown in the sidebar as `Windows v1.0.0`.
-- Android APK: `1.0.0`, shown in the sidebar as `Android v1.0.0`.
+- Windows desktop: shown in the sidebar as `Windows vX.Y.Z`.
+- Android APK: shown in the sidebar as `Android vX.Y.Z`.
 - Installer/download filenames may keep the V1 naming convention for distribution continuity.
+- Patch and minor parts use `0` to `99`. After `1.0.99`, the next app release is `1.1.0`.
 
 ## Hidden update codes
 
@@ -24,7 +25,12 @@ HotelOps user-facing app version stays simple, while each distributable build ge
 
 ## Required rule
 
-Every revised Windows EXE or Android APK must increase its hidden code, even when the visible version stays `1.0.0`. Otherwise old installed apps cannot reliably detect that a newer build exists.
+Every revised Windows EXE or Android APK must increase both values:
+
+- User-facing version increases by one patch step, for example `1.0.0` -> `1.0.1`.
+- Hidden build/update code increases monotonically.
+
+Web-only HotelOps changes do not require an EXE/APK version bump unless a new Windows or Android binary is actually produced. Otherwise old installed apps can be told to update when there is no matching downloadable app package.
 
 `/app-version.json` is a release-critical file. Raspberry Pi deploys must fail if this URL does not return parseable JSON with `desktop`, `androidDirect`, and `androidPlay` platform entries. If nginx returns HTML for this path, installed apps can miss updates or show inconsistent update warnings.
 

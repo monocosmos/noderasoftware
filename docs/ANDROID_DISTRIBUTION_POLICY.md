@@ -54,12 +54,15 @@ Bu dosya yoksa Play Store AAB build scripti bilincli olarak durur.
 
 ## Surum kurali
 
-Kullaniciya gorunen surum `Android v1.0.0` olarak kalir. Her yeni APK veya AAB
-ciktisinda gizli teknik kod artar:
+Her yeni APK veya AAB ciktisinda kullaniciya gorunen Android surumu ve gizli
+teknik kod birlikte artar:
 
 - `apps/android/app/build.gradle.kts` icindeki `versionCode`
-- `apps/android/app/src/main/java/com/example/nodera/HotelOpsAppVersion.kt` icindeki `BUILD` ve `UPDATE_CODE`
+- `apps/android/app/build.gradle.kts` icindeki `versionName`
+- `apps/android/app/src/main/java/com/example/nodera/HotelOpsAppVersion.kt` icindeki uygulama surumu ve teknik kod
 - `apps/web/public/app-version.json` icindeki `androidDirect` ve `androidPlay` kodlari
+
+Alt surumler `0` ile `99` arasinda kalir. `1.0.99` sonrasinda `1.1.0` kullanilir.
 
 ## Update davranisi
 

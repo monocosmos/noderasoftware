@@ -1256,9 +1256,11 @@ function SidebarShellMeta({
   onAppUpdate: (notice: AppUpdateNotice) => void;
   shellAppInfo: ShellAppInfo | null;
 }) {
+  const showBrandSite = !shellAppInfo || shellAppInfo.runtime === "desktop";
+
   return (
     <div className="sidebar-meta">
-      <div className="sidebar-brand-site">www.noderasoftware.com</div>
+      {showBrandSite ? <div className="sidebar-brand-site">www.noderasoftware.com</div> : null}
       {shellAppInfo ? (
         <button
           type="button"
