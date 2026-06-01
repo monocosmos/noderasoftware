@@ -127,11 +127,16 @@ server {
 
     client_max_body_size 20m;
 
-    add_header Cache-Control "no-cache, no-store, must-revalidate";
-    add_header Pragma "no-cache";
-    add_header Expires "0";
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 256;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml;
+
+    add_header Cache-Control "no-cache" always;
 
     location /api/ {
+        add_header Cache-Control "no-store" always;
         proxy_pass http://127.0.0.1:${PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -141,6 +146,7 @@ server {
     }
 
     location /socket.io/ {
+        add_header Cache-Control "no-store" always;
         proxy_pass http://127.0.0.1:${PORT}/socket.io/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -149,6 +155,35 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /app-version.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+        try_files \$uri =404;
+    }
+
+    location = /web-build.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+        try_files \$uri =404;
+    }
+
+    location /_next/static/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files \$uri =404;
+    }
+
+    location ~* \.(?:png|jpg|jpeg|gif|webp|ico|svg)$ {
+        add_header Cache-Control "public, max-age=604800" always;
+        try_files \$uri =404;
+    }
+
+    location /downloads/ {
+        add_header Cache-Control "no-cache" always;
+        try_files \$uri =404;
     }
 
     location ~ ^/hotel/modules/(inventory|rooms|lost-found|guest-requests|requests|operation-documents|training|minibar|equipment|announcements|vip)(/|$) {

@@ -30,12 +30,6 @@ class HotelOpsAndroidBridge(context: Context) {
     fun versionCode(): Int = HotelOpsAppVersion.UPDATE_CODE
 
     @JavascriptInterface
-    fun buildNumber(): Int = HotelOpsAppVersion.BUILD
-
-    @JavascriptInterface
-    fun channel(): String = HotelOpsAppVersion.CHANNEL
-
-    @JavascriptInterface
     fun getAuthToken(): String = prefs.getString(HotelOpsPrefs.AUTH_TOKEN, "").orEmpty()
 
     @JavascriptInterface
@@ -46,6 +40,7 @@ class HotelOpsAndroidBridge(context: Context) {
         prefs.edit().apply {
             if (cleanToken.isBlank()) {
                 remove(HotelOpsPrefs.AUTH_TOKEN)
+                HotelOpsShiftStatus.end(appContext)
             } else {
                 putString(HotelOpsPrefs.AUTH_TOKEN, cleanToken)
             }
@@ -61,7 +56,26 @@ class HotelOpsAndroidBridge(context: Context) {
         prefs.edit()
             .remove(HotelOpsPrefs.AUTH_TOKEN)
             .apply()
+        HotelOpsShiftStatus.end(appContext)
     }
+
+    @JavascriptInterface
+    fun startShift(employeeName: String?, departmentName: String?): Boolean {
+        HotelOpsShiftStatus.start(appContext, employeeName, departmentName)
+        return true
+    }
+
+    @JavascriptInterface
+    fun endShift(): Boolean {
+        HotelOpsShiftStatus.end(appContext)
+        return true
+    }
+
+    @JavascriptInterface
+    fun isShiftActive(): Boolean = HotelOpsShiftStatus.isActive(appContext)
+
+    @JavascriptInterface
+    fun shiftStartedAt(): Long = HotelOpsShiftStatus.startedAt(appContext)
 
     @JavascriptInterface
     fun notifyAppUpdate(title: String?, body: String?) {
@@ -163,10 +177,6 @@ class HotelOpsAndroidBridge(context: Context) {
             val value = rawUrl?.trim().orEmpty()
             if (value.isBlank()) return null
 
-            if (value.startsWith("market://details?id=com.noderasoftware.hotelops")) {
-                return Uri.parse(value)
-            }
-
             val absolute = when {
                 value.startsWith("/") -> "$SITE_ORIGIN$value"
                 value.startsWith("http://") || value.startsWith("https://") -> value
@@ -175,11 +185,6 @@ class HotelOpsAndroidBridge(context: Context) {
 
             val uri = runCatching { Uri.parse(absolute) }.getOrNull() ?: return null
             val host = uri.host?.lowercase() ?: return null
-            val playStore = host == "play.google.com" &&
-                uri.path == "/store/apps/details" &&
-                uri.getQueryParameter("id") == "com.noderasoftware.hotelops"
-            if (playStore) return uri
-
             val trustedHost = host == "noderasoftware.com" || host == "www.noderasoftware.com"
             val trustedPath = uri.path?.startsWith("/downloads/") == true
             if (!trustedHost || !trustedPath) return null

@@ -15,7 +15,7 @@ on:
       - "package-lock.json"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -59,21 +59,11 @@ jobs:
       - name: Build macOS package
         run: npm run dist:mac:${{ matrix.arch }} --workspace @hotel-ops/desktop
 
-      - name: Upload macOS release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: hotelops-v1
-        run: |
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "HotelOps V1" \
-              --notes "Latest unsigned HotelOps application builds." \
-              --latest=false || true
-          fi
-
-          gh release upload "$RELEASE_TAG" \
-            "apps/desktop/release/HotelOps-Mac-V1-${{ matrix.arch }}.dmg" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: HotelOps-Mac-V1-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/HotelOps-Mac-V1-${{ matrix.arch }}.*
+          if-no-files-found: error
+          retention-days: 14

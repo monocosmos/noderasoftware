@@ -16,6 +16,13 @@ Android bildirimi operasyon sisteminde kritik hattir. Uygulama acikken gelen web
   `Notification` satiri ve o kullanicinin cihazlarina ayri FCM hedeflemesi
   kullanilir. Bu sayede okundu/okunmadi, audit ve cihaz tokeni kullanici
   bazinda dogru kalir.
+- Android tarafinda uc kanal vardir:
+  `hotelops_sound_transient` sesli gecici bildirimler,
+  `hotelops_silent_transient` sessiz gecici bildirimler,
+  `hotelops_shift_status` sessiz kalici vardiya bildirimi.
+- API varsayilan bildirimleri `hotelops_sound_transient` ile gonderir.
+  `Notification.channel` degeri `SILENT`, `SILENT_*` veya `*_SILENT`
+  formatindaysa FCM payload'i `hotelops_silent_transient` kanalina dusmelidir.
 
 ## Zorunlu kontrol komutu
 

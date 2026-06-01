@@ -94,3 +94,58 @@ button {
     linear-gradient(to bottom, color-mix(in srgb, hsl(var(--border)) 42%, transparent) 1px, transparent 1px);
   background-size: 44px 44px;
 }
+
+.nodera-dark body {
+  background: #17324d;
+}
+
+.nodera-dark .nodera-site {
+  background: #17324d !important;
+  color: #e5f5ff !important;
+}
+
+.nodera-dark .nodera-site section {
+  background-color: #1e4f6f !important;
+  border-color: #5f86a0 !important;
+  color: #e5f5ff !important;
+}
+
+.nodera-dark .nodera-site section:first-child {
+  background-color: #17324d !important;
+}
+
+.nodera-dark .nodera-site article,
+.nodera-dark .nodera-site article > *,
+.nodera-dark .nodera-site [class*="bg-[#edf4fa]"],
+.nodera-dark .nodera-site [class*="bg-[#e1ebf4]"],
+.nodera-dark .nodera-site [class*="bg-[#e7eef6]"],
+.nodera-dark .nodera-site [class*="bg-[#d8e6f2]"],
+.nodera-dark .nodera-site [class*="bg-[#f0f6fb]"] {
+  background-color: #244f6b !important;
+  border-color: #6f96ad !important;
+  color: #e5f5ff !important;
+}
+
+.nodera-dark .nodera-site p,
+.nodera-dark .nodera-site span,
+.nodera-dark .nodera-site h2,
+.nodera-dark .nodera-site h3 {
+  color: inherit;
+}
+
+.nodera-dark .nodera-site a:not([href^="mailto:"]):not([href="#urunler"]),
+.nodera-dark .nodera-site button {
+  border-color: rgba(213, 235, 248, 0.46) !important;
+}
+
+.nodera-dark .nodera-site [class*="text-[#4d647a]"],
+.nodera-dark .nodera-site [class*="text-[#52637a]"],
+.nodera-dark .nodera-site [class*="text-[#65746b]"],
+.nodera-dark .nodera-site [class*="text-[#17324d]"] {
+  color: #d5ebf8 !important;
+}
+
+.nodera-dark .nodera-site [class*="bg-[#1e4f6f]"],
+.nodera-dark .nodera-site #iletisim {
+  background-color: #17324d !important;
+}

@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
         // Kullanici daha once login olduysa native prefs'teki token sync tarafinda kullanilir.
         requestNotificationPermissionIfNeeded()
         HotelOpsNotifier.ensureChannels(this)
+        HotelOpsShiftStatus.restore(this)
         HotelOpsPushRegistrar.sync(this)
 
         root = FrameLayout(this).apply {

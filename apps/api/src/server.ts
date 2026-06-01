@@ -1,7 +1,10 @@
 ﻿import "./load-env.js";
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import * as os from "node:os";
+import path from "node:path";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
@@ -29,6 +32,8 @@ const server = http.createServer(app);
 const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? "0.0.0.0";
 const jwtSecret = process.env.JWT_SECRET ?? "dev-secret-change-me";
+const authTokenExpiresIn = "3650d";
+const authSessionLifetimeMs = 1000 * 60 * 60 * 24 * 3650;
 const firebaseServiceAccountCandidates = [
   process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
   "/opt/noderasoftware/secrets/firebase-service-account.json",
@@ -36,6 +41,20 @@ const firebaseServiceAccountCandidates = [
 ].filter((value): value is string => Boolean(value));
 let firebaseMessagingUnavailableLogged = false;
 let firebaseMessagingInstance: admin.messaging.Messaging | null | undefined;
+const androidSoundTransientChannel = "hotelops_sound_transient";
+const androidSilentTransientChannel = "hotelops_silent_transient";
+const repoRoot = path.basename(process.cwd()) === "api" && path.basename(path.dirname(process.cwd())) === "apps"
+  ? path.resolve(process.cwd(), "..", "..")
+  : process.cwd();
+const maintenanceDefaultMessage = "Şu an bakım yapılıyor.";
+
+type MaintenanceStatus = {
+  enabled: boolean;
+  message: string;
+  updatedAt: string;
+  updatedBy?: string | null;
+  source?: string | null;
+};
 
 type AuthContext = {
   userId: string;
@@ -139,6 +158,180 @@ function clientUserAgent(req: express.Request) {
   return req.headers["user-agent"] ?? "unknown";
 }
 
+function maintenanceStatusPaths() {
+  return Array.from(new Set([
+    process.env.MAINTENANCE_STATUS_PATH?.trim(),
+    path.resolve(repoRoot, "runtime", "maintenance-status.json"),
+    path.resolve(repoRoot, "apps", "web", "out", "maintenance-status.json"),
+    path.resolve(repoRoot, "apps", "web", "public", "maintenance-status.json")
+  ].filter((value): value is string => Boolean(value))));
+}
+
+function normalizeMaintenanceStatus(value: unknown): MaintenanceStatus | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Partial<MaintenanceStatus>;
+  const message = typeof data.message === "string" && data.message.trim()
+    ? data.message.trim()
+    : maintenanceDefaultMessage;
+  const updatedAt = typeof data.updatedAt === "string" && data.updatedAt.trim()
+    ? data.updatedAt
+    : new Date(0).toISOString();
+  return {
+    enabled: Boolean(data.enabled),
+    message,
+    updatedAt,
+    updatedBy: typeof data.updatedBy === "string" && data.updatedBy.trim() ? data.updatedBy.trim() : null,
+    source: typeof data.source === "string" && data.source.trim() ? data.source.trim() : null
+  };
+}
+
+function defaultMaintenanceStatus(): MaintenanceStatus {
+  return {
+    enabled: false,
+    message: maintenanceDefaultMessage,
+    updatedAt: new Date(0).toISOString(),
+    updatedBy: null,
+    source: "default"
+  };
+}
+
+function readMaintenanceStatus(): MaintenanceStatus {
+  for (const statusPath of maintenanceStatusPaths()) {
+    if (!existsSync(statusPath)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(statusPath, "utf8")) as unknown;
+      const status = normalizeMaintenanceStatus(parsed);
+      if (status) return status;
+    } catch {
+      // Try the next copy; a partially written status file should not break the API.
+    }
+  }
+  return defaultMaintenanceStatus();
+}
+
+function writeMaintenanceStatus(status: MaintenanceStatus) {
+  const content = `${JSON.stringify(status, null, 2)}\n`;
+  const errors: string[] = [];
+  let wrote = false;
+  for (const statusPath of maintenanceStatusPaths()) {
+    try {
+      mkdirSync(path.dirname(statusPath), { recursive: true });
+      writeFileSync(statusPath, content, "utf8");
+      wrote = true;
+    } catch (error) {
+      errors.push(`${statusPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (!wrote) {
+    throw new Error(`Maintenance status could not be written. ${errors.join(" | ")}`);
+  }
+}
+
+type ActiveSessionEntry = {
+  userId: string;
+  hotelId: string;
+  roleId: string;
+  departmentId: string;
+  lastSeenAt: number;
+  heartbeatAt?: number;
+  socketCount: number;
+  userAgent: string;
+};
+
+const stationSessionWindowSeconds = Number(process.env.STATION_ACTIVE_WINDOW_SECONDS ?? 300);
+const stationSessionWindowMs = Math.max(30, stationSessionWindowSeconds) * 1000;
+const stationActiveUserWindowSeconds = Number(process.env.STATION_ACTIVE_USER_WINDOW_SECONDS ?? 60);
+const stationActiveUserWindowMs = Math.max(20, stationActiveUserWindowSeconds) * 1000;
+const activeSessions = new Map<string, ActiveSessionEntry>();
+
+function markSessionSeen(auth: AuthContext, userAgent = "unknown") {
+  const existing = activeSessions.get(auth.sessionId);
+  activeSessions.set(auth.sessionId, {
+    userId: auth.userId,
+    hotelId: auth.hotelId,
+    roleId: auth.roleId,
+    departmentId: auth.departmentId,
+    socketCount: existing?.socketCount ?? 0,
+    userAgent,
+    heartbeatAt: existing?.heartbeatAt,
+    lastSeenAt: Date.now()
+  });
+}
+
+function markSessionHeartbeat(auth: AuthContext, userAgent = "unknown") {
+  const now = Date.now();
+  const existing = activeSessions.get(auth.sessionId);
+  activeSessions.set(auth.sessionId, {
+    userId: auth.userId,
+    hotelId: auth.hotelId,
+    roleId: auth.roleId,
+    departmentId: auth.departmentId,
+    socketCount: existing?.socketCount ?? 0,
+    userAgent,
+    heartbeatAt: now,
+    lastSeenAt: now
+  });
+}
+
+function markSessionSocketConnected(auth: AuthContext) {
+  const now = Date.now();
+  const existing = activeSessions.get(auth.sessionId);
+  activeSessions.set(auth.sessionId, {
+    userId: auth.userId,
+    hotelId: auth.hotelId,
+    roleId: auth.roleId,
+    departmentId: auth.departmentId,
+    socketCount: (existing?.socketCount ?? 0) + 1,
+    userAgent: existing?.userAgent ?? "socket.io",
+    heartbeatAt: now,
+    lastSeenAt: now
+  });
+}
+
+function markSessionSocketDisconnected(sessionId: string) {
+  const existing = activeSessions.get(sessionId);
+  if (!existing) return;
+
+  const socketCount = Math.max(0, existing.socketCount - 1);
+  activeSessions.set(sessionId, {
+    ...existing,
+    socketCount,
+    lastSeenAt: socketCount > 0 ? Date.now() : existing.lastSeenAt
+  });
+}
+
+function forgetActiveSession(sessionId: string) {
+  activeSessions.delete(sessionId);
+}
+
+function activeSessionSnapshot() {
+  const now = Date.now();
+  const sessionCutoff = now - stationSessionWindowMs;
+  const userCutoff = now - stationActiveUserWindowMs;
+  const uniqueUsers = new Set<string>();
+  let socketConnections = 0;
+
+  for (const [sessionId, entry] of activeSessions) {
+    if (entry.socketCount <= 0 && entry.lastSeenAt < sessionCutoff) {
+      activeSessions.delete(sessionId);
+      continue;
+    }
+    if (entry.socketCount > 0 || (entry.heartbeatAt ?? 0) >= userCutoff) {
+      uniqueUsers.add(entry.userId);
+    }
+    socketConnections += entry.socketCount;
+  }
+
+  return {
+    users: uniqueUsers.size,
+    sessions: activeSessions.size,
+    sockets: socketConnections,
+    windowSeconds: Math.round(stationActiveUserWindowMs / 1000),
+    userWindowSeconds: Math.round(stationActiveUserWindowMs / 1000),
+    sessionWindowSeconds: Math.round(stationSessionWindowMs / 1000)
+  };
+}
+
 function firebaseMessaging() {
   if (firebaseMessagingInstance !== undefined) return firebaseMessagingInstance;
 
@@ -169,13 +362,26 @@ function firebaseMessaging() {
   }
 }
 
+function androidNotificationDelivery(channel: string) {
+  const normalizedChannel = channel.trim().toUpperCase();
+  const silent = normalizedChannel === "SILENT"
+    || normalizedChannel.startsWith("SILENT_")
+    || normalizedChannel.endsWith("_SILENT");
+
+  return {
+    channelId: silent ? androidSilentTransientChannel : androidSoundTransientChannel,
+    delivery: silent ? "silent" : "sound",
+    priority: silent ? "normal" : "high"
+  } as const;
+}
+
 function routeParam(req: express.Request, name: string) {
   const value = req.params[name];
   return Array.isArray(value) ? value[0] : value;
 }
 
 function signToken(auth: AuthContext) {
-  return jwt.sign(auth, jwtSecret, { expiresIn: "8h" });
+  return jwt.sign(auth, jwtSecret, { expiresIn: authTokenExpiresIn });
 }
 
 function verifyToken(token: string) {
@@ -197,7 +403,7 @@ async function authenticate(req: express.Request, res: express.Response, next: e
       return;
     }
 
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { id: payload.userId },
       include: userInclude
     });
@@ -205,6 +411,10 @@ async function authenticate(req: express.Request, res: express.Response, next: e
       res.status(401).json({ error: "USER_DISABLED" });
       return;
     }
+    if (isPlatformAdminAccount(user)) {
+      user = await ensurePlatformAdminHome(user.id);
+    }
+    user = await ensureUserAccountId(user);
 
     req.auth = {
       userId: user.id,
@@ -214,6 +424,7 @@ async function authenticate(req: express.Request, res: express.Response, next: e
       sessionId: session.id
     };
     req.user = user;
+    markSessionSeen(req.auth, String(clientUserAgent(req)));
     next();
   } catch {
     res.status(401).json({ error: "INVALID_TOKEN" });
@@ -434,13 +645,23 @@ function serializeDepartment(department: { id?: string; code: string; name: stri
   };
 }
 
+type SerializableHotelDepartment = {
+  id?: string;
+  code: string;
+  name: string;
+  createdAt?: Date;
+  users?: Array<User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }>;
+};
+
 function serializeHotel(hotel: {
   id: string;
+  publicId?: string | null;
   name: string;
   code: string;
   timezone: string;
   createdAt: Date;
   updatedAt: Date;
+  departments?: SerializableHotelDepartment[];
   _count?: {
     departments?: number;
     users?: number;
@@ -451,6 +672,7 @@ function serializeHotel(hotel: {
 }) {
   return {
     id: hotel.id,
+    publicId: hotel.publicId ?? "",
     name: hotel.name,
     code: hotel.code,
     timezone: hotel.timezone,
@@ -462,7 +684,11 @@ function serializeHotel(hotel: {
       reminders: hotel._count?.reminders ?? 0,
       managementRequests: hotel._count?.managementRequests ?? 0,
       operationDocuments: hotel._count?.operationDocuments ?? 0
-    }
+    },
+    departments: hotel.departments?.map((department) => ({
+      ...serializeDepartment(department),
+      users: department.users?.map(serializeUser) ?? []
+    })) ?? []
   };
 }
 
@@ -526,6 +752,293 @@ function normalizeHotelCode(value: string) {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 32);
+}
+
+async function uniqueHotelCode(tx: Prisma.TransactionClient, value: string) {
+  const base = normalizeHotelCode(value) || `HOTEL_${crypto.randomInt(100_000, 999_999)}`;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `_${crypto.randomInt(1000, 9999)}`;
+    const code = `${base.slice(0, Math.max(2, 32 - suffix.length))}${suffix}`;
+    if (code === platformAdminHotelCode) continue;
+    const existing = await tx.hotel.findUnique({ where: { code }, select: { id: true } });
+    if (!existing) return code;
+  }
+  throw new Error("HOTEL_CODE_GENERATION_FAILED");
+}
+
+function generatedNineDigitId() {
+  return crypto.randomInt(100_000_000, 1_000_000_000).toString();
+}
+
+async function reserveAccountId(tx: Prisma.TransactionClient) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const accountId = generatedNineDigitId();
+    try {
+      await tx.accountIdReservation.create({ data: { accountId } });
+      return accountId;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") continue;
+      throw error;
+    }
+  }
+  throw new Error("ACCOUNT_ID_GENERATION_FAILED");
+}
+
+async function reserveHotelPublicId(tx: Prisma.TransactionClient) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const publicId = generatedNineDigitId();
+    try {
+      await tx.hotelIdReservation.create({ data: { publicId } });
+      return publicId;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") continue;
+      throw error;
+    }
+  }
+  throw new Error("HOTEL_ID_GENERATION_FAILED");
+}
+
+async function createUserWithAccountId(tx: Prisma.TransactionClient, data: Omit<Prisma.UserUncheckedCreateInput, "accountId">) {
+  const accountId = await reserveAccountId(tx);
+  const user = await tx.user.create({
+    data: {
+      ...data,
+      accountId
+    },
+    include: userInclude
+  });
+  await tx.accountIdReservation.update({ where: { accountId }, data: { userId: user.id } });
+  return user;
+}
+
+async function assignAccountIdToExistingUser(tx: Prisma.TransactionClient, userId: string) {
+  const existing = await tx.user.findUnique({ where: { id: userId }, select: { accountId: true } });
+  if (!existing) throw new Error("USER_NOT_FOUND");
+  if (existing.accountId) return existing.accountId;
+
+  const accountId = await reserveAccountId(tx);
+  const updated = await tx.user.updateMany({
+    where: { id: userId, accountId: null },
+    data: { accountId }
+  });
+  if (updated.count === 1) {
+    await tx.accountIdReservation.update({ where: { accountId }, data: { userId } });
+    return accountId;
+  }
+
+  const current = await tx.user.findUnique({ where: { id: userId }, select: { accountId: true } });
+  if (current?.accountId) return current.accountId;
+  throw new Error("ACCOUNT_ID_ASSIGNMENT_FAILED");
+}
+
+async function ensureUserAccountId<T extends User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }>(user: T) {
+  if (user.accountId) return user;
+
+  return prisma.$transaction(async (tx) => {
+    await assignAccountIdToExistingUser(tx, user.id);
+    return tx.user.findUniqueOrThrow({ where: { id: user.id }, include: userInclude });
+  });
+}
+
+async function ensureHotelUserAccountIds(hotelId: string) {
+  const missingUsers = await prisma.user.findMany({
+    where: { hotelId, accountId: null },
+    select: { id: true }
+  });
+  if (!missingUsers.length) return;
+
+  await prisma.$transaction(async (tx) => {
+    for (const user of missingUsers) {
+      await assignAccountIdToExistingUser(tx, user.id);
+    }
+  });
+}
+
+function generateTemporaryPassword() {
+  return crypto.randomBytes(9).toString("base64url");
+}
+
+function toArchiveJson(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function redactUserSecrets<T extends { passwordHash?: string }>(users: T[]) {
+  return users.map((user) => ({ ...user, passwordHash: "[redacted]" }));
+}
+
+function redactPushDeviceSecrets<T extends { fcmToken?: string }>(devices: T[]) {
+  return devices.map((device) => ({ ...device, fcmToken: "[redacted]" }));
+}
+
+function redactSessionSecrets<T extends { refreshToken?: string }>(sessions: T[]) {
+  return sessions.map((session) => ({ ...session, refreshToken: "[redacted]" }));
+}
+
+async function archiveHotelSnapshot(
+  tx: Prisma.TransactionClient,
+  hotel: { id: string; publicId?: string | null; code: string; name: string; timezone: string },
+  archivedBy: { id?: string; username?: string },
+  ids: {
+    departmentIds: string[];
+    userIds: string[];
+    workOrderIds: string[];
+    staffProfileIds: string[];
+    leaveRequestIds: string[];
+    purchaseRequestIds: string[];
+    operationDocumentIds: string[];
+    roomIds: string[];
+  }
+) {
+  const [
+    departments,
+    users,
+    staffProfiles,
+    leaveRequests,
+    trainingAssignments,
+    workOrders,
+    comments,
+    workOrderTimeline,
+    approvals,
+    attachments,
+    purchaseRequests,
+    operationDocuments,
+    operationDocumentReads,
+    managementRequests,
+    reminders,
+    notifications,
+    pushDevices,
+    authSessions,
+    loginHistory,
+    rooms,
+    roomStatusHistory,
+    calendarEvents,
+    assets,
+    auditLogs
+  ] = await Promise.all([
+    tx.department.findMany({ where: { hotelId: hotel.id } }),
+    ids.userIds.length ? tx.user.findMany({ where: { id: { in: ids.userIds } } }) : Promise.resolve([]),
+    ids.staffProfileIds.length ? tx.staffProfile.findMany({ where: { id: { in: ids.staffProfileIds } } }) : Promise.resolve([]),
+    ids.leaveRequestIds.length ? tx.leaveRequest.findMany({ where: { id: { in: ids.leaveRequestIds } } }) : Promise.resolve([]),
+    ids.staffProfileIds.length ? tx.trainingAssignment.findMany({ where: { staffProfileId: { in: ids.staffProfileIds } } }) : Promise.resolve([]),
+    ids.workOrderIds.length ? tx.workOrder.findMany({ where: { id: { in: ids.workOrderIds } } }) : Promise.resolve([]),
+    ids.workOrderIds.length || ids.userIds.length
+      ? tx.comment.findMany({
+        where: {
+          OR: [
+            ...(ids.workOrderIds.length ? [{ workOrderId: { in: ids.workOrderIds } }] : []),
+            ...(ids.userIds.length ? [{ authorId: { in: ids.userIds } }] : [])
+          ]
+        }
+      })
+      : Promise.resolve([]),
+    ids.workOrderIds.length ? tx.workOrderTimeline.findMany({ where: { workOrderId: { in: ids.workOrderIds } } }) : Promise.resolve([]),
+    ids.workOrderIds.length || ids.leaveRequestIds.length || ids.purchaseRequestIds.length || ids.userIds.length
+      ? tx.approval.findMany({
+        where: {
+          OR: [
+            ...(ids.workOrderIds.length ? [{ workOrderId: { in: ids.workOrderIds } }] : []),
+            ...(ids.leaveRequestIds.length ? [{ leaveRequestId: { in: ids.leaveRequestIds } }] : []),
+            ...(ids.purchaseRequestIds.length ? [{ purchaseRequestId: { in: ids.purchaseRequestIds } }] : []),
+            ...(ids.userIds.length ? [{ approverId: { in: ids.userIds } }] : [])
+          ]
+        }
+      })
+      : Promise.resolve([]),
+    ids.workOrderIds.length ? tx.attachment.findMany({ where: { workOrderId: { in: ids.workOrderIds } } }) : Promise.resolve([]),
+    ids.purchaseRequestIds.length ? tx.purchaseRequest.findMany({ where: { id: { in: ids.purchaseRequestIds } } }) : Promise.resolve([]),
+    ids.operationDocumentIds.length ? tx.operationDocument.findMany({ where: { id: { in: ids.operationDocumentIds } } }) : Promise.resolve([]),
+    ids.operationDocumentIds.length || ids.userIds.length
+      ? tx.operationDocumentRead.findMany({
+        where: {
+          OR: [
+            ...(ids.operationDocumentIds.length ? [{ documentId: { in: ids.operationDocumentIds } }] : []),
+            ...(ids.userIds.length ? [{ userId: { in: ids.userIds } }] : [])
+          ]
+        }
+      })
+      : Promise.resolve([]),
+    tx.managementRequest.findMany({
+      where: {
+        OR: [
+          { hotelId: hotel.id },
+          ...(ids.userIds.length ? [
+            { createdById: { in: ids.userIds } },
+            { recipientId: { in: ids.userIds } },
+            { relatedUserId: { in: ids.userIds } },
+            { readById: { in: ids.userIds } }
+          ] : [])
+        ]
+      }
+    }),
+    tx.reminder.findMany({
+      where: {
+        OR: [
+          { hotelId: hotel.id },
+          ...(ids.userIds.length ? [{ createdById: { in: ids.userIds } }, { assignedToId: { in: ids.userIds } }] : [])
+        ]
+      }
+    }),
+    ids.userIds.length ? tx.notification.findMany({ where: { userId: { in: ids.userIds } } }) : Promise.resolve([]),
+    ids.userIds.length ? tx.pushDevice.findMany({ where: { userId: { in: ids.userIds } } }) : Promise.resolve([]),
+    ids.userIds.length ? tx.authSession.findMany({ where: { userId: { in: ids.userIds } } }) : Promise.resolve([]),
+    ids.userIds.length ? tx.loginHistory.findMany({ where: { userId: { in: ids.userIds } } }) : Promise.resolve([]),
+    tx.room.findMany({ where: { hotelId: hotel.id } }),
+    ids.roomIds.length ? tx.roomStatusHistory.findMany({ where: { roomId: { in: ids.roomIds } } }) : Promise.resolve([]),
+    ids.departmentIds.length ? tx.calendarEvent.findMany({ where: { departmentId: { in: ids.departmentIds } } }) : Promise.resolve([]),
+    tx.asset.findMany({ where: { hotelId: hotel.id } }),
+    tx.auditLog.findMany({
+      where: {
+        OR: [
+          { entityType: "Hotel", entityId: hotel.id },
+          ...(ids.userIds.length ? [{ actorId: { in: ids.userIds } }] : []),
+          ...(ids.workOrderIds.length ? [{ workOrderId: { in: ids.workOrderIds } }] : [])
+        ]
+      }
+    })
+  ]);
+
+  const snapshot = toArchiveJson({
+    schema: 1,
+    archivedAt: new Date().toISOString(),
+    hotel,
+    departments,
+    users: redactUserSecrets(users),
+    staffProfiles,
+    leaveRequests,
+    trainingAssignments,
+    workOrders,
+    comments,
+    workOrderTimeline,
+    approvals,
+    attachments,
+    purchaseRequests,
+    operationDocuments,
+    operationDocumentReads,
+    managementRequests,
+    reminders,
+    notifications,
+    pushDevices: redactPushDeviceSecrets(pushDevices),
+    authSessions: redactSessionSecrets(authSessions),
+    loginHistory,
+    rooms,
+    roomStatusHistory,
+    calendarEvents,
+    assets,
+    auditLogs
+  });
+
+  return tx.hotelArchive.create({
+    data: {
+      sourceHotelId: hotel.id,
+      publicId: hotel.publicId ?? null,
+      code: hotel.code,
+      name: hotel.name,
+      timezone: hotel.timezone,
+      archivedById: archivedBy.id ?? null,
+      archivedByUsername: archivedBy.username ?? null,
+      snapshotJson: snapshot
+    }
+  });
 }
 
 function customDepartmentIdFromCode(code: string) {
@@ -622,6 +1135,7 @@ function serializeUser(user: User & { hotel?: { code: string; name: string } | n
 
   return {
     id: user.id,
+    accountId: user.accountId ?? "",
     hotelId: user.hotelId,
     hotelCode: user.hotel?.code ?? "",
     hotelName: user.hotel?.name ?? "",
@@ -632,6 +1146,7 @@ function serializeUser(user: User & { hotel?: { code: string; name: string } | n
     roleId: user.role.code,
     departmentId: clientDepartmentIdFromCode(user.department.code),
     moduleAccess,
+    shiftTrackingEnabled: user.shiftTrackingEnabled,
     active: user.isActive,
     lastLogin: formatLastLogin(user.lastLoginAt)
   };
@@ -666,6 +1181,8 @@ function serializeWorkOrder(
     guestImpact: workOrder.guestImpact,
     slaRisk,
     createdBy: workOrder.createdBy.username,
+    createdByUserId: workOrder.createdById,
+    createdByAccountId: workOrder.createdBy.accountId ?? "",
     createdByDepartmentId: clientDepartmentIdFromCode(workOrder.createdBy.department.code),
     description: workOrder.description ?? "",
     tags: workOrder.tags ?? "",
@@ -750,6 +1267,8 @@ const workOrderInclude = {
 const userInclude = { hotel: true, role: true, department: true } as const;
 const platformAdminUsername = "NODERADMIN";
 const platformAdminRole = "siteAdmin";
+const platformAdminHotelCode = "NODERA_PLATFORM";
+const platformAdminHotelName = "Nodera Platform Yönetimi";
 
 const operationDocumentInclude = {
   createdBy: { include: userInclude },
@@ -764,6 +1283,16 @@ const loginSchema = z.object({
   password: z.string().min(1)
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(256),
+  newPassword: z.string().min(6).max(128)
+});
+
+const updateOwnProfileSchema = z.object({
+  username: z.string().trim().min(2).max(80).transform((value) => value.toLocaleLowerCase("tr-TR")),
+  currentPassword: z.string().min(1).max(256)
+});
+
 const userSchema = z.object({
   fullName: z.string().min(2),
   username: z.string().min(2).transform((value) => value.trim().toLocaleLowerCase("tr-TR")),
@@ -774,20 +1303,42 @@ const userSchema = z.object({
   password: z.string().min(6).optional().or(z.literal("")),
   roleId: z.string().min(1),
   departmentId: z.string().min(1),
+  shiftTrackingEnabled: z.boolean().optional().default(true),
   moduleAccess: z.record(z.boolean()).optional()
+});
+
+const shiftPanelConfigSchema = z.object({
+  enabled: z.boolean(),
+  editorUserIds: z.array(z.string().min(1)).max(30).default([])
+});
+
+const shiftPanelEntrySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  shiftName: z.string().trim().max(80).optional().default("GUNLUK"),
+  staffingNote: z.string().trim().max(3000).optional().default(""),
+  summary: z.string().trim().max(3000).optional().default(""),
+  openIssues: z.string().trim().max(3000).optional().default(""),
+  handoverNote: z.string().trim().max(3000).optional().default("")
+});
+
+const shiftPanelCellSchema = z.object({
+  userId: z.string().min(1),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  code: z.string().trim().max(12).optional().default(""),
+  startTime: z.string().trim().max(8).optional().default(""),
+  endTime: z.string().trim().max(8).optional().default(""),
+  note: z.string().trim().max(160).optional().default(""),
+  color: z.string().trim().max(24).optional().default("auto")
 });
 
 const hotelSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  code: z.string().trim().max(32).optional().default(""),
-  timezone: z.string().trim().min(3).max(80).optional().default("Europe/Istanbul"),
-  adminFullName: z.string().trim().min(2).max(120),
-  adminUsername: z.string().trim().min(2).max(80).transform((value) => value.toLocaleLowerCase("tr-TR")),
-  adminEmail: z.preprocess(
-    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-    z.string().trim().email().optional()
-  ),
-  adminPassword: z.string().min(6).optional().or(z.literal(""))
+  timezone: z.string().trim().min(3).max(80).optional().default("Europe/Istanbul")
+});
+
+const maintenanceModeSchema = z.object({
+  enabled: z.boolean(),
+  message: z.string().trim().min(1).max(180).optional()
 });
 
 function generatedUserEmail(username: string) {
@@ -802,6 +1353,38 @@ function generatedUserEmail(username: string) {
     .slice(0, 32) || "user";
   const suffix = Buffer.from(username, "utf8").toString("hex").slice(0, 10);
   return `${asciiName}.${suffix}@local.hotelops`;
+}
+
+async function ensurePlatformAdminHome(userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const hotel = await tx.hotel.upsert({
+      where: { code: platformAdminHotelCode },
+      update: { name: platformAdminHotelName, timezone: "Europe/Istanbul" },
+      create: {
+        code: platformAdminHotelCode,
+        name: platformAdminHotelName,
+        timezone: "Europe/Istanbul"
+      }
+    });
+    const department = await tx.department.upsert({
+      where: { hotelId_code: { hotelId: hotel.id, code: "EXECUTIVE" } },
+      update: { name: "Platform Yönetimi", deletedAt: null },
+      create: {
+        hotelId: hotel.id,
+        code: "EXECUTIVE",
+        name: "Platform Yönetimi"
+      }
+    });
+
+    return tx.user.update({
+      where: { id: userId },
+      data: {
+        hotelId: hotel.id,
+        departmentId: department.id
+      },
+      include: userInclude
+    });
+  });
 }
 
 const photoSchema = z.object({
@@ -1076,6 +1659,114 @@ function serializeNotification(notification: Prisma.NotificationGetPayload<objec
   };
 }
 
+function serializeShiftSession(shift: Prisma.ShiftSessionGetPayload<object>) {
+  return {
+    id: shift.id,
+    startedAt: shift.startedAt.toISOString(),
+    endedAt: shift.endedAt?.toISOString() ?? ""
+  };
+}
+
+type ShiftPanelWithEditors = Prisma.ShiftPanelGetPayload<{
+  include: {
+    department: true;
+    editors: { include: { user: { include: typeof userInclude } } };
+  };
+}>;
+
+type ShiftPanelEntryWithUser = Prisma.ShiftPanelEntryGetPayload<{
+  include: { updatedBy: { include: typeof userInclude } };
+}>;
+
+type ShiftPanelCellRecord = Prisma.ShiftPanelCellGetPayload<object>;
+
+function canConfigureShiftPanels(auth: AuthContext) {
+  return auth.roleId === "hrManager";
+}
+
+function canViewAllShiftPanels(auth: AuthContext) {
+  return auth.roleId === "hrManager" || auth.roleId === "generalManager";
+}
+
+function parseShiftPanelDate(value: string | undefined) {
+  const raw = value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : new Date().toISOString().slice(0, 10);
+  return { raw, date: new Date(`${raw}T00:00:00.000Z`) };
+}
+
+function parseShiftPanelMonth(value: string | undefined) {
+  const fallback = new Date().toISOString().slice(0, 7);
+  const raw = value && /^\d{4}-\d{2}$/.test(value) ? value : fallback;
+  const [year, month] = raw.split("-").map(Number);
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  const dayCount = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const days = Array.from({ length: dayCount }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return `${raw}-${day}`;
+  });
+  return { raw, start, end, days };
+}
+
+function serializeShiftPanelEntry(entry: ShiftPanelEntryWithUser | null | undefined) {
+  if (!entry) return null;
+
+  return {
+    id: entry.id,
+    date: entry.date.toISOString().slice(0, 10),
+    shiftName: entry.shiftName,
+    staffingNote: entry.staffingNote,
+    summary: entry.summary,
+    openIssues: entry.openIssues,
+    handoverNote: entry.handoverNote,
+    updatedAt: entry.updatedAt.toISOString(),
+    updatedByName: entry.updatedBy?.fullName ?? ""
+  };
+}
+
+function serializeShiftPanelCell(cell: ShiftPanelCellRecord) {
+  return {
+    id: cell.id,
+    userId: cell.userId,
+    date: cell.date.toISOString().slice(0, 10),
+    code: cell.code,
+    startTime: cell.startTime,
+    endTime: cell.endTime,
+    note: cell.note,
+    color: cell.color,
+    updatedAt: cell.updatedAt.toISOString()
+  };
+}
+
+function serializeShiftPanel(
+  panel: ShiftPanelWithEditors | null,
+  department: { id: string; code: string; name: string },
+  entry: ShiftPanelEntryWithUser | null,
+  auth: AuthContext,
+  staff: Array<User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }> = [],
+  cells: ShiftPanelCellRecord[] = []
+) {
+  const editors = panel?.editors
+    .map((editor) => editor.user)
+    .filter((user) => user.isActive && !user.deletedAt) ?? [];
+  const enabled = panel?.enabled ?? false;
+  const canEdit = Boolean(enabled && editors.some((user) => user.id === auth.userId));
+
+  return {
+    id: panel?.id ?? "",
+    departmentId: clientDepartmentIdFromCode(department.code),
+    departmentName: department.name,
+    enabled,
+    canEdit,
+    editorUserIds: editors.map((user) => user.id),
+    editors: editors.map(serializeUser),
+    staff: staff.map(serializeUser),
+    cells: cells.map(serializeShiftPanelCell),
+    entry: serializeShiftPanelEntry(entry)
+  };
+}
+
 function isInvalidPushTokenError(error: unknown) {
   const code = typeof error === "object" && error && "code" in error
     ? String((error as { code?: string }).code)
@@ -1114,6 +1805,14 @@ async function sendPushNotifications(notifications: DbNotification[]) {
   for (const device of devices) {
     const userNotifications = notificationsByUserId.get(device.userId) ?? [];
     for (const notification of userNotifications) {
+      const delivery = androidNotificationDelivery(notification.channel);
+      const androidNotification: admin.messaging.AndroidNotification = {
+        channelId: delivery.channelId
+      };
+      if (delivery.delivery === "sound") {
+        androidNotification.sound = "default";
+      }
+
       messageDevices.push(device);
       messages.push({
         token: device.fcmToken,
@@ -1126,14 +1825,13 @@ async function sendPushNotifications(notifications: DbNotification[]) {
           title: notification.title,
           body: notification.body,
           channel: notification.channel,
+          delivery: delivery.delivery,
+          androidChannelId: delivery.channelId,
           createdAt: notification.createdAt.toISOString()
         },
         android: {
-          priority: "high",
-          notification: {
-            channelId: "hotelops_work_orders",
-            sound: "default"
-          }
+          priority: delivery.priority,
+          notification: androidNotification
         }
       });
     }
@@ -1344,6 +2042,198 @@ function isDatabaseConnectionError(error: unknown) {
   );
 }
 
+function roundMetric(value: number | null, digits = 1) {
+  if (value === null || !Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function percent(part: number, total: number) {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return null;
+  return roundMetric((part / total) * 100);
+}
+
+function stationKeyFromRequest(req: express.Request) {
+  const headerValue = req.headers["x-station-key"];
+  if (Array.isArray(headerValue)) return headerValue[0] ?? "";
+  if (typeof headerValue === "string") return headerValue;
+
+  const queryValue = req.query.key;
+  if (Array.isArray(queryValue)) return String(queryValue[0] ?? "");
+  return typeof queryValue === "string" ? queryValue : "";
+}
+
+function constantTimeEqual(left: string, right: string) {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  if (leftBytes.length !== rightBytes.length) return false;
+  return crypto.timingSafeEqual(leftBytes, rightBytes);
+}
+
+const requireStationAccess: express.RequestHandler = (req, res, next) => {
+  const configuredKey = process.env.STATION_API_KEY?.trim();
+  if (!configuredKey) {
+    res.status(503).json({ ok: false, error: "STATION_API_KEY_REQUIRED" });
+    return;
+  }
+
+  const providedKey = stationKeyFromRequest(req).trim();
+  if (!providedKey || !constantTimeEqual(providedKey, configuredKey)) {
+    res.status(401).json({ ok: false, error: "INVALID_STATION_KEY" });
+    return;
+  }
+
+  next();
+};
+
+function cpuTotals() {
+  return os.cpus().reduce(
+    (acc, cpu) => {
+      const total = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
+      return {
+        idle: acc.idle + cpu.times.idle,
+        total: acc.total + total
+      };
+    },
+    { idle: 0, total: 0 }
+  );
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function cpuLoadPercent() {
+  const start = cpuTotals();
+  await delay(250);
+  const end = cpuTotals();
+  const idleDelta = end.idle - start.idle;
+  const totalDelta = end.total - start.total;
+  if (totalDelta <= 0) return null;
+  return roundMetric(Math.max(0, Math.min(100, 100 - (idleDelta / totalDelta) * 100)));
+}
+
+function cpuTemperatureC() {
+  const candidates = [
+    "/sys/class/thermal/thermal_zone0/temp",
+    "/sys/class/hwmon/hwmon0/temp1_input"
+  ];
+
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    const raw = Number(readFileSync(path, "utf8").trim());
+    if (!Number.isFinite(raw)) continue;
+    return roundMetric(raw > 1000 ? raw / 1000 : raw);
+  }
+
+  return null;
+}
+
+function execFileText(command: string, args: string[], timeoutMs = 1200) {
+  return new Promise<string>((resolve, reject) => {
+    execFile(command, args, { encoding: "utf8", timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(String(stdout));
+    });
+  });
+}
+
+async function diskMetrics() {
+  try {
+    if (process.platform === "win32") {
+      const drive = (process.env.STATION_DISK_PATH ?? "C").replace(/[:\\\/]+$/, "") || "C";
+      const script = `Get-PSDrive -Name ${JSON.stringify(drive)} | Select-Object Used,Free | ConvertTo-Json -Compress`;
+      const stdout = await execFileText("powershell.exe", ["-NoProfile", "-Command", script]);
+      const parsed = JSON.parse(stdout) as { Used?: number; Free?: number };
+      const usedBytes = Number(parsed.Used ?? 0);
+      const freeBytes = Number(parsed.Free ?? 0);
+      const totalBytes = usedBytes + freeBytes;
+      return {
+        path: `${drive}:`,
+        totalBytes,
+        usedBytes,
+        freeBytes,
+        usedPercent: percent(usedBytes, totalBytes),
+        status: "ok"
+      };
+    }
+
+    const targetPath = process.env.STATION_DISK_PATH ?? "/";
+    const stdout = await execFileText("df", ["-kP", targetPath]);
+    const [, line] = stdout.trim().split(/\r?\n/);
+    const columns = line?.trim().split(/\s+/) ?? [];
+    const totalBytes = Number(columns[1]) * 1024;
+    const usedBytes = Number(columns[2]) * 1024;
+    const freeBytes = Number(columns[3]) * 1024;
+    return {
+      path: columns[5] ?? targetPath,
+      totalBytes,
+      usedBytes,
+      freeBytes,
+      usedPercent: percent(usedBytes, totalBytes),
+      status: Number.isFinite(totalBytes) ? "ok" : "unavailable"
+    };
+  } catch {
+    return {
+      path: process.env.STATION_DISK_PATH ?? (process.platform === "win32" ? "C:" : "/"),
+      totalBytes: null,
+      usedBytes: null,
+      freeBytes: null,
+      usedPercent: null,
+      status: "unavailable"
+    };
+  }
+}
+
+async function stationMetricsSnapshot() {
+  const totalMemoryBytes = os.totalmem();
+  const freeMemoryBytes = os.freemem();
+  const usedMemoryBytes = totalMemoryBytes - freeMemoryBytes;
+  const [cpuLoad, disk] = await Promise.all([
+    cpuLoadPercent(),
+    diskMetrics()
+  ]);
+  const cpuTemp = cpuTemperatureC();
+  const active = activeSessionSnapshot();
+
+  return {
+    ok: true,
+    service: "hotelops-api",
+    time: new Date().toISOString(),
+    host: {
+      hostname: os.hostname(),
+      platform: process.platform,
+      uptimeSeconds: Math.round(os.uptime())
+    },
+    activeUsers: active,
+    system: {
+      cpu: {
+        loadPercent: cpuLoad,
+        temperatureC: cpuTemp,
+        cores: os.cpus().length
+      },
+      memory: {
+        totalBytes: totalMemoryBytes,
+        usedBytes: usedMemoryBytes,
+        freeBytes: freeMemoryBytes,
+        usedPercent: percent(usedMemoryBytes, totalMemoryBytes)
+      },
+      disk
+    },
+    summary: {
+      activeUsers: active.users,
+      activeSessions: active.sessions,
+      cpuLoadPercent: cpuLoad,
+      cpuTemperatureC: cpuTemp,
+      memoryUsedPercent: percent(usedMemoryBytes, totalMemoryBytes),
+      diskUsedPercent: disk.usedPercent
+    }
+  };
+}
+
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -1353,6 +2243,44 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+app.get("/system/maintenance", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(readMaintenanceStatus());
+});
+
+app.patch("/system/maintenance", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
+  const payload = maintenanceModeSchema.parse(req.body);
+  const before = readMaintenanceStatus();
+  const after: MaintenanceStatus = {
+    enabled: payload.enabled,
+    message: payload.message || maintenanceDefaultMessage,
+    updatedAt: new Date().toISOString(),
+    updatedBy: req.user?.username ?? req.auth!.userId,
+    source: "tenant-console"
+  };
+  writeMaintenanceStatus(after);
+  await audit(
+    req,
+    "System",
+    "maintenance-mode",
+    after.enabled ? "ENABLE_MAINTENANCE" : "DISABLE_MAINTENANCE",
+    before,
+    after
+  );
+  res.json(after);
+}));
+
+app.get("/station/metrics", requireStationAccess, asyncHandler(async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(await stationMetricsSnapshot());
+}));
+
+app.post("/station/heartbeat", authenticate, asyncHandler(async (req, res) => {
+  markSessionHeartbeat(req.auth!, String(clientUserAgent(req)));
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, time: new Date().toISOString() });
+}));
+
 app.post("/auth/login", asyncHandler(async (req, res) => {
   const payload = loginSchema.parse(req.body);
   const usernameInput = payload.username.trim();
@@ -1361,12 +2289,13 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     usernameInput.toLowerCase(),
     usernameInput.toLocaleLowerCase("tr-TR")
   ]));
-  const user = await prisma.user.findFirst({
+  let user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
       OR: [
         { username: { in: loginCandidates } },
         { email: { in: loginCandidates } },
+        { accountId: usernameInput },
         { username: { equals: usernameInput, mode: "insensitive" } },
         { email: { equals: usernameInput, mode: "insensitive" } }
       ]
@@ -1399,6 +2328,10 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     res.status(401).json({ error: "INVALID_CREDENTIALS" });
     return;
   }
+  if (isPlatformAdminAccount(user)) {
+    user = await ensurePlatformAdminHome(user.id);
+  }
+  user = await ensureUserAccountId(user);
 
   const refreshToken = crypto.randomBytes(48).toString("hex");
   const session = await prisma.authSession.create({
@@ -1407,7 +2340,7 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
       refreshToken,
       ipAddress: clientIp(req),
       userAgent: String(clientUserAgent(req)),
-      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 8)
+      expiresAt: new Date(Date.now() + authSessionLifetimeMs)
     }
   });
 
@@ -1418,6 +2351,7 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     departmentId: clientDepartmentIdFromCode(user.department.code),
     sessionId: session.id
   };
+  markSessionHeartbeat(auth, String(clientUserAgent(req)));
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
@@ -1435,6 +2369,7 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
 
 app.post("/auth/logout", authenticate, async (req, res) => {
   await prisma.authSession.update({ where: { id: req.auth!.sessionId }, data: { revokedAt: new Date() } });
+  forgetActiveSession(req.auth!.sessionId);
   res.json({ ok: true });
 });
 
@@ -1446,9 +2381,87 @@ app.get("/auth/me", authenticate, async (req, res) => {
   });
 });
 
+app.patch("/auth/profile", authenticate, asyncHandler(async (req, res) => {
+  const payload = updateOwnProfileSchema.parse(req.body);
+  const currentPasswordOk = await bcrypt.compare(payload.currentPassword, req.user!.passwordHash);
+  if (!currentPasswordOk) {
+    res.status(401).json({ error: "INVALID_CURRENT_PASSWORD" });
+    return;
+  }
+  if (isReservedPlatformUser(req.user!)) {
+    res.status(403).json({ error: "PROFILE_USERNAME_DENIED" });
+    return;
+  }
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      id: { not: req.auth!.userId },
+      deletedAt: null,
+      OR: [
+        { username: { equals: payload.username, mode: "insensitive" } },
+        { email: { equals: payload.username, mode: "insensitive" } }
+      ]
+    },
+    select: { id: true }
+  });
+  if (existing || isPlatformAdminUsername(payload.username)) {
+    res.status(409).json({ error: "DUPLICATE_USERNAME" });
+    return;
+  }
+
+  const before = serializeUser(req.user!);
+  const updated = await prisma.user.update({
+    where: { id: req.auth!.userId },
+    data: { username: payload.username },
+    include: userInclude
+  });
+  await audit(req, "User", updated.id, "UPDATE_PROFILE", before, serializeUser(updated));
+
+  res.json({ ok: true, user: serializeUser(updated) });
+}));
+
+app.patch("/auth/password", authenticate, asyncHandler(async (req, res) => {
+  const payload = changePasswordSchema.parse(req.body);
+  const currentPasswordOk = await bcrypt.compare(payload.currentPassword, req.user!.passwordHash);
+  if (!currentPasswordOk) {
+    res.status(401).json({ error: "INVALID_CURRENT_PASSWORD" });
+    return;
+  }
+
+  const changedAt = new Date();
+  const updated = await prisma.user.update({
+    where: { id: req.auth!.userId },
+    data: { passwordHash: await bcrypt.hash(payload.newPassword, 12) },
+    include: userInclude
+  });
+  await prisma.authSession.updateMany({
+    where: {
+      userId: updated.id,
+      id: { not: req.auth!.sessionId },
+      revokedAt: null
+    },
+    data: { revokedAt: changedAt }
+  });
+  await audit(req, "User", updated.id, "CHANGE_PASSWORD", null, { username: updated.username });
+
+  res.json({ ok: true, user: serializeUser(updated) });
+}));
+
 app.get("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (_req, res) => {
   const hotels = await prisma.hotel.findMany({
+    where: { code: { not: platformAdminHotelCode } },
     include: {
+      departments: {
+        where: { deletedAt: null },
+        include: {
+          users: {
+            where: { deletedAt: null, username: { not: platformAdminUsername } },
+            include: userInclude,
+            orderBy: { fullName: "asc" }
+          }
+        },
+        orderBy: { name: "asc" }
+      },
       _count: {
         select: {
           departments: true,
@@ -1466,22 +2479,18 @@ app.get("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (_req,
 
 app.post("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
   const payload = hotelSchema.parse(req.body);
-  const code = normalizeHotelCode(payload.code || payload.name);
-  if (!code || code.length < 2) {
-    res.status(422).json({ error: "INVALID_HOTEL_CODE" });
-    return;
-  }
-
-  const temporaryPassword = payload.adminPassword || crypto.randomBytes(9).toString("base64url");
-  const adminEmail = payload.adminEmail ?? generatedUserEmail(`${code}.${payload.adminUsername}`);
   const created = await prisma.$transaction(async (tx) => {
+    const code = await uniqueHotelCode(tx, payload.name);
+    const publicId = await reserveHotelPublicId(tx);
     const hotel = await tx.hotel.create({
       data: {
+        publicId,
         code,
         name: payload.name,
         timezone: payload.timezone
       }
     });
+    await tx.hotelIdReservation.update({ where: { publicId }, data: { hotelDbId: hotel.id } });
 
     const departments = new Map<string, string>();
     for (const departmentId of defaultHotelDepartmentIds) {
@@ -1496,28 +2505,69 @@ app.post("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (req,
       departments.set(departmentCode, department.id);
     }
 
-    const role = await tx.role.findUniqueOrThrow({ where: { code: "generalManager" } });
-    const admin = await tx.user.create({
-      data: {
-        hotelId: hotel.id,
-        departmentId: departments.get("EXECUTIVE")!,
-        roleId: role.id,
-        username: payload.adminUsername,
-        email: adminEmail,
-        passwordHash: await bcrypt.hash(temporaryPassword, 12),
-        fullName: payload.adminFullName,
-        isActive: true
+    const [generalManagerRole, hrManagerRole] = await Promise.all([
+      tx.role.findUniqueOrThrow({ where: { code: "generalManager" } }),
+      tx.role.findUniqueOrThrow({ where: { code: "hrManager" } })
+    ]);
+    const accountSeeds = [
+      {
+        label: "Genel Müdür",
+        username: `gm.${code.toLocaleLowerCase("tr-TR")}`,
+        fullName: `${payload.name} Genel Müdür`,
+        departmentCode: "EXECUTIVE",
+        roleId: generalManagerRole.id
       },
-      include: userInclude
-    });
+      {
+        label: "İnsan Kaynakları Müdürü",
+        username: `ik.${code.toLocaleLowerCase("tr-TR")}`,
+        fullName: `${payload.name} İnsan Kaynakları Müdürü`,
+        departmentCode: "HR",
+        roleId: hrManagerRole.id
+      }
+    ] as const;
+    const accounts = [];
+    for (const seed of accountSeeds) {
+      const password = generateTemporaryPassword();
+      const user = await createUserWithAccountId(tx, {
+        hotelId: hotel.id,
+        departmentId: departments.get(seed.departmentCode)!,
+        roleId: seed.roleId,
+        username: seed.username,
+        email: generatedUserEmail(seed.username),
+        passwordHash: await bcrypt.hash(password, 12),
+        fullName: seed.fullName,
+        isActive: true
+      });
+      accounts.push({ label: seed.label, user, temporaryPassword: password });
+    }
 
-    return { hotel, admin };
+    return { hotel, accounts };
   });
 
-  await audit(req, "Hotel", created.hotel.id, "CREATE", null, { code: created.hotel.code, name: created.hotel.name, adminUsername: created.admin.username });
+  await audit(req, "Hotel", created.hotel.id, "CREATE", null, {
+    publicId: created.hotel.publicId,
+    code: created.hotel.code,
+    name: created.hotel.name,
+    bootstrapAccounts: created.accounts.map((account) => ({
+      label: account.label,
+      username: account.user.username,
+      accountId: account.user.accountId
+    }))
+  });
   const hotelWithCount = await prisma.hotel.findUniqueOrThrow({
     where: { id: created.hotel.id },
     include: {
+      departments: {
+        where: { deletedAt: null },
+        include: {
+          users: {
+            where: { deletedAt: null, username: { not: platformAdminUsername } },
+            include: userInclude,
+            orderBy: { fullName: "asc" }
+          }
+        },
+        orderBy: { name: "asc" }
+      },
       _count: {
         select: {
           departments: true,
@@ -1532,9 +2582,188 @@ app.post("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (req,
 
   res.status(201).json({
     item: serializeHotel(hotelWithCount),
-    admin: serializeUser(created.admin),
-    temporaryPassword
+    accounts: created.accounts.map((account) => ({
+      label: account.label,
+      user: serializeUser(account.user),
+      temporaryPassword: account.temporaryPassword
+    }))
   });
+}));
+
+app.delete("/hotels/:id", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
+  const targetHotelId = String(req.params.id);
+  const hotel = await prisma.hotel.findUnique({
+    where: { id: targetHotelId },
+    include: {
+      _count: {
+        select: {
+          departments: true,
+          users: true,
+          reminders: true,
+          managementRequests: true,
+          operationDocuments: true
+        }
+      }
+    }
+  });
+
+  if (!hotel) {
+    res.status(404).json({ error: "HOTEL_NOT_FOUND" });
+    return;
+  }
+
+  if (hotel.code === platformAdminHotelCode) {
+    res.status(409).json({ error: "CANNOT_DELETE_PLATFORM_HOTEL" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const departments = await tx.department.findMany({ where: { hotelId: hotel.id }, select: { id: true } });
+    const users = await tx.user.findMany({ where: { hotelId: hotel.id }, select: { id: true } });
+    const departmentIds = departments.map((department) => department.id);
+    const userIds = users.map((user) => user.id);
+
+    const workOrderFilters = [
+      ...(departmentIds.length ? [{ departmentId: { in: departmentIds } }] : []),
+      ...(userIds.length ? [{ createdById: { in: userIds } }, { assignedToId: { in: userIds } }] : [])
+    ];
+    const workOrders = workOrderFilters.length
+      ? await tx.workOrder.findMany({ where: { OR: workOrderFilters }, select: { id: true } })
+      : [];
+    const workOrderIds = workOrders.map((workOrder) => workOrder.id);
+
+    const staffProfiles = userIds.length
+      ? await tx.staffProfile.findMany({ where: { userId: { in: userIds } }, select: { id: true } })
+      : [];
+    const staffProfileIds = staffProfiles.map((profile) => profile.id);
+    const leaveRequests = staffProfileIds.length
+      ? await tx.leaveRequest.findMany({ where: { staffProfileId: { in: staffProfileIds } }, select: { id: true } })
+      : [];
+    const leaveRequestIds = leaveRequests.map((request) => request.id);
+
+    const purchaseRequestFilters = [
+      ...(workOrderIds.length ? [{ workOrderId: { in: workOrderIds } }] : []),
+      ...(userIds.length ? [{ requesterId: { in: userIds } }] : [])
+    ];
+    const purchaseRequests = purchaseRequestFilters.length
+      ? await tx.purchaseRequest.findMany({ where: { OR: purchaseRequestFilters }, select: { id: true } })
+      : [];
+    const purchaseRequestIds = purchaseRequests.map((request) => request.id);
+
+    const operationDocuments = await tx.operationDocument.findMany({ where: { hotelId: hotel.id }, select: { id: true } });
+    const operationDocumentIds = operationDocuments.map((document) => document.id);
+    const rooms = await tx.room.findMany({ where: { hotelId: hotel.id }, select: { id: true } });
+    const roomIds = rooms.map((room) => room.id);
+
+    await archiveHotelSnapshot(
+      tx,
+      hotel,
+      { id: req.auth?.userId, username: req.user?.username },
+      {
+        departmentIds,
+        userIds,
+        workOrderIds,
+        staffProfileIds,
+        leaveRequestIds,
+        purchaseRequestIds,
+        operationDocumentIds,
+        roomIds
+      }
+    );
+
+    const auditFilters = [
+      { entityType: "Hotel", entityId: hotel.id },
+      ...(userIds.length ? [{ actorId: { in: userIds } }] : []),
+      ...(workOrderIds.length ? [{ workOrderId: { in: workOrderIds } }] : [])
+    ];
+    await tx.auditLog.deleteMany({ where: { OR: auditFilters } });
+
+    const approvalFilters = [
+      ...(workOrderIds.length ? [{ workOrderId: { in: workOrderIds } }] : []),
+      ...(leaveRequestIds.length ? [{ leaveRequestId: { in: leaveRequestIds } }] : []),
+      ...(purchaseRequestIds.length ? [{ purchaseRequestId: { in: purchaseRequestIds } }] : []),
+      ...(userIds.length ? [{ approverId: { in: userIds } }] : [])
+    ];
+    if (approvalFilters.length) await tx.approval.deleteMany({ where: { OR: approvalFilters } });
+
+    if (purchaseRequestIds.length) await tx.purchaseRequest.deleteMany({ where: { id: { in: purchaseRequestIds } } });
+    if (leaveRequestIds.length) await tx.leaveRequest.deleteMany({ where: { id: { in: leaveRequestIds } } });
+    if (staffProfileIds.length) {
+      await tx.trainingAssignment.deleteMany({ where: { staffProfileId: { in: staffProfileIds } } });
+      await tx.staffProfile.deleteMany({ where: { id: { in: staffProfileIds } } });
+    }
+
+    const operationDocumentReadFilters = [
+      ...(operationDocumentIds.length ? [{ documentId: { in: operationDocumentIds } }] : []),
+      ...(userIds.length ? [{ userId: { in: userIds } }] : [])
+    ];
+    if (operationDocumentReadFilters.length) await tx.operationDocumentRead.deleteMany({ where: { OR: operationDocumentReadFilters } });
+    await tx.operationDocument.deleteMany({ where: { hotelId: hotel.id } });
+
+    const managementRequestFilters = [
+      { hotelId: hotel.id },
+      ...(userIds.length ? [
+        { createdById: { in: userIds } },
+        { recipientId: { in: userIds } },
+        { relatedUserId: { in: userIds } },
+        { readById: { in: userIds } }
+      ] : [])
+    ];
+    await tx.managementRequest.deleteMany({ where: { OR: managementRequestFilters } });
+
+    const reminderFilters = [
+      { hotelId: hotel.id },
+      ...(userIds.length ? [{ createdById: { in: userIds } }, { assignedToId: { in: userIds } }] : [])
+    ];
+    await tx.reminder.deleteMany({ where: { OR: reminderFilters } });
+
+    if (userIds.length) {
+      await tx.notification.deleteMany({ where: { userId: { in: userIds } } });
+      await tx.pushDevice.deleteMany({ where: { userId: { in: userIds } } });
+      await tx.authSession.deleteMany({ where: { userId: { in: userIds } } });
+      await tx.loginHistory.deleteMany({ where: { userId: { in: userIds } } });
+    }
+
+    if (roomIds.length) await tx.roomStatusHistory.deleteMany({ where: { roomId: { in: roomIds } } });
+    if (workOrderIds.length) {
+      await tx.attachment.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
+      await tx.comment.deleteMany({ where: { OR: [{ workOrderId: { in: workOrderIds } }, ...(userIds.length ? [{ authorId: { in: userIds } }] : [])] } });
+      await tx.workOrderTimeline.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
+      await tx.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
+    } else if (userIds.length) {
+      await tx.comment.deleteMany({ where: { authorId: { in: userIds } } });
+    }
+
+    if (departmentIds.length) await tx.calendarEvent.deleteMany({ where: { departmentId: { in: departmentIds } } });
+    await tx.asset.deleteMany({ where: { hotelId: hotel.id } });
+    await tx.room.deleteMany({ where: { hotelId: hotel.id } });
+    if (userIds.length) await tx.accountIdReservation.updateMany({ where: { userId: { in: userIds } }, data: { userId: null } });
+    if (userIds.length) await tx.user.deleteMany({ where: { id: { in: userIds } } });
+    if (departmentIds.length) await tx.department.deleteMany({ where: { id: { in: departmentIds } } });
+    await tx.hotelIdReservation.updateMany({ where: { hotelDbId: hotel.id }, data: { hotelDbId: null } });
+    await tx.hotel.delete({ where: { id: hotel.id } });
+  });
+
+  await audit(req, "Hotel", hotel.id, "DELETE", serializeHotel(hotel), null);
+  res.json({ ok: true, item: serializeHotel(hotel) });
+}));
+
+app.post("/hotels/users/:id/reset-password", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
+  const temporaryPassword = generateTemporaryPassword();
+  const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
+  if (hideReservedPlatformUser(existing, res)) return;
+  const updated = await prisma.user.update({
+    where: { id: existing.id },
+    data: { passwordHash: await bcrypt.hash(temporaryPassword, 12) },
+    include: userInclude
+  });
+  await audit(req, "User", updated.id, "PLATFORM_RESET_PASSWORD", null, {
+    username: updated.username,
+    accountId: updated.accountId,
+    hotelId: updated.hotelId,
+    hotelCode: updated.hotel?.code
+  });
+  res.json({ ok: true, user: serializeUser(updated), temporaryPassword });
 }));
 
 app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
@@ -1569,11 +2798,343 @@ app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
   res.json({ ok: true, id: device.id });
 }));
 
+app.get("/shifts/current", authenticate, asyncHandler(async (req, res) => {
+  if (!req.user!.shiftTrackingEnabled) {
+    res.json({ item: null });
+    return;
+  }
+
+  const activeShift = await prisma.shiftSession.findFirst({
+    where: { userId: req.auth!.userId, endedAt: null },
+    orderBy: { startedAt: "desc" }
+  });
+
+  res.json({ item: activeShift ? serializeShiftSession(activeShift) : null });
+}));
+
+app.post("/shifts/start", authenticate, asyncHandler(async (req, res) => {
+  if (!req.user!.shiftTrackingEnabled) {
+    res.status(403).json({ error: "SHIFT_TRACKING_DISABLED" });
+    return;
+  }
+
+  const activeShift = await prisma.shiftSession.findFirst({
+    where: { userId: req.auth!.userId, endedAt: null },
+    orderBy: { startedAt: "desc" }
+  });
+
+  if (activeShift) {
+    res.json({ item: serializeShiftSession(activeShift) });
+    return;
+  }
+
+  const shift = await prisma.shiftSession.create({
+    data: {
+      userId: req.auth!.userId,
+      hotelId: req.auth!.hotelId,
+      departmentId: req.user!.departmentId,
+      startIpAddress: clientIp(req),
+      userAgent: String(clientUserAgent(req))
+    }
+  });
+
+  res.status(201).json({ item: serializeShiftSession(shift) });
+}));
+
+app.post("/shifts/end", authenticate, asyncHandler(async (req, res) => {
+  const activeShift = await prisma.shiftSession.findFirst({
+    where: { userId: req.auth!.userId, endedAt: null },
+    orderBy: { startedAt: "desc" }
+  });
+
+  if (!activeShift) {
+    res.json({ item: null });
+    return;
+  }
+
+  const endedShift = await prisma.shiftSession.update({
+    where: { id: activeShift.id },
+    data: {
+      endedAt: new Date(),
+      endIpAddress: clientIp(req)
+    }
+  });
+
+  res.json({ item: serializeShiftSession(endedShift) });
+}));
+
+app.get("/shift-panels", authenticate, asyncHandler(async (req, res) => {
+  const requestedMonth = typeof req.query.month === "string"
+    ? req.query.month
+    : typeof req.query.date === "string"
+      ? req.query.date.slice(0, 7)
+      : undefined;
+  const { raw, start, end, days } = parseShiftPanelMonth(requestedMonth);
+  const allDepartments = canViewAllShiftPanels(req.auth!);
+  const departments = await prisma.department.findMany({
+    where: {
+      hotelId: req.auth!.hotelId,
+      deletedAt: null,
+      ...(allDepartments ? {} : { code: departmentCodeFromClientId(req.auth!.departmentId) })
+    },
+    orderBy: { name: "asc" }
+  });
+
+  if (!departments.length) {
+    res.json({ month: raw, days, items: [] });
+    return;
+  }
+
+  const panels = await prisma.shiftPanel.findMany({
+    where: {
+      hotelId: req.auth!.hotelId,
+      departmentId: { in: departments.map((department) => department.id) },
+      ...(canConfigureShiftPanels(req.auth!) ? {} : { enabled: true })
+    },
+    include: {
+      department: true,
+      editors: { include: { user: { include: userInclude } } }
+    },
+    orderBy: { department: { name: "asc" } }
+  });
+
+  const panelsByDepartmentId = new Map(panels.map((panel) => [panel.departmentId, panel]));
+  const [staffUsers, cells] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        hotelId: req.auth!.hotelId,
+        departmentId: { in: departments.map((department) => department.id) },
+        isActive: true,
+        deletedAt: null
+      },
+      include: userInclude,
+      orderBy: { fullName: "asc" }
+    }),
+    panels.length
+      ? prisma.shiftPanelCell.findMany({
+          where: { panelId: { in: panels.map((panel) => panel.id) }, date: { gte: start, lt: end } },
+          orderBy: [{ date: "asc" }, { user: { fullName: "asc" } }]
+        })
+      : Promise.resolve([])
+  ]);
+  const staffByDepartmentId = new Map<string, typeof staffUsers>();
+  for (const department of departments) {
+    staffByDepartmentId.set(department.id, staffUsers.filter((user) => user.departmentId === department.id));
+  }
+  const cellsByPanelId = new Map<string, typeof cells>();
+  for (const cell of cells) {
+    const current = cellsByPanelId.get(cell.panelId) ?? [];
+    current.push(cell);
+    cellsByPanelId.set(cell.panelId, current);
+  }
+
+  const items = departments
+    .map((department) => {
+      const panel = panelsByDepartmentId.get(department.id) ?? null;
+      return serializeShiftPanel(
+        panel,
+        department,
+        null,
+        req.auth!,
+        staffByDepartmentId.get(department.id) ?? [],
+        panel ? cellsByPanelId.get(panel.id) ?? [] : []
+      );
+    })
+    .filter((panel) => canConfigureShiftPanels(req.auth!) || panel.enabled);
+
+  res.json({ month: raw, days, items });
+}));
+
+app.patch("/shift-panels/:departmentId/config", authenticate, asyncHandler(async (req, res) => {
+  if (!canConfigureShiftPanels(req.auth!)) {
+    res.status(403).json({ error: "SHIFT_PANEL_CONFIG_DENIED" });
+    return;
+  }
+
+  const payload = shiftPanelConfigSchema.parse(req.body);
+  const department = await departmentForClientId(req.auth!.hotelId, routeParam(req, "departmentId"));
+  const activeUsers = payload.enabled && payload.editorUserIds.length
+    ? await prisma.user.findMany({
+        where: {
+          id: { in: payload.editorUserIds },
+          hotelId: req.auth!.hotelId,
+          departmentId: department.id,
+          isActive: true,
+          deletedAt: null
+        },
+        select: { id: true }
+      })
+    : [];
+  const editorUserIds = Array.from(new Set(activeUsers.map((user) => user.id)));
+
+  const panel = await prisma.$transaction(async (tx) => {
+    const savedPanel = await tx.shiftPanel.upsert({
+      where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
+      update: { enabled: payload.enabled },
+      create: { hotelId: req.auth!.hotelId, departmentId: department.id, enabled: payload.enabled }
+    });
+    await tx.shiftPanelEditor.deleteMany({ where: { panelId: savedPanel.id } });
+    if (payload.enabled && editorUserIds.length) {
+      await tx.shiftPanelEditor.createMany({
+        data: editorUserIds.map((userId) => ({ panelId: savedPanel.id, userId })),
+        skipDuplicates: true
+      });
+    }
+    return tx.shiftPanel.findUniqueOrThrow({
+      where: { id: savedPanel.id },
+      include: {
+        department: true,
+        editors: { include: { user: { include: userInclude } } }
+      }
+    });
+  });
+
+  await audit(req, "ShiftPanel", panel.id, "CONFIGURE", null, {
+    departmentId: clientDepartmentIdFromCode(department.code),
+    enabled: payload.enabled,
+    editorUserIds
+  });
+
+  res.json({ item: serializeShiftPanel(panel, department, null, req.auth!) });
+}));
+
+app.patch("/shift-panels/:departmentId/cell", authenticate, asyncHandler(async (req, res) => {
+  const payload = shiftPanelCellSchema.parse(req.body);
+  const { date } = parseShiftPanelDate(payload.date);
+  const department = await departmentForClientId(req.auth!.hotelId, routeParam(req, "departmentId"));
+  const [panel, staffUser] = await Promise.all([
+    prisma.shiftPanel.findUnique({
+      where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
+      include: { editors: true }
+    }),
+    prisma.user.findFirst({
+      where: {
+        id: payload.userId,
+        hotelId: req.auth!.hotelId,
+        departmentId: department.id,
+        isActive: true,
+        deletedAt: null
+      },
+      select: { id: true }
+    })
+  ]);
+
+  if (!panel || !panel.enabled) {
+    res.status(404).json({ error: "SHIFT_PANEL_NOT_FOUND" });
+    return;
+  }
+  if (!panel.editors.some((editor) => editor.userId === req.auth!.userId)) {
+    res.status(403).json({ error: "SHIFT_PANEL_EDIT_DENIED" });
+    return;
+  }
+  if (!staffUser) {
+    res.status(422).json({ error: "SHIFT_PANEL_STAFF_INVALID" });
+    return;
+  }
+
+  const blank = !payload.code && !payload.startTime && !payload.endTime && !payload.note;
+  if (blank) {
+    const deleted = await prisma.shiftPanelCell.deleteMany({
+      where: { panelId: panel.id, userId: payload.userId, date }
+    });
+    await audit(req, "ShiftPanelCell", `${panel.id}:${payload.userId}:${payload.date}`, "DELETE", null, {
+      departmentId: clientDepartmentIdFromCode(department.code),
+      userId: payload.userId,
+      date: payload.date,
+      count: deleted.count
+    });
+    res.json({ item: null });
+    return;
+  }
+
+  const cell = await prisma.shiftPanelCell.upsert({
+    where: { panelId_userId_date: { panelId: panel.id, userId: payload.userId, date } },
+    update: {
+      code: payload.code,
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+      note: payload.note,
+      color: payload.color,
+      updatedById: req.auth!.userId
+    },
+    create: {
+      panelId: panel.id,
+      userId: payload.userId,
+      date,
+      code: payload.code,
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+      note: payload.note,
+      color: payload.color,
+      updatedById: req.auth!.userId
+    }
+  });
+
+  await audit(req, "ShiftPanelCell", cell.id, "UPSERT", null, {
+    departmentId: clientDepartmentIdFromCode(department.code),
+    userId: payload.userId,
+    date: payload.date
+  });
+
+  res.json({ item: serializeShiftPanelCell(cell) });
+}));
+
+app.patch("/shift-panels/:departmentId/entry", authenticate, asyncHandler(async (req, res) => {
+  const payload = shiftPanelEntrySchema.parse(req.body);
+  const { date } = parseShiftPanelDate(payload.date);
+  const department = await departmentForClientId(req.auth!.hotelId, routeParam(req, "departmentId"));
+  const panel = await prisma.shiftPanel.findUnique({
+    where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
+    include: { editors: true }
+  });
+
+  if (!panel || !panel.enabled) {
+    res.status(404).json({ error: "SHIFT_PANEL_NOT_FOUND" });
+    return;
+  }
+  if (!panel.editors.some((editor) => editor.userId === req.auth!.userId)) {
+    res.status(403).json({ error: "SHIFT_PANEL_EDIT_DENIED" });
+    return;
+  }
+
+  const entry = await prisma.shiftPanelEntry.upsert({
+    where: { panelId_date: { panelId: panel.id, date } },
+    update: {
+      shiftName: payload.shiftName,
+      staffingNote: payload.staffingNote,
+      summary: payload.summary,
+      openIssues: payload.openIssues,
+      handoverNote: payload.handoverNote,
+      updatedById: req.auth!.userId
+    },
+    create: {
+      panelId: panel.id,
+      date,
+      shiftName: payload.shiftName,
+      staffingNote: payload.staffingNote,
+      summary: payload.summary,
+      openIssues: payload.openIssues,
+      handoverNote: payload.handoverNote,
+      createdById: req.auth!.userId,
+      updatedById: req.auth!.userId
+    },
+    include: { updatedBy: { include: userInclude } }
+  });
+
+  await audit(req, "ShiftPanelEntry", entry.id, "UPSERT", null, {
+    departmentId: clientDepartmentIdFromCode(department.code),
+    date: payload.date
+  });
+
+  res.json({ item: serializeShiftPanelEntry(entry) });
+}));
+
 app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   await processDueReminders(req.auth!.userId);
+  await ensureHotelUserAccountIds(req.auth!.hotelId);
   const departments = scopeDepartmentIds(req.auth!);
 
-  const [workOrders, notifications, reminders, users, activeDepartments] = await Promise.all([
+  const [workOrders, notifications, reminders, users, activeDepartments, activeShift] = await Promise.all([
     prisma.workOrder.findMany({
       where: workOrderVisibilityWhere(req.auth!),
       include: workOrderInclude,
@@ -1600,7 +3161,13 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     prisma.department.findMany({
       where: { hotelId: req.auth!.hotelId, deletedAt: null },
       orderBy: { name: "asc" }
-    })
+    }),
+    req.user!.shiftTrackingEnabled
+      ? prisma.shiftSession.findFirst({
+          where: { userId: req.auth!.userId, endedAt: null },
+          orderBy: { startedAt: "desc" }
+        })
+      : Promise.resolve(null)
   ]);
 
   res.json({
@@ -1611,11 +3178,13 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     users: users.map(serializeUser),
     reminders: reminders.map(serializeReminder),
     departments: activeDepartments.map(serializeDepartment),
-    notifications: notifications.map(serializeNotification)
+    notifications: notifications.map(serializeNotification),
+    activeShift: activeShift ? serializeShiftSession(activeShift) : null
   });
 }));
 
 app.get("/users", authenticate, requirePermission("users:read"), async (req, res) => {
+  await ensureHotelUserAccountIds(req.auth!.hotelId);
   const users = await prisma.user.findMany({ where: visibleManageableUsersWhere(req.auth!), include: userInclude, orderBy: { fullName: "asc" } });
   res.json({ items: users.map(serializeUser) });
 });
@@ -1637,21 +3206,20 @@ app.post("/users", authenticate, requirePermission("users:write"), asyncHandler(
   if (rejectReservedPlatformRole(payload.roleId, res)) return;
   const role = await prisma.role.findUniqueOrThrow({ where: { code: payload.roleId } });
   const department = await departmentForClientId(req.auth!.hotelId, payload.departmentId);
-  const temporaryPassword = payload.password || crypto.randomBytes(9).toString("base64url");
+  const temporaryPassword = payload.password || generateTemporaryPassword();
   const email = payload.email ?? generatedUserEmail(payload.username);
-  const created = await prisma.user.create({
-    data: {
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+  const created = await prisma.$transaction((tx) => createUserWithAccountId(tx, {
       hotelId: req.auth!.hotelId,
       roleId: role.id,
       departmentId: department.id,
       username: payload.username,
       email,
-      passwordHash: await bcrypt.hash(temporaryPassword, 12),
+      passwordHash,
       fullName: payload.fullName,
+      shiftTrackingEnabled: payload.shiftTrackingEnabled,
       moduleAccessJson: JSON.stringify(payload.moduleAccess ?? {})
-    },
-    include: userInclude
-  });
+    }));
   await audit(req, "User", created.id, "CREATE", null, serializeUser(created));
   res.status(201).json({ ...serializeUser(created), temporaryPassword });
 }));
@@ -1670,19 +3238,33 @@ app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHan
   if (payload.email) data.email = payload.email;
   if (payload.password) data.passwordHash = await bcrypt.hash(payload.password, 12);
   if (payload.moduleAccess) data.moduleAccessJson = JSON.stringify(payload.moduleAccess);
+  if (payload.shiftTrackingEnabled !== undefined) data.shiftTrackingEnabled = payload.shiftTrackingEnabled;
   if (payload.roleId) data.role = { connect: { code: payload.roleId } };
   if (payload.departmentId) {
     const department = await departmentForClientId(req.auth!.hotelId, payload.departmentId);
     data.department = { connect: { id: department.id } };
   }
 
-  const updated = await prisma.user.update({ where: { id: existing.id }, data, include: userInclude });
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedUser = await tx.user.update({ where: { id: existing.id }, data, include: userInclude });
+    if (payload.shiftTrackingEnabled === false) {
+      await tx.shiftSession.updateMany({
+        where: { userId: existing.id, endedAt: null },
+        data: {
+          endedAt: new Date(),
+          endIpAddress: clientIp(req),
+          userAgent: String(clientUserAgent(req))
+        }
+      });
+    }
+    return updatedUser;
+  });
   await audit(req, "User", updated.id, "UPDATE", serializeUser(existing), serializeUser(updated));
   res.json(serializeUser(updated));
 }));
 
 app.post("/users/:id/reset-password", authenticate, requirePermission("users:reset-password"), async (req, res) => {
-  const temporaryPassword = crypto.randomBytes(9).toString("base64url");
+  const temporaryPassword = generateTemporaryPassword();
   const existing = await prisma.user.findUniqueOrThrow({ where: { id: routeParam(req, "id") }, include: userInclude });
   if (hideReservedPlatformUser(existing, res)) return;
   if (existing.hotelId !== req.auth!.hotelId) {
@@ -2716,9 +4298,13 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   const auth = socket.data.auth as AuthContext;
+  markSessionSocketConnected(auth);
   const scope = scopeDepartmentIds(auth);
   scope.forEach((departmentId) => socket.join(departmentSocketRoom(auth.hotelId, departmentId)));
   socket.emit("session.ready", { scope });
+  socket.on("disconnect", () => {
+    markSessionSocketDisconnected(auth.sessionId);
+  });
 });
 
 function canManageUsers(roleId: string) {

@@ -28,6 +28,7 @@ const hotelRoutes = [
   ["hotel", "modules", "vip"],
   ["hotel", "reports"],
   ["hotel", "users"],
+  ["hotel", "hotelpanel"],
   ["hotel", "settings"]
 ];
 
@@ -56,6 +57,7 @@ const legacyHotelRoutes = [
   ["modules", "vip"],
   ["reports"],
   ["users"],
+  ["hotelpanel"],
   ["settings"]
 ];
 

@@ -19,13 +19,28 @@ class HotelOpsFirebaseMessagingService : FirebaseMessagingService() {
 
         // Backend hem notification hem data payload gonderebilir. Hangisi geldiyse
         // ondan baslik/metin uretip Android sistem bildirimi olarak gosteriyoruz.
+        val messageType = message.data["type"].orEmpty()
+        val channel = message.data["channel"].orEmpty()
         val id = message.messageId
             ?: message.data["notificationId"]
             ?: message.data["workOrderCode"]
             ?: System.currentTimeMillis().toString()
         val title = message.notification?.title ?: message.data["title"] ?: "HotelOps"
         val body = message.notification?.body ?: message.data["body"] ?: "Yeni is bildirimi var."
+        val delivery = message.data["delivery"].orEmpty()
+        val androidChannelId = message.data["androidChannelId"].orEmpty()
+        val silent = delivery.equals("silent", ignoreCase = true)
+            || androidChannelId == HotelOpsNotifier.CHANNEL_SILENT_TRANSIENT
+            || channel.equals("SILENT", ignoreCase = true)
+            || channel.startsWith("SILENT_", ignoreCase = true)
+            || channel.endsWith("_SILENT", ignoreCase = true)
+            || message.data["silent"].equals("true", ignoreCase = true)
 
-        HotelOpsNotifier.showOperationNotification(applicationContext, id, title, body)
+        if (messageType.equals("app_update", ignoreCase = true) || channel.equals("APP_UPDATE", ignoreCase = true)) {
+            HotelOpsNotifier.showAppUpdateNotification(applicationContext, title, body)
+            return
+        }
+
+        HotelOpsNotifier.showOperationNotification(applicationContext, id, title, body, silent)
     }
 }

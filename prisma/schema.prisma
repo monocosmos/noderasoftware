@@ -78,19 +78,47 @@ enum PushPlatform {
 }
 
 model Hotel {
-  id          String       @id @default(cuid())
-  name        String
-  code        String       @unique
-  timezone    String       @default("Europe/Istanbul")
-  departments Department[]
-  rooms       Room[]
-  assets      Asset[]
-  users       User[]
-  reminders   Reminder[]
-  managementRequests ManagementRequest[]
-  operationDocuments OperationDocument[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id                  String              @id @default(cuid())
+  publicId            String?             @unique
+  name                String
+  code                String              @unique
+  timezone            String              @default("Europe/Istanbul")
+  publicIdReservation HotelIdReservation?
+  departments         Department[]
+  rooms               Room[]
+  assets              Asset[]
+  users               User[]
+  shiftSessions       ShiftSession[]
+  shiftPanels         ShiftPanel[]
+  reminders           Reminder[]
+  managementRequests  ManagementRequest[]
+  operationDocuments  OperationDocument[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+model HotelIdReservation {
+  publicId  String   @id
+  hotelDbId String?  @unique
+  hotel     Hotel?   @relation(fields: [hotelDbId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+}
+
+model HotelArchive {
+  id                 String   @id @default(cuid())
+  sourceHotelId      String
+  publicId           String?
+  code               String
+  name               String
+  timezone           String
+  archivedById       String?
+  archivedByUsername String?
+  snapshotJson       Json
+  createdAt          DateTime @default(now())
+
+  @@index([sourceHotelId])
+  @@index([publicId])
+  @@index([createdAt])
 }
 
 model Department {
@@ -100,6 +128,8 @@ model Department {
   name           String
   hotel          Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   users          User[]
+  shiftSessions  ShiftSession[]
+  shiftPanels    ShiftPanel[]
   workOrders     WorkOrder[]
   calendarEvents CalendarEvent[]
   reminders      Reminder[]
@@ -114,14 +144,14 @@ model Department {
 }
 
 model Role {
-  id              String           @id @default(cuid())
-  code            String           @unique
-  name            String
-  departmentCode  DepartmentCode?
-  users           User[]
-  permissions     RolePermission[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id             String           @id @default(cuid())
+  code           String           @unique
+  name           String
+  departmentCode DepartmentCode?
+  users          User[]
+  permissions    RolePermission[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 }
 
 model Permission {
@@ -141,72 +171,88 @@ model RolePermission {
 }
 
 model User {
-  id                String             @id @default(cuid())
-  hotelId           String
-  departmentId      String
-  roleId            String
-  username          String             @unique
-  email             String             @unique
-  passwordHash      String
-  fullName          String
-  locale            String             @default("tr")
-  moduleAccessJson  String             @default("{}")
-  twoFactorEnabled  Boolean            @default(false)
-  isActive          Boolean            @default(true)
-  lastLoginAt       DateTime?
-  deletedAt         DateTime?
-  hotel             Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  department        Department         @relation(fields: [departmentId], references: [id])
-  role              Role               @relation(fields: [roleId], references: [id])
-  staffProfile      StaffProfile?
-  sessions          AuthSession[]
-  loginHistory      LoginHistory[]
-  createdWorkOrders WorkOrder[]        @relation("CreatedWorkOrders")
-  assignedWorkOrders WorkOrder[]       @relation("AssignedWorkOrders")
-  comments          Comment[]
-  auditLogs         AuditLog[]
-  notifications     Notification[]
-  pushDevices       PushDevice[]
-  createdReminders  Reminder[]          @relation("CreatedReminders")
-  assignedReminders Reminder[]          @relation("AssignedReminders")
-  createdManagementRequests ManagementRequest[] @relation("CreatedManagementRequests")
-  receivedManagementRequests ManagementRequest[] @relation("ReceivedManagementRequests")
-  relatedManagementRequests ManagementRequest[] @relation("RelatedManagementRequests")
-  readManagementRequests ManagementRequest[] @relation("ReadManagementRequests")
-  createdOperationDocuments OperationDocument[] @relation("CreatedOperationDocuments")
-  operationDocumentReads OperationDocumentRead[] @relation("OperationDocumentReads")
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id                         String                  @id @default(cuid())
+  accountId                  String?                 @unique
+  hotelId                    String
+  departmentId               String
+  roleId                     String
+  username                   String                  @unique
+  email                      String                  @unique
+  passwordHash               String
+  fullName                   String
+  locale                     String                  @default("tr")
+  moduleAccessJson           String                  @default("{}")
+  shiftTrackingEnabled       Boolean                 @default(true)
+  twoFactorEnabled           Boolean                 @default(false)
+  isActive                   Boolean                 @default(true)
+  lastLoginAt                DateTime?
+  deletedAt                  DateTime?
+  hotel                      Hotel                   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department                 Department              @relation(fields: [departmentId], references: [id])
+  role                       Role                    @relation(fields: [roleId], references: [id])
+  staffProfile               StaffProfile?
+  sessions                   AuthSession[]
+  loginHistory               LoginHistory[]
+  shiftSessions              ShiftSession[]
+  shiftPanelEditors          ShiftPanelEditor[]      @relation("ShiftPanelEditors")
+  shiftPanelCells            ShiftPanelCell[]        @relation("ShiftPanelCells")
+  createdShiftPanelEntries   ShiftPanelEntry[]       @relation("CreatedShiftPanelEntries")
+  updatedShiftPanelEntries   ShiftPanelEntry[]       @relation("UpdatedShiftPanelEntries")
+  updatedShiftPanelCells     ShiftPanelCell[]        @relation("UpdatedShiftPanelCells")
+  createdWorkOrders          WorkOrder[]             @relation("CreatedWorkOrders")
+  assignedWorkOrders         WorkOrder[]             @relation("AssignedWorkOrders")
+  comments                   Comment[]
+  auditLogs                  AuditLog[]
+  notifications              Notification[]
+  pushDevices                PushDevice[]
+  createdReminders           Reminder[]              @relation("CreatedReminders")
+  assignedReminders          Reminder[]              @relation("AssignedReminders")
+  createdManagementRequests  ManagementRequest[]     @relation("CreatedManagementRequests")
+  receivedManagementRequests ManagementRequest[]     @relation("ReceivedManagementRequests")
+  relatedManagementRequests  ManagementRequest[]     @relation("RelatedManagementRequests")
+  readManagementRequests     ManagementRequest[]     @relation("ReadManagementRequests")
+  createdOperationDocuments  OperationDocument[]     @relation("CreatedOperationDocuments")
+  operationDocumentReads     OperationDocumentRead[] @relation("OperationDocumentReads")
+  accountIdReservation       AccountIdReservation?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
 
   @@index([hotelId, departmentId])
   @@index([roleId])
 }
 
+model AccountIdReservation {
+  accountId String   @id
+  userId    String?  @unique
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+}
+
 model StaffProfile {
-  id              String    @id @default(cuid())
-  userId          String    @unique
-  employeeNo      String    @unique
-  title           String
-  hireDate        DateTime
-  payrollType     String?
-  certificateDue  DateTime?
+  id                  String               @id @default(cuid())
+  userId              String               @unique
+  employeeNo          String               @unique
+  title               String
+  hireDate            DateTime
+  payrollType         String?
+  certificateDue      DateTime?
   digitalSignatureUrl String?
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  leaveRequests   LeaveRequest[]
-  trainings       TrainingAssignment[]
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveRequests       LeaveRequest[]
+  trainings           TrainingAssignment[]
 }
 
 model LeaveRequest {
-  id             String          @id @default(cuid())
+  id             String         @id @default(cuid())
   staffProfileId String
   startDate      DateTime
   endDate        DateTime
   reason         String
-  status         ApprovalStatus  @default(PENDING)
-  staffProfile   StaffProfile    @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  status         ApprovalStatus @default(PENDING)
+  staffProfile   StaffProfile   @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
   approvals      Approval[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 }
 
 model TrainingAssignment {
@@ -219,36 +265,36 @@ model TrainingAssignment {
 }
 
 model WorkOrder {
-  id             String             @id @default(cuid())
-  code           String             @unique
-  type           WorkOrderType      @default(JOB)
-  departmentId   String
-  createdById    String
-  assignedToId   String?
-  title          String
-  description    String?
-  room           String?
-  location       String
-  tags           String?
-  guestImpact    Boolean            @default(false)
-  shiftCode      String?
-  checklistJson  String             @default("[]")
-  priority       Priority           @default(MEDIUM)
-  status         WorkOrderStatus    @default(REPORTED)
-  slaDueAt       DateTime?
-  completedAt    DateTime?
-  deletedAt      DateTime?
-  department     Department         @relation(fields: [departmentId], references: [id])
-  createdBy      User               @relation("CreatedWorkOrders", fields: [createdById], references: [id])
-  assignedTo     User?              @relation("AssignedWorkOrders", fields: [assignedToId], references: [id])
-  timeline       WorkOrderTimeline[]
-  comments       Comment[]
-  attachments    Attachment[]
+  id               String              @id @default(cuid())
+  code             String              @unique
+  type             WorkOrderType       @default(JOB)
+  departmentId     String
+  createdById      String
+  assignedToId     String?
+  title            String
+  description      String?
+  room             String?
+  location         String
+  tags             String?
+  guestImpact      Boolean             @default(false)
+  shiftCode        String?
+  checklistJson    String              @default("[]")
+  priority         Priority            @default(MEDIUM)
+  status           WorkOrderStatus     @default(REPORTED)
+  slaDueAt         DateTime?
+  completedAt      DateTime?
+  deletedAt        DateTime?
+  department       Department          @relation(fields: [departmentId], references: [id])
+  createdBy        User                @relation("CreatedWorkOrders", fields: [createdById], references: [id])
+  assignedTo       User?               @relation("AssignedWorkOrders", fields: [assignedToId], references: [id])
+  timeline         WorkOrderTimeline[]
+  comments         Comment[]
+  attachments      Attachment[]
   purchaseRequests PurchaseRequest[]
-  approvals      Approval[]
-  auditLogs      AuditLog[]
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  approvals        Approval[]
+  auditLogs        AuditLog[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
   @@index([departmentId, status])
   @@index([assignedToId])
@@ -316,15 +362,15 @@ model CalendarEvent {
 }
 
 model Room {
-  id           String       @id @default(cuid())
+  id           String              @id @default(cuid())
   hotelId      String
   departmentId String?
   number       String
   floor        Int
   status       String
-  vipBlocked   Boolean      @default(false)
-  hotel        Hotel        @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  department   Department?  @relation(fields: [departmentId], references: [id])
+  vipBlocked   Boolean             @default(false)
+  hotel        Hotel               @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department   Department?         @relation(fields: [departmentId], references: [id])
   histories    RoomStatusHistory[]
 
   @@unique([hotelId, number])
@@ -341,17 +387,17 @@ model RoomStatusHistory {
 }
 
 model Asset {
-  id           String      @id @default(cuid())
-  hotelId      String
-  departmentId String
-  code         String      @unique
-  name         String
-  location     String
+  id            String     @id @default(cuid())
+  hotelId       String
+  departmentId  String
+  code          String     @unique
+  name          String
+  location      String
   warrantyUntil DateTime?
-  hotel        Hotel       @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  department   Department @relation(fields: [departmentId], references: [id])
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  hotel         Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department    Department @relation(fields: [departmentId], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 }
 
 model Approval {
@@ -418,32 +464,32 @@ model Notification {
 }
 
 model Reminder {
-  id                 String      @id @default(cuid())
-  hotelId            String
-  departmentId       String
-  createdById        String
-  assignedToId       String
-  title              String
-  body               String?
-  photosJson         String      @default("[]")
-  remindAt           DateTime
-  oneHourNotifiedAt  DateTime?
-  dueNotifiedAt      DateTime?
-  completedAt        DateTime?
-  deletedAt          DateTime?
-  hotel              Hotel       @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  department         Department  @relation(fields: [departmentId], references: [id])
-  createdBy          User        @relation("CreatedReminders", fields: [createdById], references: [id])
-  assignedTo         User        @relation("AssignedReminders", fields: [assignedToId], references: [id])
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  id                String     @id @default(cuid())
+  hotelId           String
+  departmentId      String
+  createdById       String
+  assignedToId      String
+  title             String
+  body              String?
+  photosJson        String     @default("[]")
+  remindAt          DateTime
+  oneHourNotifiedAt DateTime?
+  dueNotifiedAt     DateTime?
+  completedAt       DateTime?
+  deletedAt         DateTime?
+  hotel             Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department        Department @relation(fields: [departmentId], references: [id])
+  createdBy         User       @relation("CreatedReminders", fields: [createdById], references: [id])
+  assignedTo        User       @relation("AssignedReminders", fields: [assignedToId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
   @@index([hotelId, departmentId, remindAt])
   @@index([assignedToId, remindAt])
 }
 
 model ManagementRequest {
-  id            String      @id @default(cuid())
+  id            String    @id @default(cuid())
   hotelId       String
   createdById   String
   recipientId   String
@@ -451,16 +497,16 @@ model ManagementRequest {
   readById      String?
   title         String
   body          String?
-  status        String      @default("OPEN")
+  status        String    @default("OPEN")
   readAt        DateTime?
   deletedAt     DateTime?
-  hotel         Hotel       @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  createdBy     User        @relation("CreatedManagementRequests", fields: [createdById], references: [id])
-  recipient     User        @relation("ReceivedManagementRequests", fields: [recipientId], references: [id])
-  relatedUser   User?       @relation("RelatedManagementRequests", fields: [relatedUserId], references: [id])
-  readBy        User?       @relation("ReadManagementRequests", fields: [readById], references: [id])
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  hotel         Hotel     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  createdBy     User      @relation("CreatedManagementRequests", fields: [createdById], references: [id])
+  recipient     User      @relation("ReceivedManagementRequests", fields: [recipientId], references: [id])
+  relatedUser   User?     @relation("RelatedManagementRequests", fields: [relatedUserId], references: [id])
+  readBy        User?     @relation("ReadManagementRequests", fields: [readById], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([hotelId, createdById, recipientId, relatedUserId])
   @@index([recipientId, status])
@@ -503,28 +549,120 @@ model OperationDocumentRead {
 }
 
 model AuthSession {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   userId       String
-  refreshToken String   @unique
+  refreshToken String    @unique
   ipAddress    String
   userAgent    String
   expiresAt    DateTime
   revokedAt    DateTime?
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
 }
 
 model LoginHistory {
-  id          String   @id @default(cuid())
-  userId      String
-  ipAddress   String
-  userAgent   String
-  success     Boolean
-  reason      String?
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  ipAddress String
+  userAgent String
+  success   Boolean
+  reason    String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+model ShiftSession {
+  id             String     @id @default(cuid())
+  userId         String
+  hotelId        String
+  departmentId   String
+  startedAt      DateTime   @default(now())
+  endedAt        DateTime?
+  startIpAddress String?
+  endIpAddress   String?
+  userAgent      String?
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hotel          Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department     Department @relation(fields: [departmentId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([userId, endedAt])
+  @@index([hotelId, startedAt])
+}
+
+model ShiftPanel {
+  id           String             @id @default(cuid())
+  hotelId      String
+  departmentId String
+  enabled      Boolean            @default(false)
+  hotel        Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department   Department         @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  editors      ShiftPanelEditor[]
+  entries      ShiftPanelEntry[]
+  cells        ShiftPanelCell[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@unique([hotelId, departmentId])
+  @@index([hotelId, enabled])
+}
+
+model ShiftPanelEditor {
+  panelId   String
+  userId    String
+  panel     ShiftPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  user      User       @relation("ShiftPanelEditors", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([panelId, userId])
+  @@index([userId])
+}
+
+model ShiftPanelEntry {
+  id           String     @id @default(cuid())
+  panelId      String
+  date         DateTime
+  shiftName    String     @default("GUNLUK")
+  staffingNote String     @default("")
+  summary      String     @default("")
+  openIssues   String     @default("")
+  handoverNote String     @default("")
+  createdById  String?
+  updatedById  String?
+  panel        ShiftPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  createdBy    User?      @relation("CreatedShiftPanelEntries", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?      @relation("UpdatedShiftPanelEntries", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([panelId, date])
+  @@index([date])
+  @@index([updatedById])
+}
+
+model ShiftPanelCell {
+  id          String     @id @default(cuid())
+  panelId     String
+  userId      String
+  date        DateTime
+  code        String     @default("")
+  startTime   String     @default("")
+  endTime     String     @default("")
+  note        String     @default("")
+  color       String     @default("auto")
+  updatedById String?
+  panel       ShiftPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  user        User       @relation("ShiftPanelCells", fields: [userId], references: [id], onDelete: Cascade)
+  updatedBy   User?      @relation("UpdatedShiftPanelCells", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([panelId, userId, date])
+  @@index([userId, date])
+  @@index([updatedById])
 }
 
 model AuditLog {

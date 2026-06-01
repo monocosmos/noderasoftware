@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Download,
   FileText,
   Home,
   ImageIcon,
@@ -54,6 +55,7 @@ type ModuleId =
   | "housekeeping"
   | "departmentCalendar"
   | "reminders"
+  | "shiftPanels"
   | "users"
   | "reports"
   | "settings"
@@ -90,6 +92,17 @@ type FeatureAccessId =
 type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
 type ModuleAccess = Record<AccessId, boolean>;
 type PageTransitionDirection = "none" | "forward" | "back";
+type LogoutRememberPrompt = {
+  mode: "api" | "local";
+  returnToPlatformLogin: boolean;
+};
+type ActiveRosterCell = {
+  departmentId: string;
+  userId: string;
+  date: string;
+  top: number;
+  left: number;
+};
 
 type HotelOpsAndroidBridge = {
   app?: () => string;
@@ -98,9 +111,16 @@ type HotelOpsAndroidBridge = {
   versionCode?: () => number;
   buildNumber?: () => number;
   channel?: () => string;
+  getAuthToken?: () => string;
+  setAuthToken?: (token?: string) => void;
+  clearAuthToken?: () => void;
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
   saveImageToGallery?: (dataUrl?: string, fileName?: string) => boolean;
+  startShift?: (employeeName?: string, departmentName?: string) => boolean;
+  endShift?: () => boolean;
+  isShiftActive?: () => boolean;
+  shiftStartedAt?: () => number;
 };
 
 type HotelOpsDesktopBridge = {
@@ -159,6 +179,7 @@ type AppUpdateNotice = {
 
 type DemoUser = {
   id: string;
+  accountId?: string;
   hotelId?: string;
   hotelCode?: string;
   hotelName?: string;
@@ -169,6 +190,7 @@ type DemoUser = {
   roleId: RoleId;
   departmentId: string;
   moduleAccess?: Partial<ModuleAccess>;
+  shiftTrackingEnabled?: boolean;
   active: boolean;
   lastLogin: string;
 };
@@ -187,6 +209,8 @@ type JobRecord = {
   guestImpact?: boolean;
   slaRisk?: boolean;
   createdBy: string;
+  createdByUserId?: string;
+  createdByAccountId?: string;
   createdByDepartmentId?: string;
   description: string;
   tags: string;
@@ -352,6 +376,76 @@ type NotificationRecord = {
   createdAt: string;
 };
 
+type ShiftRecord = {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+};
+
+type ShiftPanelEntryRecord = {
+  id: string;
+  date: string;
+  shiftName: string;
+  staffingNote: string;
+  summary: string;
+  openIssues: string;
+  handoverNote: string;
+  updatedAt: string;
+  updatedByName: string;
+};
+
+type ShiftPanelCellRecord = {
+  id: string;
+  userId: string;
+  date: string;
+  code: string;
+  startTime: string;
+  endTime: string;
+  note: string;
+  color: string;
+  updatedAt: string;
+};
+
+type ShiftPanelRecord = {
+  id: string;
+  departmentId: string;
+  departmentName: string;
+  enabled: boolean;
+  canEdit: boolean;
+  editorUserIds: string[];
+  editors: DemoUser[];
+  staff: DemoUser[];
+  cells: ShiftPanelCellRecord[];
+  entry: ShiftPanelEntryRecord | null;
+};
+
+type ShiftPanelCellDraft = {
+  code: string;
+  startTime: string;
+  endTime: string;
+  note: string;
+  color: string;
+};
+
+type ShiftPanelConfigDraft = {
+  enabled: boolean;
+  editorUserIds: string[];
+};
+
+type CredentialNoticeItem = {
+  label: string;
+  username: string;
+  password: string;
+  accountId?: string;
+};
+
+type CredentialNotice = {
+  id: string;
+  title: string;
+  description: string;
+  items: CredentialNoticeItem[];
+};
+
 type DepartmentRecord = {
   id: string;
   departmentId: string;
@@ -360,8 +454,13 @@ type DepartmentRecord = {
   createdAt: string;
 };
 
+type HotelDepartmentRecord = DepartmentRecord & {
+  users: DemoUser[];
+};
+
 type HotelRecord = {
   id: string;
+  publicId: string;
   name: string;
   code: string;
   timezone: string;
@@ -374,16 +473,12 @@ type HotelRecord = {
     managementRequests: number;
     operationDocuments: number;
   };
+  departments: HotelDepartmentRecord[];
 };
 
 type HotelDraft = {
   name: string;
-  code: string;
   timezone: string;
-  adminFullName: string;
-  adminUsername: string;
-  adminEmail: string;
-  adminPassword: string;
 };
 
 type UserDraft = {
@@ -394,6 +489,7 @@ type UserDraft = {
   password: string;
   roleId: RoleId;
   departmentId: string;
+  shiftTrackingEnabled: boolean;
   moduleAccess: ModuleAccess;
 };
 
@@ -402,16 +498,44 @@ const STORAGE_USERS = "hotelops.classic.users";
 const STORAGE_JOBS = "hotelops.classic.jobs";
 const STORAGE_TOKEN = "hotelops.api.token";
 const SESSION_TOKEN = "hotelops.api.session-token";
+const STORAGE_LOGIN_CREDENTIALS = "hotelops.login.credentials";
+const STORAGE_LOGIN_PROFILE = "hotelops.login.profile";
+const STORAGE_LOGIN_ACCOUNTS = "hotelops.login.accounts";
+const STORAGE_LOGIN_REMEMBER = "hotelops.login.remember";
 const STORAGE_SHELL = "hotelops.shell";
 const HOTEL_BASE_PATH = "/hotel";
+const HOTEL_TIMEZONE_OPTIONS = [
+  "Europe/Istanbul",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "UTC"
+] as const;
 const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
 const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
 const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/reminders"] as const;
 const ALERT_AUTO_DISMISS_SECONDS = 10;
+const MAX_SAVED_LOGIN_ACCOUNTS = 8;
 
 type LoginResponse = {
   token: string;
   user: DemoUser;
+};
+
+type LoginCredentialCache = {
+  username: string;
+  password: string;
+};
+
+type LoginProfileCache = {
+  username: string;
+  fullName: string;
+  accountId?: string;
+  updatedAt: string;
+};
+
+type LoginSavedAccount = LoginProfileCache & {
+  password?: string;
 };
 
 type BootstrapResponse = {
@@ -421,6 +545,24 @@ type BootstrapResponse = {
   reminders: ReminderRecord[];
   departments: DepartmentRecord[];
   notifications: NotificationRecord[];
+  activeShift: ShiftRecord | null;
+};
+
+type MaintenanceStatus = {
+  enabled: boolean;
+  message: string;
+  updatedAt: string;
+  updatedBy?: string | null;
+  source?: string | null;
+};
+
+const DEFAULT_MAINTENANCE_MESSAGE = "Şu an bakım yapılıyor.";
+const DEFAULT_MAINTENANCE_STATUS: MaintenanceStatus = {
+  enabled: false,
+  message: DEFAULT_MAINTENANCE_MESSAGE,
+  updatedAt: new Date(0).toISOString(),
+  updatedBy: null,
+  source: "default"
 };
 
 function normalizeHotelPath(fullPath: string) {
@@ -473,6 +615,43 @@ function apiBaseUrl() {
   if (typeof window === "undefined") return "http://127.0.0.1:4000";
   if (window.location.port === "3000") return `${window.location.protocol}//${window.location.hostname}:4000`;
   return "/api";
+}
+
+function normalizeMaintenanceStatus(value: unknown): MaintenanceStatus {
+  if (!value || typeof value !== "object") return DEFAULT_MAINTENANCE_STATUS;
+  const data = value as Partial<MaintenanceStatus>;
+  return {
+    enabled: Boolean(data.enabled),
+    message: typeof data.message === "string" && data.message.trim() ? data.message.trim() : DEFAULT_MAINTENANCE_MESSAGE,
+    updatedAt: typeof data.updatedAt === "string" && data.updatedAt.trim() ? data.updatedAt : DEFAULT_MAINTENANCE_STATUS.updatedAt,
+    updatedBy: typeof data.updatedBy === "string" && data.updatedBy.trim() ? data.updatedBy.trim() : null,
+    source: typeof data.source === "string" && data.source.trim() ? data.source.trim() : null
+  };
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error("MAINTENANCE_STATUS_UNAVAILABLE");
+    return await response.json() as unknown;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fetchMaintenanceStatus() {
+  const cacheKey = Date.now();
+  try {
+    return normalizeMaintenanceStatus(await fetchJsonWithTimeout(`${apiBaseUrl()}/system/maintenance?_=${cacheKey}`, 4000));
+  } catch {
+    try {
+      return normalizeMaintenanceStatus(await fetchJsonWithTimeout(`/maintenance-status.json?_=${cacheKey}`, 4000));
+    } catch {
+      return DEFAULT_MAINTENANCE_STATUS;
+    }
+  }
 }
 
 function isShellRuntime(value: unknown): value is ShellRuntime {
@@ -657,22 +836,232 @@ function storedApiToken() {
   return localStorage.getItem(STORAGE_TOKEN) || sessionStorage.getItem(SESSION_TOKEN) || "";
 }
 
-function storeApiToken(token: string, remember: boolean) {
-  if (remember) {
-    localStorage.setItem(STORAGE_TOKEN, token);
-    sessionStorage.removeItem(SESSION_TOKEN);
-  } else {
-    sessionStorage.setItem(SESSION_TOKEN, token);
-    localStorage.removeItem(STORAGE_TOKEN);
+function readLoginCredentialCache(): LoginCredentialCache | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(STORAGE_LOGIN_CREDENTIALS);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LoginCredentialCache>;
+    const username = typeof parsed.username === "string" ? parsed.username : "";
+    const password = typeof parsed.password === "string" ? parsed.password : "";
+    if (!username || !password) return null;
+    return { username, password };
+  } catch {
+    return null;
   }
+}
+
+function loginAccountKey(account: Pick<LoginSavedAccount, "username" | "accountId">) {
+  const accountId = account.accountId?.trim();
+  if (accountId) return `id:${accountId}`;
+  return `u:${account.username.trim().toLocaleLowerCase("tr-TR")}`;
+}
+
+function normalizeLoginSavedAccount(value: Partial<LoginSavedAccount>): LoginSavedAccount | null {
+  const username = typeof value.username === "string" ? value.username.trim() : "";
+  const fullName = typeof value.fullName === "string" ? value.fullName.trim() : "";
+  const accountId = typeof value.accountId === "string" ? value.accountId.trim() : "";
+  const password = typeof value.password === "string" ? value.password : "";
+  const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
+  if (!username && !accountId) return null;
+  return {
+    username,
+    fullName: fullName || username || accountId,
+    accountId: accountId || undefined,
+    password: password || undefined,
+    updatedAt: updatedAt || new Date(0).toISOString()
+  };
+}
+
+function readSavedLoginAccounts(): LoginSavedAccount[] {
+  if (typeof window === "undefined") return [];
+
+  const accounts: LoginSavedAccount[] = [];
+  try {
+    const raw = localStorage.getItem(STORAGE_LOGIN_ACCOUNTS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        const account = normalizeLoginSavedAccount(item as Partial<LoginSavedAccount>);
+        if (account) accounts.push(account);
+      }
+    }
+  } catch {
+    // Invalid cache is ignored; legacy single-account cache below can still recover.
+  }
+
+  const legacyProfile = readLoginProfileCache();
+  const legacyCredential = readLoginCredentialCache();
+  const legacyAccount = normalizeLoginSavedAccount({
+    username: legacyProfile?.username || legacyCredential?.username || "",
+    fullName: legacyProfile?.fullName || legacyCredential?.username || "",
+    accountId: legacyProfile?.accountId,
+    password: legacyCredential?.password,
+    updatedAt: legacyProfile?.updatedAt || new Date(0).toISOString()
+  });
+  if (legacyAccount) accounts.push(legacyAccount);
+
+  const byKey = new Map<string, LoginSavedAccount>();
+  for (const account of accounts) {
+    const key = loginAccountKey(account);
+    const existing = byKey.get(key);
+    if (!existing || new Date(account.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+      byKey.set(key, { ...existing, ...account, password: account.password || existing?.password });
+    }
+  }
+
+  return Array.from(byKey.values())
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+    .slice(0, MAX_SAVED_LOGIN_ACCOUNTS);
+}
+
+function writeSavedLoginAccounts(accounts: LoginSavedAccount[]) {
+  if (typeof window === "undefined") return;
+  const normalized = accounts
+    .map((account) => normalizeLoginSavedAccount(account))
+    .filter((account): account is LoginSavedAccount => Boolean(account))
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+    .slice(0, MAX_SAVED_LOGIN_ACCOUNTS);
+  localStorage.setItem(STORAGE_LOGIN_ACCOUNTS, JSON.stringify(normalized));
+  if (normalized.length) {
+    localStorage.setItem(STORAGE_LOGIN_REMEMBER, "1");
+  } else {
+    localStorage.setItem(STORAGE_LOGIN_REMEMBER, "0");
+  }
+}
+
+function readLoginProfileCache(): LoginProfileCache | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(STORAGE_LOGIN_PROFILE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LoginProfileCache>;
+    const username = typeof parsed.username === "string" ? parsed.username.trim() : "";
+    const fullName = typeof parsed.fullName === "string" ? parsed.fullName.trim() : "";
+    const accountId = typeof parsed.accountId === "string" ? parsed.accountId.trim() : "";
+    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : "";
+    if (!username && !accountId) return null;
+    return {
+      username,
+      fullName: fullName || username || accountId,
+      accountId: accountId || undefined,
+      updatedAt
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeLoginProfileCache(user: Pick<DemoUser, "username" | "fullName" | "accountId">) {
+  if (typeof window === "undefined") return false;
+
+  const username = user.username.trim();
+  const accountId = user.accountId?.trim() ?? "";
+  if (!username && !accountId) return false;
+
+  const profile = {
+    username,
+    fullName: user.fullName.trim() || username || accountId,
+    accountId,
+    updatedAt: new Date().toISOString()
+  };
+  const accounts = readSavedLoginAccounts();
+  const key = loginAccountKey(profile);
+  const existing = accounts.find((account) => loginAccountKey(account) === key);
+  writeSavedLoginAccounts([
+    { ...existing, ...profile, password: existing?.password },
+    ...accounts.filter((account) => loginAccountKey(account) !== key)
+  ]);
+  localStorage.setItem(STORAGE_LOGIN_PROFILE, JSON.stringify(profile));
+  return true;
+}
+
+function rememberLoginOnThisDevice(user: Pick<DemoUser, "username" | "fullName" | "accountId">, password: string) {
+  if (typeof window === "undefined") return false;
+  const username = user.username.trim();
+  const accountId = user.accountId?.trim() ?? "";
+  if (!username && !accountId) return false;
+
+  const accounts = readSavedLoginAccounts();
+  const candidate: LoginSavedAccount = {
+    username,
+    fullName: user.fullName.trim() || username || accountId,
+    accountId: accountId || undefined,
+    password: password || accounts.find((account) => loginAccountKey(account) === loginAccountKey({ username, accountId }))?.password,
+    updatedAt: new Date().toISOString()
+  };
+  writeSavedLoginAccounts([
+    candidate,
+    ...accounts.filter((account) => loginAccountKey(account) !== loginAccountKey(candidate))
+  ]);
+  localStorage.setItem(STORAGE_LOGIN_PROFILE, JSON.stringify(candidate));
+  if (candidate.password) {
+    localStorage.setItem(STORAGE_LOGIN_CREDENTIALS, JSON.stringify({ username: candidate.username || candidate.accountId || "", password: candidate.password }));
+  }
+  return true;
+}
+
+function forgetLoginOnThisDevice(user: Pick<DemoUser, "username" | "accountId">) {
+  if (typeof window === "undefined") return;
+  const key = loginAccountKey({ username: user.username, accountId: user.accountId });
+  const remaining = readSavedLoginAccounts().filter((account) => loginAccountKey(account) !== key);
+  writeSavedLoginAccounts(remaining);
+  const legacyProfile = readLoginProfileCache();
+  const legacyCredential = readLoginCredentialCache();
+  if (legacyProfile && loginAccountKey(legacyProfile) === key) localStorage.removeItem(STORAGE_LOGIN_PROFILE);
+  if (legacyCredential && loginAccountKey({ username: legacyCredential.username }) === key) localStorage.removeItem(STORAGE_LOGIN_CREDENTIALS);
+}
+
+function isLoginRememberedOnThisDevice(user: Pick<DemoUser, "username" | "accountId">) {
+  if (typeof window === "undefined") return false;
+  const key = loginAccountKey({ username: user.username, accountId: user.accountId });
+  return readSavedLoginAccounts().some((account) => loginAccountKey(account) === key);
+}
+
+function clearNativeAuthToken() {
+  if (typeof window === "undefined") return;
+
+  try {
+    (window as HotelOpsShellWindow).HotelOpsAndroidShell?.clearAuthToken?.();
+  } catch {
+    // Native bridge cleanup is best effort; browser storage is still cleared.
+  }
+}
+
+function storeApiToken(token: string) {
+  localStorage.setItem(STORAGE_TOKEN, token);
+  sessionStorage.removeItem(SESSION_TOKEN);
   window.dispatchEvent(new CustomEvent("hotelops:auth-token-changed"));
 }
 
 function clearApiToken() {
+  clearNativeAuthToken();
   localStorage.removeItem(STORAGE_TOKEN);
   sessionStorage.removeItem(SESSION_TOKEN);
   localStorage.removeItem(STORAGE_SESSION);
   window.dispatchEvent(new CustomEvent("hotelops:auth-token-changed"));
+}
+
+function startNativeShiftNotification(session: DemoUser, departmentName: string) {
+  if (typeof window === "undefined") return false;
+
+  try {
+    return Boolean((window as HotelOpsShellWindow).HotelOpsAndroidShell?.startShift?.(session.fullName, departmentName));
+  } catch {
+    return false;
+  }
+}
+
+function stopNativeShiftNotification() {
+  if (typeof window === "undefined") return false;
+
+  try {
+    return Boolean((window as HotelOpsShellWindow).HotelOpsAndroidShell?.endShift?.());
+  } catch {
+    return false;
+  }
 }
 
 class ApiRequestError extends Error {
@@ -745,6 +1134,66 @@ function userSaveErrorMessage(error: unknown) {
   }
 
   return "Kullanıcı işlemi tamamlanamadı. Lütfen bilgileri kontrol edip tekrar deneyin.";
+}
+
+function passwordChangeErrorMessage(error: unknown) {
+  if (!isApiRequestError(error)) {
+    return "Şifre değiştirilemedi. Lütfen tekrar deneyin.";
+  }
+
+  if (error.code === "INVALID_CURRENT_PASSWORD") {
+    return "Mevcut şifre hatalı.";
+  }
+
+  if (error.code === "VALIDATION_ERROR" || error.status === 422) {
+    return "Yeni şifre en az 6 karakter olmalı.";
+  }
+
+  if (error.code === "NETWORK_ERROR" || error.status === 0) {
+    return "API servisine ulaşılamıyor. Sunucu veya ağ bağlantısını kontrol edin.";
+  }
+
+  if (error.status === 401) {
+    return "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.";
+  }
+
+  if (error.status >= 500) {
+    return "API servisinde geçici bir hata oluştu. Lütfen birkaç saniye sonra tekrar deneyin.";
+  }
+
+  return "Şifre değiştirilemedi. Lütfen tekrar deneyin.";
+}
+
+function profileUpdateErrorMessage(error: unknown) {
+  if (!isApiRequestError(error)) {
+    return "Profil güncellenemedi. Lütfen tekrar deneyin.";
+  }
+
+  if (error.code === "INVALID_CURRENT_PASSWORD") {
+    return "Mevcut şifre hatalı.";
+  }
+
+  if (error.code === "DUPLICATE_USERNAME") {
+    return "Bu kullanıcı adı veya giriş değeri başka bir hesapta kullanılıyor.";
+  }
+
+  if (error.code === "PROFILE_USERNAME_DENIED") {
+    return "Bu hesabın kullanıcı adı değiştirilemez.";
+  }
+
+  if (error.code === "VALIDATION_ERROR" || error.status === 422) {
+    return "Kullanıcı adı en az 2 karakter olmalı.";
+  }
+
+  if (error.code === "NETWORK_ERROR" || error.status === 0) {
+    return "API servisine ulaşılamıyor. Sunucu veya ağ bağlantısını kontrol edin.";
+  }
+
+  if (error.status >= 500) {
+    return "API servisinde geçici bir hata oluştu. Lütfen birkaç saniye sonra tekrar deneyin.";
+  }
+
+  return "Profil güncellenemedi. Lütfen tekrar deneyin.";
 }
 
 async function apiRequest<T>(path: string, options: RequestInit = {}) {
@@ -1119,6 +1568,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "housekeeping", label: "HK Planlı İşler", group: "Günlük Operasyon" },
   { id: "departmentCalendar", label: "Departman Takvimi", group: "Takvim & Hatırlatma" },
   { id: "reminders", label: "Hatırlatmalar", group: "Takvim & Hatırlatma" },
+  { id: "shiftPanels", label: "Vardiya Paneli", group: "Takvim & Hatırlatma" },
   { id: "managementRequests", label: "Talepler", group: "Takvim & Hatırlatma" },
   { id: "inventory", label: "Envanter ve Depo", group: "Yönetim" },
   { id: "roomStatus", label: "Oda Durum Yönetimi", group: "Yönetim" },
@@ -1723,10 +2173,18 @@ const appDownloadGroups = [
         download: true
       },
       {
-        href: "",
+        href: "/downloads/HotelOps-Setup-V1-arm64.exe",
         icon: WindowsLogo,
         label: "Windows ARM64",
-        meta: "Yakında"
+        meta: "Kurulum",
+        download: true
+      },
+      {
+        href: "/downloads/HotelOps-Portable-V1-arm64.exe",
+        icon: WindowsLogo,
+        label: "Portable ARM64",
+        meta: "Kurulumsuz",
+        download: true
       }
     ]
   },
@@ -1756,16 +2214,18 @@ const appDownloadGroups = [
     icon: LinuxLogo,
     items: [
       {
-        href: "",
+        href: "/downloads/HotelOps-Linux-V1-x64.tar.gz",
         icon: LinuxLogo,
         label: "Linux 64bit",
-        meta: "Yakında"
+        meta: "tar.gz",
+        download: true
       },
       {
-        href: "",
+        href: "/downloads/HotelOps-Linux-V1-arm64.tar.gz",
         icon: LinuxLogo,
         label: "Linux ARM64",
-        meta: "Yakında"
+        meta: "tar.gz",
+        download: true
       }
     ]
   },
@@ -1775,10 +2235,18 @@ const appDownloadGroups = [
     icon: AppleLogo,
     items: [
       {
-        href: "",
+        href: "/downloads/HotelOps-Mac-V1-arm64.dmg",
         icon: AppleLogo,
-        label: "MacBook",
-        meta: "Yakında"
+        label: "Mac ARM64",
+        meta: "Apple Silicon",
+        download: true
+      },
+      {
+        href: "/downloads/HotelOps-Mac-V1-x64.dmg",
+        icon: AppleLogo,
+        label: "Mac Intel",
+        meta: "DMG",
+        download: true
       },
       {
         href: "",
@@ -2049,6 +2517,68 @@ function downloadExcelWorkbook(filename: string, sections: Array<{ title: string
   URL.revokeObjectURL(url);
 }
 
+function downloadShiftRosterExcel(
+  filename: string,
+  title: string,
+  panel: ShiftPanelRecord,
+  days: string[],
+  draftFor: (departmentId: string, userId: string, date: string) => ShiftPanelCellDraft
+) {
+  const cellHtml = (draft: ShiftPanelCellDraft) => {
+    const display = rosterDraftDisplay(draft);
+    return display ? display.split("\n").map(excelCell).join("<br />") : "";
+  };
+  const rows = panel.staff.map((user) => `
+    <tr>
+      <td class="person">${excelCell(user.fullName)}</td>
+      ${days.map((date) => {
+        const draft = draftFor(panel.departmentId, user.id, date);
+        return `<td class="shift ${excelCell(rosterDraftColor(draft))}">${cellHtml(draft)}</td>`;
+      }).join("")}
+    </tr>
+  `).join("");
+  const html = `<!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Arial, sans-serif; color: #111827; }
+        h1 { font-size: 18px; margin: 0 0 12px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #4b5563; padding: 5px 7px; font-size: 11px; text-align: center; vertical-align: middle; mso-number-format: "\\@"; }
+        th { background: #a3a3a3; color: #111827; font-weight: 800; }
+        .person { background: #a3a3a3; text-align: left; font-weight: 800; min-width: 170px; }
+        .shift { min-width: 58px; font-weight: 800; }
+        .day { background: #ffffff; }
+        .evening { background: #f7b718; }
+        .night { background: #1f4e79; color: #ffffff; }
+        .off, .leave { background: #ffff00; font-size: 18px; }
+        .sick { background: #b04040; color: #ffffff; font-size: 14px; }
+        .empty { background: #000000; color: #ffffff; }
+      </style>
+    </head>
+    <body>
+      <h1>${excelCell(title)}</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>Personel</th>
+            ${days.map((date) => `<th>${excelCell(shortWeekdayLabel(date))}<br />${excelCell(dateDayNumber(date))}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td class="person">Personel yok</td><td colspan="${days.length}"></td></tr>`}</tbody>
+      </table>
+    </body>
+  </html>`;
+  const blob = new Blob([`\uFEFF${html}`], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".xls") ? filename : `${filename}.xls`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function isTechnicalDepartmentUser(user: Pick<DemoUser, "departmentId">) {
   return user.departmentId === "technical";
 }
@@ -2108,8 +2638,10 @@ function canTrackDepartmentOriginatedJobs(user: Pick<DemoUser, "roleId">) {
   return user.roleId !== "staff";
 }
 
-function canViewOriginatedJob(user: DemoUser, job: Pick<JobRecord, "createdBy" | "createdByDepartmentId">) {
-  if (job.createdBy === user.username) return true;
+function canViewOriginatedJob(user: DemoUser, job: Pick<JobRecord, "createdBy" | "createdByUserId" | "createdByAccountId" | "createdByDepartmentId">) {
+  if (job.createdByUserId === user.id) return true;
+  if (job.createdByAccountId && job.createdByAccountId === user.accountId) return true;
+  if (!job.createdByUserId && !job.createdByAccountId && job.createdBy === user.username) return true;
   return canTrackDepartmentOriginatedJobs(user) && job.createdByDepartmentId === user.departmentId;
 }
 
@@ -2199,6 +2731,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       housekeeping: false,
       departmentCalendar: false,
       reminders: false,
+      shiftPanels: false,
       users: false,
       reports: false,
       settings: false,
@@ -2246,6 +2779,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     housekeeping: canUseHousekeeping,
     departmentCalendar: true,
     reminders: true,
+    shiftPanels: true,
     inventory: isManager || ["technicalManager", "technicalChief", "hkManager", "fnbManager"].includes(user.roleId),
     roomStatus: isManager || user.departmentId === "housekeeping" || ["hkManager", "floorChief", "frontOfficeManager"].includes(user.roleId),
     lostFound: isManager || ["frontOfficeManager", "securityManager", "hkManager", "floorChief"].includes(user.roleId),
@@ -2287,6 +2821,82 @@ function resolvedModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "
 
 function canUseAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAccess">, accessId: AccessId) {
   return resolvedModuleAccess(user)[accessId];
+}
+
+function canUseShiftTracking(user: Pick<DemoUser, "shiftTrackingEnabled">) {
+  return user.shiftTrackingEnabled !== false;
+}
+
+function canConfigureShiftPanels(user: Pick<DemoUser, "roleId">) {
+  return user.roleId === "hrManager";
+}
+
+const shiftRosterPresets: Array<{ id: string; label: string; code: string; startTime: string; endTime: string; color: string }> = [
+  { id: "day", label: "08:00-16:30", code: "", startTime: "08:00", endTime: "16:30", color: "day" },
+  { id: "mid", label: "13:00-21:30", code: "", startTime: "13:00", endTime: "21:30", color: "evening" },
+  { id: "evening", label: "14:30-23:00", code: "", startTime: "14:30", endTime: "23:00", color: "evening" },
+  { id: "night", label: "23:00-07:30", code: "", startTime: "23:00", endTime: "07:30", color: "night" },
+  { id: "off", label: "O", code: "O", startTime: "", endTime: "", color: "off" },
+  { id: "leave", label: "V", code: "V", startTime: "", endTime: "", color: "leave" },
+  { id: "sick", label: "B", code: "B", startTime: "", endTime: "", color: "sick" },
+  { id: "empty", label: "Boş", code: "", startTime: "", endTime: "", color: "empty" }
+];
+
+function emptyShiftPanelCellDraft(): ShiftPanelCellDraft {
+  return { code: "", startTime: "", endTime: "", note: "", color: "empty" };
+}
+
+function cellRecordToDraft(cell?: ShiftPanelCellRecord | null): ShiftPanelCellDraft {
+  if (!cell) return emptyShiftPanelCellDraft();
+  return {
+    code: cell.code || "",
+    startTime: cell.startTime || "",
+    endTime: cell.endTime || "",
+    note: cell.note || "",
+    color: cell.color || "auto"
+  };
+}
+
+function rosterCellKey(departmentId: string, userId: string, date: string) {
+  return `${departmentId}::${userId}::${date}`;
+}
+
+function rosterDraftDisplay(draft: ShiftPanelCellDraft) {
+  if (draft.code) return draft.code;
+  if (draft.startTime || draft.endTime) return `${draft.startTime}\n${draft.endTime}`;
+  return "";
+}
+
+function rosterDraftColor(draft: ShiftPanelCellDraft) {
+  if (draft.color && draft.color !== "auto") return draft.color;
+  if (draft.code === "O") return "off";
+  if (draft.code === "V") return "leave";
+  if (draft.code === "B") return "sick";
+  if (draft.startTime.startsWith("23")) return "night";
+  if (draft.startTime.startsWith("13") || draft.startTime.startsWith("14")) return "evening";
+  if (draft.startTime || draft.endTime) return "day";
+  return "empty";
+}
+
+function rosterPresetMatchesDraft(preset: (typeof shiftRosterPresets)[number], draft: ShiftPanelCellDraft) {
+  return (
+    preset.code === draft.code &&
+    preset.startTime === draft.startTime &&
+    preset.endTime === draft.endTime &&
+    preset.color === rosterDraftColor(draft)
+  );
+}
+
+function rosterPresetToDraft(preset: (typeof shiftRosterPresets)[number]): ShiftPanelCellDraft {
+  return { code: preset.code, startTime: preset.startTime, endTime: preset.endTime, note: "", color: preset.color };
+}
+
+function dateDayNumber(date: string) {
+  return String(Number(date.slice(8, 10)));
+}
+
+function shortWeekdayLabel(date: string) {
+  return new Intl.DateTimeFormat("tr-TR", { weekday: "short", timeZone: "UTC" }).format(new Date(`${date}T00:00:00.000Z`));
 }
 
 function canUseModule(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAccess">, moduleId: ModuleId) {
@@ -2387,6 +2997,7 @@ function newUserDraft(): UserDraft {
     password: "",
     roleId,
     departmentId,
+    shiftTrackingEnabled: true,
     moduleAccess: defaultModuleAccess({ roleId, departmentId })
   };
 }
@@ -2394,30 +3005,8 @@ function newUserDraft(): UserDraft {
 function newHotelDraft(): HotelDraft {
   return {
     name: "",
-    code: "",
-    timezone: "Europe/Istanbul",
-    adminFullName: "",
-    adminUsername: "",
-    adminEmail: "",
-    adminPassword: ""
+    timezone: "Europe/Istanbul"
   };
-}
-
-function normalizeHotelCodeInput(value: string) {
-  return value
-    .trim()
-    .replace(/[İIı]/g, "I")
-    .replace(/[Şş]/g, "S")
-    .replace(/[Ğğ]/g, "G")
-    .replace(/[Üü]/g, "U")
-    .replace(/[Öö]/g, "O")
-    .replace(/[Çç]/g, "C")
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 32);
 }
 
 function isPlatformPanelPath(path: string) {
@@ -2439,6 +3028,7 @@ export function HotelOpsSystem() {
   const [managementRequests, setManagementRequests] = useState<ManagementRequestRecord[]>([]);
   const [operationDocuments, setOperationDocuments] = useState<OperationDocumentRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [activeShift, setActiveShift] = useState<ShiftRecord | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<DemoUser[]>([]);
   const [managementRequestRecipients, setManagementRequestRecipients] = useState<DemoUser[]>([]);
   const [departmentAssignees, setDepartmentAssignees] = useState<DemoUser[]>([]);
@@ -2448,10 +3038,14 @@ export function HotelOpsSystem() {
   const [alert, setAlertMessage] = useState<string>("");
   const [alertResetKey, setAlertResetKey] = useState(0);
   const [alertSecondsRemaining, setAlertSecondsRemaining] = useState(ALERT_AUTO_DISMISS_SECONDS);
+  const [credentialNotice, setCredentialNotice] = useState<CredentialNotice | null>(null);
   const [loginError, setLoginError] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [remember, setRemember] = useState(false);
+  const [savedLoginAccounts, setSavedLoginAccounts] = useState<LoginSavedAccount[]>([]);
+  const [savedAccountsModalOpen, setSavedAccountsModalOpen] = useState(false);
+  const [logoutRememberPrompt, setLogoutRememberPrompt] = useState<LogoutRememberPrompt | null>(null);
+  const [logoutInProgress, setLogoutInProgress] = useState(false);
   const [filters, setFilters] = useState({
     search: "",
     status: "",
@@ -2471,9 +3065,11 @@ export function HotelOpsSystem() {
   const [userDraft, setUserDraft] = useState<UserDraft>(() => newUserDraft());
   const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
+  const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus>(DEFAULT_MAINTENANCE_STATUS);
   const pathRef = useRef("/");
   const didSyncInitialPathRef = useRef(false);
   const appUpdateNotifiedRef = useRef("");
+  const lastAuthenticatedPasswordRef = useRef("");
 
   const setAlert = useCallback((value: string) => {
     setAlertMessage(value);
@@ -2484,6 +3080,34 @@ export function HotelOpsSystem() {
   const dismissAlert = useCallback(() => {
     setAlertMessage("");
     setAlertResetKey((current) => current + 1);
+  }, []);
+
+  const refreshMaintenanceStatus = useCallback(async () => {
+    const status = await fetchMaintenanceStatus();
+    setMaintenanceStatus(status);
+    return status;
+  }, []);
+
+  const showCredentialNotice = useCallback((notice: Omit<CredentialNotice, "id">) => {
+    setCredentialNotice({ ...notice, id: `${Date.now()}-${Math.random().toString(16).slice(2)}` });
+  }, []);
+
+  const refreshLoginCacheState = useCallback(() => {
+    setSavedLoginAccounts(readSavedLoginAccounts());
+  }, []);
+
+  const rememberAuthenticatedPassword = useCallback((user: DemoUser, password: string) => {
+    lastAuthenticatedPasswordRef.current = password;
+    if (isLoginRememberedOnThisDevice(user)) {
+      rememberLoginOnThisDevice(user, password);
+      refreshLoginCacheState();
+    }
+  }, [refreshLoginCacheState]);
+
+  const fillSavedLoginAccount = useCallback((account: LoginSavedAccount) => {
+    setLoginUsername(account.username || account.accountId || "");
+    setLoginPassword(account.password ?? "");
+    setLoginError("");
   }, []);
 
   function applyPath(nextPath: string) {
@@ -2523,8 +3147,25 @@ export function HotelOpsSystem() {
   }, [alert, alertResetKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const status = await fetchMaintenanceStatus();
+      if (!cancelled) setMaintenanceStatus(status);
+    };
+    void load();
+    const intervalId = window.setInterval(load, 30_000);
+    window.addEventListener("focus", load);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", load);
+    };
+  }, []);
+
+  useEffect(() => {
     const syncPath = () => applyPath(`${window.location.pathname}${window.location.search}`);
     syncPath();
+    refreshLoginCacheState();
     window.addEventListener("popstate", syncPath);
     setIsOnline(navigator.onLine);
     const online = () => setIsOnline(true);
@@ -2541,6 +3182,7 @@ export function HotelOpsSystem() {
         setManagementRequests([]);
         setOperationDocuments([]);
         setNotifications([]);
+        setActiveShift(null);
         setReminderRecipients([]);
         setManagementRequestRecipients([]);
         setDepartmentAssignees([]);
@@ -2561,6 +3203,10 @@ export function HotelOpsSystem() {
           setHydrated(true);
           return;
         }
+        if (!platformPanelRequest && isLoginRememberedOnThisDevice(bootstrap.user)) {
+          storeLoginProfileCache(bootstrap.user);
+          refreshLoginCacheState();
+        }
         setSession(bootstrap.user);
         setUsers(bootstrap.users);
         setJobs(bootstrap.jobs);
@@ -2568,6 +3214,7 @@ export function HotelOpsSystem() {
         setManagementRequests([]);
         setOperationDocuments([]);
         setNotifications(bootstrap.notifications ?? []);
+        setActiveShift(bootstrap.activeShift ?? null);
         setDepartmentsList(bootstrap.departments ?? []);
         setJobDraft(newJobDraft(bootstrap.user));
         if (platformAdmin && !platformPanelRequest) {
@@ -2583,6 +3230,7 @@ export function HotelOpsSystem() {
         setManagementRequests([]);
         setOperationDocuments([]);
         setNotifications([]);
+        setActiveShift(null);
         setReminderRecipients([]);
         setManagementRequestRecipients([]);
         setDepartmentAssignees([]);
@@ -2598,7 +3246,7 @@ export function HotelOpsSystem() {
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
     };
-  }, []);
+  }, [refreshLoginCacheState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2678,7 +3326,15 @@ export function HotelOpsSystem() {
     const onNativeShellReady = () => {
       void checkAppVersion();
     };
+    const onAppEntry = () => {
+      if (document.visibilityState === "visible") {
+        void checkAppVersion();
+      }
+    };
     window.addEventListener("hotelops:native-shell-ready", onNativeShellReady);
+    window.addEventListener("focus", onAppEntry);
+    window.addEventListener("pageshow", onAppEntry);
+    document.addEventListener("visibilitychange", onAppEntry);
     [250, 1000, 2500].forEach((delay) => {
       retryIds.push(window.setTimeout(() => void checkAppVersion(), delay));
     });
@@ -2687,10 +3343,54 @@ export function HotelOpsSystem() {
     return () => {
       cancelled = true;
       window.removeEventListener("hotelops:native-shell-ready", onNativeShellReady);
+      window.removeEventListener("focus", onAppEntry);
+      window.removeEventListener("pageshow", onAppEntry);
+      document.removeEventListener("visibilitychange", onAppEntry);
       retryIds.forEach((id) => window.clearTimeout(id));
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [refreshLoginCacheState]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const sendHeartbeat = async () => {
+      if (cancelled || inFlight) return;
+      if (!navigator.onLine || document.visibilityState !== "visible") return;
+
+      inFlight = true;
+      try {
+        await apiRequest<{ ok: boolean }>("/station/heartbeat", { method: "POST" });
+      } catch {
+        // Station telemetry should never interrupt the operator workflow.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const onAppEntry = () => {
+      if (document.visibilityState === "visible") {
+        void sendHeartbeat();
+      }
+    };
+
+    void sendHeartbeat();
+    const intervalId = window.setInterval(() => void sendHeartbeat(), 20_000);
+    window.addEventListener("focus", onAppEntry);
+    window.addEventListener("pageshow", onAppEntry);
+    document.addEventListener("visibilitychange", onAppEntry);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onAppEntry);
+      window.removeEventListener("pageshow", onAppEntry);
+      document.removeEventListener("visibilitychange", onAppEntry);
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2780,6 +3480,20 @@ export function HotelOpsSystem() {
   const activeDepartmentLabel = useMemo(() => createDepartmentLabeler(activeDepartmentOptions), [activeDepartmentOptions]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    if (!session || !canUseShiftTracking(session)) {
+      stopNativeShiftNotification();
+      return;
+    }
+
+    if (activeShift) {
+      startNativeShiftNotification(session, activeDepartmentLabel(session.departmentId));
+    } else {
+      stopNativeShiftNotification();
+    }
+  }, [activeDepartmentLabel, activeShift, hydrated, session]);
+
+  useEffect(() => {
     if (!hydrated || !isUnknownModulePath(currentPath)) return;
     window.history.replaceState(null, "", hotelUrl("/dashboard"));
     applyPath("/dashboard");
@@ -2794,6 +3508,7 @@ export function HotelOpsSystem() {
     setJobs(bootstrap.jobs);
     setReminders(bootstrap.reminders ?? []);
     setNotifications(bootstrap.notifications ?? []);
+    setActiveShift(bootstrap.activeShift ?? null);
     setDepartmentsList(bootstrap.departments ?? []);
 
     if (canUseModule(bootstrap.user, "managementRequests")) {
@@ -2822,6 +3537,36 @@ export function HotelOpsSystem() {
       await refreshAppData();
     } catch {
       // Mutation succeeded; keep the success message and let the next navigation/bootstrap refresh recover.
+    }
+  }
+
+  async function startShiftApi() {
+    if (!session) return;
+    if (!canUseShiftTracking(session)) {
+      setAlert("Bu personel için vardiya takibi kapalı.");
+      return;
+    }
+
+    try {
+      const response = await apiRequest<{ item: ShiftRecord }>("/shifts/start", { method: "POST" });
+      setActiveShift(response.item);
+      startNativeShiftNotification(session, activeDepartmentLabel(session.departmentId));
+      setAlert("Vardiya başlatıldı.");
+    } catch {
+      setAlert("Vardiya başlatılamadı.");
+    }
+  }
+
+  async function endShiftApi() {
+    if (!session) return;
+
+    try {
+      await apiRequest<{ item: ShiftRecord | null }>("/shifts/end", { method: "POST" });
+      setActiveShift(null);
+      stopNativeShiftNotification();
+      setAlert("Vardiya çıkışı yapıldı.");
+    } catch {
+      setAlert("Vardiya çıkışı yapılamadı.");
     }
   }
 
@@ -2876,15 +3621,40 @@ export function HotelOpsSystem() {
     const updatedUser = { ...found, lastLogin: "Az önce" };
     setUsers((current) => current.map((user) => (user.id === found.id ? updatedUser : user)));
     setSession(updatedUser);
-    localStorage.setItem(STORAGE_SESSION, remember ? updatedUser.username : "");
+    localStorage.setItem(STORAGE_SESSION, updatedUser.username);
+    lastAuthenticatedPasswordRef.current = loginPassword;
+    if (isLoginRememberedOnThisDevice(updatedUser)) {
+      rememberLoginOnThisDevice(updatedUser, loginPassword);
+      refreshLoginCacheState();
+    }
     setJobDraft(newJobDraft(updatedUser));
     navigate("/dashboard");
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function logout() {
+    if (session) {
+      setLogoutRememberPrompt({ mode: "local", returnToPlatformLogin: false });
+      return;
+    }
+    completeLocalLogout(false);
+  }
+
+  function completeLocalLogout(rememberLogin: boolean) {
+    if (session) {
+      if (rememberLogin) {
+        rememberLoginOnThisDevice(session, lastAuthenticatedPasswordRef.current || loginPassword);
+      } else {
+        forgetLoginOnThisDevice(session);
+        lastAuthenticatedPasswordRef.current = "";
+      }
+      refreshLoginCacheState();
+    }
+    setLogoutRememberPrompt(null);
     localStorage.removeItem(STORAGE_SESSION);
     setSession(null);
+    setLoginUsername("");
+    setLoginPassword("");
     navigate("/login");
   }
 
@@ -2911,7 +3681,9 @@ export function HotelOpsSystem() {
       departmentId,
       id: `${idPrefix}-${Math.floor(10000 + Math.random() * 89999)}`,
       status: "Pending",
-      createdBy: session.username
+      createdBy: session.username,
+      createdByUserId: session.id,
+      createdByAccountId: session.accountId
     };
 
     setJobs((current) => [record, ...current]);
@@ -2943,6 +3715,7 @@ export function HotelOpsSystem() {
                 password: userDraft.password || user.password,
                 roleId: userDraft.roleId,
                 departmentId: userDraft.departmentId,
+                shiftTrackingEnabled: userDraft.shiftTrackingEnabled,
                 moduleAccess: userDraft.moduleAccess
               }
             : user
@@ -2964,6 +3737,7 @@ export function HotelOpsSystem() {
           email: userDraft.email,
           roleId: userDraft.roleId,
           departmentId: userDraft.departmentId,
+          shiftTrackingEnabled: userDraft.shiftTrackingEnabled,
           moduleAccess: userDraft.moduleAccess,
           active: true,
           lastLogin: "-"
@@ -2984,6 +3758,7 @@ export function HotelOpsSystem() {
       password: "",
       roleId: user.roleId,
       departmentId: user.departmentId,
+      shiftTrackingEnabled: canUseShiftTracking(user),
       moduleAccess: resolvedModuleAccess(user)
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -3011,7 +3786,7 @@ export function HotelOpsSystem() {
         method: "POST",
         body: JSON.stringify({ username: usernameForLogin, password: loginPassword })
       });
-      storeApiToken(login.token, remember);
+      storeApiToken(login.token);
       const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
       const platformAdmin = isPlatformAdminUser(bootstrap.user);
       if (platformLogin && !platformAdmin) {
@@ -3025,9 +3800,17 @@ export function HotelOpsSystem() {
       setJobs(bootstrap.jobs);
       setReminders(bootstrap.reminders ?? []);
       setNotifications(bootstrap.notifications ?? []);
+      setActiveShift(bootstrap.activeShift ?? null);
       setDepartmentsList(bootstrap.departments ?? []);
       setSession(bootstrap.user);
       setJobDraft(newJobDraft(bootstrap.user));
+      if (!platformLogin) {
+        lastAuthenticatedPasswordRef.current = loginPassword;
+        if (isLoginRememberedOnThisDevice(bootstrap.user)) {
+          rememberLoginOnThisDevice(bootstrap.user, loginPassword);
+          refreshLoginCacheState();
+        }
+      }
       navigate(platformAdmin ? "/hotelpanel" : "/dashboard");
     } catch (error) {
       clearApiToken();
@@ -3040,22 +3823,59 @@ export function HotelOpsSystem() {
 
   async function logoutApi() {
     const shouldReturnToPlatformLogin = isPlatformPanelPath(pathRef.current) || Boolean(session && isPlatformAdminUser(session));
+    if (session && !isPlatformAdminUser(session)) {
+      setLogoutRememberPrompt({ mode: "api", returnToPlatformLogin: shouldReturnToPlatformLogin });
+      return;
+    }
+    await completeLogoutApi(false, shouldReturnToPlatformLogin);
+  }
+
+  async function completeLogoutApi(rememberLogin: boolean, shouldReturnToPlatformLogin: boolean) {
+    if (logoutInProgress) return;
+    setLogoutInProgress(true);
+    if (session && !isPlatformAdminUser(session)) {
+      if (rememberLogin) {
+        rememberLoginOnThisDevice(session, lastAuthenticatedPasswordRef.current || loginPassword);
+      } else {
+        forgetLoginOnThisDevice(session);
+        lastAuthenticatedPasswordRef.current = "";
+      }
+    }
     try {
+      if (activeShift) {
+        await apiRequest<{ item: ShiftRecord | null }>("/shifts/end", { method: "POST" });
+      }
       await apiRequest<{ ok: boolean }>("/auth/logout", { method: "POST" });
     } catch {
       // Browser token cleanup still happens below.
     }
+    stopNativeShiftNotification();
     clearApiToken();
     setSession(null);
     setReminders([]);
     setManagementRequests([]);
     setOperationDocuments([]);
     setNotifications([]);
+    setActiveShift(null);
     setReminderRecipients([]);
     setManagementRequestRecipients([]);
     setDepartmentAssignees([]);
     setDepartmentsList([]);
+    refreshLoginCacheState();
+    setLogoutRememberPrompt(null);
+    setLogoutInProgress(false);
+    setLoginUsername("");
+    setLoginPassword("");
     navigate(shouldReturnToPlatformLogin ? "/hotelpanel" : "/login");
+  }
+
+  function resolveLogoutRememberPrompt(rememberLogin: boolean) {
+    if (!logoutRememberPrompt) return;
+    if (logoutRememberPrompt.mode === "api") {
+      void completeLogoutApi(rememberLogin, logoutRememberPrompt.returnToPlatformLogin);
+      return;
+    }
+    completeLocalLogout(rememberLogin);
   }
 
   async function handleCreateJobApi(event: FormEvent<HTMLFormElement>) {
@@ -3243,6 +4063,7 @@ export function HotelOpsSystem() {
             password: userDraft.password,
             roleId: userDraft.roleId,
             departmentId: userDraft.departmentId,
+            shiftTrackingEnabled: userDraft.shiftTrackingEnabled,
             moduleAccess: userDraft.moduleAccess
           })
         });
@@ -3255,7 +4076,19 @@ export function HotelOpsSystem() {
           body: JSON.stringify(userDraft)
         });
         setUsers((current) => [created, ...current]);
-        setAlert(created.temporaryPassword ? `Yeni kullanıcı eklendi. Geçici şifre: ${created.temporaryPassword}` : "Yeni kullanıcı/personel eklendi.");
+        if (created.temporaryPassword) {
+          showCredentialNotice({
+            title: "Yeni kullanıcı geçici şifresi",
+            description: "Bu kart siz X ile kapatana kadar ekranda kalır.",
+            items: [{
+              label: created.fullName,
+              username: created.username,
+              password: created.temporaryPassword,
+              accountId: created.accountId
+            }]
+          });
+        }
+        setAlert("Yeni kullanıcı/personel eklendi.");
       }
       setUserDraft(newUserDraft());
       await refreshAppDataQuietly();
@@ -3281,8 +4114,18 @@ export function HotelOpsSystem() {
 
   async function resetPasswordApi(userId: string) {
     try {
-      const response = await apiRequest<{ ok: boolean; temporaryPassword: string }>(`/users/${userId}/reset-password`, { method: "POST" });
-      setAlert(`Geçici şifre oluşturuldu: ${response.temporaryPassword}`);
+      const response = await apiRequest<{ ok: boolean; user: DemoUser; temporaryPassword: string }>(`/users/${userId}/reset-password`, { method: "POST" });
+      showCredentialNotice({
+        title: "Geçici şifre oluşturuldu",
+        description: "Bu kart siz X ile kapatana kadar ekranda kalır.",
+        items: [{
+          label: response.user.fullName,
+          username: response.user.username,
+          password: response.temporaryPassword,
+          accountId: response.user.accountId
+        }]
+      });
+      setAlert("Geçici şifre oluşturuldu.");
       await refreshAppDataQuietly();
     } catch {
       setAlert("Şifre sıfırlanamadı.");
@@ -3367,12 +4210,17 @@ export function HotelOpsSystem() {
 
   const platformPanelRequest = isPlatformPanelPath(currentPath);
 
+  if (maintenanceStatus.enabled && !platformPanelRequest) {
+    return <MaintenanceModeScreen status={maintenanceStatus} />;
+  }
+
   if (!session) {
     if (platformPanelRequest) {
       return (
         <PlatformAdminLoginScreen
           error={loginError}
           loginPassword={loginPassword}
+          maintenanceStatus={maintenanceStatus}
           setLoginPassword={setLoginPassword}
           onLogin={handleLoginApi}
         />
@@ -3380,18 +4228,30 @@ export function HotelOpsSystem() {
     }
 
     return (
-      <LoginScreen
-        appUpdateNotice={appUpdateNotice}
-        error={loginError}
-        loginPassword={loginPassword}
-        loginUsername={loginUsername}
-        onAppUpdate={openAppUpdateDownload}
-        remember={remember}
-        setLoginPassword={setLoginPassword}
-        setLoginUsername={setLoginUsername}
-        setRemember={setRemember}
-        onLogin={handleLoginApi}
-      />
+      <>
+        <LoginScreen
+          appUpdateNotice={appUpdateNotice}
+          error={loginError}
+          loginPassword={loginPassword}
+          loginUsername={loginUsername}
+          onAppUpdate={openAppUpdateDownload}
+          onOpenSavedAccounts={() => setSavedAccountsModalOpen(true)}
+          savedAccounts={savedLoginAccounts}
+          setLoginPassword={setLoginPassword}
+          setLoginUsername={setLoginUsername}
+          onLogin={handleLoginApi}
+        />
+        {savedAccountsModalOpen ? (
+          <SavedAccountsModal
+            accounts={savedLoginAccounts}
+            onClose={() => setSavedAccountsModalOpen(false)}
+            onSelect={(account) => {
+              fillSavedLoginAccount(account);
+              setSavedAccountsModalOpen(false);
+            }}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -3403,6 +4263,7 @@ export function HotelOpsSystem() {
       <PlatformAdminLoginScreen
         error={loginError || "Aktif oturum bu panele yetkili değil. Yetkili platform hesabı ile giriş yapın."}
         loginPassword={loginPassword}
+        maintenanceStatus={maintenanceStatus}
         setLoginPassword={setLoginPassword}
         onLogin={handleLoginApi}
         activeHotelUser={session.fullName}
@@ -3415,10 +4276,19 @@ export function HotelOpsSystem() {
       <PlatformAdminShell
         alert={alert}
         alertSecondsRemaining={alertSecondsRemaining}
+        credentialNotice={credentialNotice}
         dismissAlert={dismissAlert}
+        dismissCredentialNotice={() => setCredentialNotice(null)}
         logout={logoutApi}
+        maintenanceStatus={maintenanceStatus}
       >
-        <HotelPanelPage session={session} setAlert={setAlert} />
+        <HotelPanelPage
+          maintenanceStatus={maintenanceStatus}
+          refreshMaintenanceStatus={refreshMaintenanceStatus}
+          session={session}
+          setAlert={setAlert}
+          showCredentialNotice={showCredentialNotice}
+        />
       </PlatformAdminShell>
     );
   }
@@ -3453,6 +4323,7 @@ export function HotelOpsSystem() {
               <div className="avatar">{initials(session.fullName)}</div>
               <div className="user-info">
                 <div className="user-name">{session.fullName}</div>
+                <div className="user-id">ID:{session.accountId || session.id}</div>
                 <div className="user-role">{roleLabel(session.roleId)}</div>
               </div>
               <ChevronRight size={14} color="rgba(255,255,255,.45)" />
@@ -3501,8 +4372,10 @@ export function HotelOpsSystem() {
                 </button>
               </div>
             )}
+            <CredentialNoticeCard notice={credentialNotice} onClose={() => setCredentialNotice(null)} />
             <div key={path} className={`page-transition page-transition-${pageTransitionDirection}`}>
               {renderPage({
+                activeShift,
                 alert,
                 checklistText,
                 currentPath,
@@ -3520,12 +4393,14 @@ export function HotelOpsSystem() {
                 managementRequestDraft,
                 managementRequestRecipients,
                 managementRequests,
+                maintenanceStatus,
                 queryParams,
                 reminderDraft,
                 reminderRecipients,
                 reminders,
                 session,
                 setAlert,
+                showCredentialNotice,
                 setChecklistText,
                 setDepartmentsList,
                 setFilters,
@@ -3541,6 +4416,7 @@ export function HotelOpsSystem() {
                 visibleJobs,
                 navigate,
                 refreshData: refreshAppDataQuietly,
+                refreshMaintenanceStatus,
                 handleCreateJob: handleCreateJobApi,
                 handleCreateManagementRequest: handleCreateManagementRequestApi,
                 handleCreateOperationDocument: handleCreateOperationDocumentApi,
@@ -3550,10 +4426,13 @@ export function HotelOpsSystem() {
                 completeReminder: completeReminderApi,
                 markNotificationRead: markNotificationReadApi,
                 markNotificationsRead: markNotificationsReadApi,
+                rememberAuthenticatedPassword,
                 handleSaveUser: handleSaveUserApi,
                 editUser,
                 deleteUser: deleteUserApi,
+                endShift: endShiftApi,
                 resetPassword: resetPasswordApi,
+                startShift: startShiftApi,
                 toggleUser: toggleUserApi
               })}
               <NoderaBrandFooter />
@@ -3568,6 +4447,13 @@ export function HotelOpsSystem() {
         session={session}
         unreadCount={unreadNotificationCount}
       />
+      {logoutRememberPrompt ? (
+        <LogoutRememberModal
+          busy={logoutInProgress}
+          onForget={() => resolveLogoutRememberPrompt(false)}
+          onRemember={() => resolveLogoutRememberPrompt(true)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -3578,10 +4464,10 @@ function LoginScreen({
   loginPassword,
   loginUsername,
   onAppUpdate,
-  remember,
+  onOpenSavedAccounts,
+  savedAccounts,
   setLoginPassword,
   setLoginUsername,
-  setRemember,
   onLogin
 }: {
   appUpdateNotice: AppUpdateNotice | null;
@@ -3589,10 +4475,10 @@ function LoginScreen({
   loginPassword: string;
   loginUsername: string;
   onAppUpdate: (notice: AppUpdateNotice) => void;
-  remember: boolean;
+  onOpenSavedAccounts: () => void;
+  savedAccounts: LoginSavedAccount[];
   setLoginPassword: (value: string) => void;
   setLoginUsername: (value: string) => void;
-  setRemember: (value: boolean) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }) {
   const showAppDownloads = useAppDownloadsVisibility();
@@ -3614,11 +4500,11 @@ function LoginScreen({
             </div>
           )}
           <div className="form-group">
-            <label className="form-label" htmlFor="loginUsername">Kullanıcı Adı</label>
+            <label className="form-label" htmlFor="loginUsername">Kullanıcı Adı veya ID</label>
             <input
               id="loginUsername"
               className="form-control"
-              placeholder="Kullanıcı adınızı girin"
+              placeholder="Kullanıcı adınızı veya ID'nizi girin"
               value={loginUsername}
               onChange={(event) => setLoginUsername(event.target.value)}
               autoFocus
@@ -3635,12 +4521,16 @@ function LoginScreen({
               onChange={(event) => setLoginPassword(event.target.value)}
             />
           </div>
-          <div className="login-remember-row ui-cluster-between">
-            <label className="login-remember-label">
-              <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-              Beni Hatırla
-            </label>
-          </div>
+          {savedAccounts.length ? (
+            <button type="button" className="btn btn-ghost btn-full login-saved-trigger" onClick={onOpenSavedAccounts}>
+              <KeyRound size={16} />
+              <span className="login-quick-fill-copy">
+                <span>Kayıtlı Oturumlar</span>
+                <small>{savedAccounts.length} hesap kayıtlı</small>
+              </span>
+              <ChevronRight size={16} className="login-saved-trigger-icon" />
+            </button>
+          ) : null}
           <button type="submit" className="btn btn-primary btn-lg btn-full">
             Giriş Yap
           </button>
@@ -3663,16 +4553,141 @@ function LoginScreen({
   );
 }
 
+function MaintenanceModeScreen({ status }: { status: MaintenanceStatus }) {
+  return (
+    <main className="classic-app maintenance-mode-page">
+      <section className="maintenance-mode-panel" role="status" aria-live="polite">
+        <span className="logo-mark logo-mark-image maintenance-mode-logo"><BrandLogo /></span>
+        <div className="maintenance-mode-icon">
+          <Wrench size={28} />
+        </div>
+        <p className="maintenance-mode-eyebrow">Bakım Modu</p>
+        <h1>{status.message || DEFAULT_MAINTENANCE_MESSAGE}</h1>
+        <p className="maintenance-mode-copy">Nodera sistemi kısa süre içinde tekrar açılacak.</p>
+      </section>
+    </main>
+  );
+}
+
+function MaintenanceModeInlineNotice({ status }: { status: MaintenanceStatus }) {
+  if (!status.enabled) return null;
+
+  return (
+    <div className="maintenance-inline-notice" role="status">
+      <AlertTriangle size={16} />
+      <span>{status.message || DEFAULT_MAINTENANCE_MESSAGE}</span>
+    </div>
+  );
+}
+
+function SavedAccountsModal({
+  accounts,
+  onClose,
+  onSelect
+}: {
+  accounts: LoginSavedAccount[];
+  onClose: () => void;
+  onSelect: (account: LoginSavedAccount) => void;
+}) {
+  return (
+    <div className="app-modal-overlay" role="presentation" onClick={onClose}>
+      <section className="app-modal saved-accounts-modal" role="dialog" aria-modal="true" aria-labelledby="savedAccountsTitle" onClick={(event) => event.stopPropagation()}>
+        <div className="app-modal-header">
+          <div>
+            <div className="app-modal-eyebrow">Kolay giriş</div>
+            <h2 id="savedAccountsTitle" className="app-modal-title">Kayıtlı Oturumlar</h2>
+          </div>
+          <button type="button" className="app-modal-close" onClick={onClose} aria-label="Pencereyi kapat">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="app-modal-body">
+          {accounts.length ? (
+            <div className="saved-account-list">
+              {accounts.map((account) => (
+                <button
+                  key={loginAccountKey(account)}
+                  type="button"
+                  className="saved-account-option"
+                  onClick={() => onSelect(account)}
+                  aria-label={`${account.fullName} oturumunu doldur`}
+                >
+                  <span className="saved-account-option-icon">
+                    <KeyRound size={17} />
+                  </span>
+                  <span className="saved-account-option-copy">
+                    <strong>{account.fullName}</strong>
+                    <small>
+                      {account.accountId ? `ID:${account.accountId}` : account.username}
+                      {account.accountId && account.username ? ` · ${account.username}` : ""}
+                    </small>
+                  </span>
+                  <span className="saved-account-option-tag">{account.password ? "Şifre kayıtlı" : "Profil"}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="app-modal-empty">Bu cihazda kayıtlı oturum yok.</div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LogoutRememberModal({
+  busy,
+  onForget,
+  onRemember
+}: {
+  busy: boolean;
+  onForget: () => void;
+  onRemember: () => void;
+}) {
+  return (
+    <div className="app-modal-overlay app-modal-overlay-locked" role="presentation">
+      <section className="app-modal logout-remember-modal" role="dialog" aria-modal="true" aria-labelledby="logoutRememberTitle">
+        <div className="app-modal-header">
+          <div className="app-modal-title-row">
+            <span className="app-modal-title-icon">
+              <LogOut size={18} />
+            </span>
+            <div>
+              <div className="app-modal-eyebrow">Çıkış işlemi</div>
+              <h2 id="logoutRememberTitle" className="app-modal-title">Giriş bilgileri hatırlansın mı?</h2>
+            </div>
+          </div>
+        </div>
+        <div className="app-modal-body">
+          <p className="app-modal-copy">
+            Bu hesabı bu cihazda kayıtlı tutarsanız giriş ekranındaki kayıtlı oturumlar listesinden hızlıca doldurabilirsiniz.
+          </p>
+        </div>
+        <div className="app-modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onForget} disabled={busy}>
+            Bilgileri Sil
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onRemember} disabled={busy}>
+            {busy ? "Çıkış yapılıyor" : "Hatırla ve Çık"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PlatformAdminLoginScreen({
   activeHotelUser,
   error,
   loginPassword,
+  maintenanceStatus,
   setLoginPassword,
   onLogin
 }: {
   activeHotelUser?: string;
   error: string;
   loginPassword: string;
+  maintenanceStatus: MaintenanceStatus;
   setLoginPassword: (value: string) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }) {
@@ -3688,6 +4703,7 @@ function PlatformAdminLoginScreen({
             <h1>Nodera Tenant Console</h1>
             <p>Otel kurulumları, tenant kayıtları ve sistem sahibi işlemleri güvenli platform hesabı ile yönetilir.</p>
           </div>
+          <MaintenanceModeInlineNotice status={maintenanceStatus} />
           <div className="platform-admin-lock-grid">
             <div><LockKeyhole size={17} /><span>Tek sahip erişimi</span></div>
             <div><KeyRound size={17} /><span>Rol devredilemez</span></div>
@@ -3742,14 +4758,20 @@ function PlatformAdminShell({
   alert,
   alertSecondsRemaining,
   children,
+  credentialNotice,
   dismissAlert,
-  logout
+  dismissCredentialNotice,
+  logout,
+  maintenanceStatus
 }: {
   alert: string;
   alertSecondsRemaining: number;
   children: ReactNode;
+  credentialNotice: CredentialNotice | null;
   dismissAlert: () => void;
+  dismissCredentialNotice: () => void;
   logout: () => void | Promise<void>;
+  maintenanceStatus: MaintenanceStatus;
 }) {
   return (
     <main className="classic-app platform-admin-shell">
@@ -3779,6 +4801,8 @@ function PlatformAdminShell({
           </div>
         </div>
 
+        <MaintenanceModeInlineNotice status={maintenanceStatus} />
+
         {alert && (
           <div
             className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}
@@ -3794,9 +4818,40 @@ function PlatformAdminShell({
           </div>
         )}
 
+        <CredentialNoticeCard notice={credentialNotice} onClose={dismissCredentialNotice} />
+
         {children}
       </section>
     </main>
+  );
+}
+
+function CredentialNoticeCard({ notice, onClose }: { notice: CredentialNotice | null; onClose: () => void }) {
+  if (!notice) return null;
+
+  return (
+    <div className="credential-card" role="status">
+      <div className="credential-card-header">
+        <div>
+          <strong>{notice.title}</strong>
+          <span>{notice.description}</span>
+        </div>
+        <button type="button" className="alert-close" onClick={onClose} aria-label="Şifre kartını kapat">
+          <X size={14} />
+        </button>
+      </div>
+      <div className="credential-list">
+        {notice.items.map((item) => (
+          <div className="credential-item" key={`${item.username}-${item.password}`}>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.username}{item.accountId ? ` · ID ${item.accountId}` : ""}</small>
+            </span>
+            <code>{item.password}</code>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -3870,7 +4925,8 @@ function SidebarNav({
         ...(canCreateJobType(session, "PlannedMaintenance") ? [entry("periodic-maintenance", "periodicMaintenance", "/jobs/new?type=PlannedMaintenance", "Periyodik Bakım Planı", CalendarDays, undefined, "planlı bakım periyodik departman")] : []),
         entry("housekeeping", "housekeeping", "/housekeeping", "HK Planları", Home, undefined, "kat temizlik housekeeping"),
         entry("calendar", "departmentCalendar", "/calendar/department", "Takvim", CalendarDays, todayPlannedJobCount, `${departmentLabelFor(session.departmentId)} bugün planlı iş`),
-        entry("reminders", "reminders", "/reminders", "Hatırlatmalar", Bell, unreadCount, "uyarı")
+        entry("reminders", "reminders", "/reminders", "Hatırlatmalar", Bell, unreadCount, "uyarı"),
+        entry("shift-panels", "shiftPanels", "/shift-panels", "Vardiya Paneli", Timer, undefined, "vardiya çizelge excel sorumlu")
       ]
     },
     {
@@ -4047,6 +5103,7 @@ function getPageTitle(path: string) {
   if (path === "/users") return { title: "Kullanıcı Yönetimi", subtitle: "" };
   if (path === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
+  if (path === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
   if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (path === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
   if (path === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
@@ -4057,6 +5114,7 @@ function getPageTitle(path: string) {
 }
 
 type RenderContext = {
+  activeShift: ShiftRecord | null;
   alert: string;
   checklistText: string;
   currentPath: string;
@@ -4081,6 +5139,7 @@ type RenderContext = {
   managementRequestDraft: ManagementRequestDraft;
   managementRequestRecipients: DemoUser[];
   managementRequests: ManagementRequestRecord[];
+  maintenanceStatus: MaintenanceStatus;
   notifications: NotificationRecord[];
   operationDocumentDraft: OperationDocumentDraft;
   operationDocuments: OperationDocumentRecord[];
@@ -4090,6 +5149,7 @@ type RenderContext = {
   reminders: ReminderRecord[];
   session: DemoUser;
   setAlert: (value: string) => void;
+  showCredentialNotice: (notice: Omit<CredentialNotice, "id">) => void;
   setChecklistText: (value: string) => void;
   setFilters: (value: RenderContext["filters"] | ((value: RenderContext["filters"]) => RenderContext["filters"])) => void;
   setDepartmentsList: (value: DepartmentRecord[] | ((value: DepartmentRecord[]) => DepartmentRecord[])) => void;
@@ -4105,6 +5165,7 @@ type RenderContext = {
   visibleJobs: JobRecord[];
   navigate: (path: string) => void;
   refreshData: () => Promise<void>;
+  refreshMaintenanceStatus: () => Promise<MaintenanceStatus>;
   handleCreateJob: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   handleCreateManagementRequest: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   handleCreateOperationDocument: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
@@ -4114,10 +5175,13 @@ type RenderContext = {
   completeReminder: (reminderId: string) => void | Promise<void>;
   markNotificationRead: (notificationId: string) => void | Promise<void>;
   markNotificationsRead: () => void | Promise<void>;
+  rememberAuthenticatedPassword: (user: DemoUser, password: string) => void;
   handleSaveUser: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   editUser: (user: DemoUser) => void;
   deleteUser: (userId: string) => void | Promise<void>;
+  endShift: () => void | Promise<void>;
   resetPassword: (userId: string) => void | Promise<void>;
+  startShift: () => void | Promise<void>;
   toggleUser: (userId: string) => void | Promise<void>;
 };
 
@@ -4128,6 +5192,7 @@ function moduleForPath(path: string): ModuleId {
   if (path === "/housekeeping") return "housekeeping";
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders") return "reminders";
+  if (path === "/shift-panels") return "shiftPanels";
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
   if (path === "/settings") return "settings";
@@ -4152,6 +5217,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/maintenance") return <CalendarPage {...context} />;
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
   if (currentPath.startsWith("/calendar")) return <CalendarPage {...context} />;
+  if (currentPath === "/shift-panels") return <ShiftPanelsPage {...context} />;
   if (currentPath === "/users") return <UsersPage {...context} />;
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
@@ -4164,7 +5230,24 @@ function renderPage(context: RenderContext) {
   return <DashboardPage {...context} />;
 }
 
-function DashboardPage({ departmentLabelFor, departmentOptions, departmentsList, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, users, visibleJobs }: RenderContext) {
+function ShiftControlCard({ activeShift, onEndShift, onStartShift }: { activeShift: ShiftRecord | null; onEndShift: () => void | Promise<void>; onStartShift: () => void | Promise<void> }) {
+  return (
+    <div className={`shift-control-card ${activeShift ? "active" : ""}`}>
+      <div className="shift-control-main">
+        <span className="shift-control-icon"><Timer size={18} /></span>
+        <span className="shift-control-copy">
+          <strong>{activeShift ? "Vardiya açık" : "Vardiya kapalı"}</strong>
+          <span>{activeShift ? `${formatDateTime(activeShift.startedAt)} başlangıç` : "Henüz vardiya başlatılmadı."}</span>
+        </span>
+      </div>
+      <button type="button" className={`btn ${activeShift ? "btn-danger" : "btn-start"} shift-control-button`} onClick={activeShift ? onEndShift : onStartShift}>
+        {activeShift ? "Vardiya Çıkış" : "Vardiya Başla"}
+      </button>
+    </div>
+  );
+}
+
+function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, departmentsList, endShift, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, startShift, users, visibleJobs }: RenderContext) {
   const isHotelWideRole = session.roleId === "generalManager" || session.roleId === "hrManager";
   const isDepartmentManager = ["technicalManager", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "salesManager", "fnbManager"].includes(session.roleId);
   const isChief = ["technicalChief", "floorChief"].includes(session.roleId);
@@ -4241,6 +5324,7 @@ function DashboardPage({ departmentLabelFor, departmentOptions, departmentsList,
         </div>
         <span className="badge badge-inprogress">{focusJobs.length} aktif kayıt</span>
       </div>
+      {canUseShiftTracking(session) && <ShiftControlCard activeShift={activeShift} onEndShift={endShift} onStartShift={startShift} />}
       {kpis.length > 0 && (
         <div className="kpi-grid dashboard-kpi-grid">
           {kpis.map((kpi) => {
@@ -6373,6 +7457,7 @@ function UsersPage({
                             <span>Son giriş: {user.lastLogin}</span>
                           </div>
                           <span className={`badge ${user.active ? "badge-completed" : "badge-pending"}`}>{user.active ? "Aktif" : "Pasif"}</span>
+                          <span className={`badge ${canUseShiftTracking(user) ? "badge-inprogress" : "badge-pending"}`}>{canUseShiftTracking(user) ? "Vardiya var" : "Vardiya yok"}</span>
                           <div className="td-actions">
                             <button className="btn btn-ghost btn-sm" onClick={() => editUser(user)}><PenLine size={13} /> Düzenle</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => resetPassword(user.id)}><RefreshCcw size={13} /> Şifre</button>
@@ -6397,6 +7482,7 @@ function UsersPage({
                   <th>Departman</th>
                   <th>Son Giriş</th>
                   <th>Durum</th>
+                  <th>Vardiya</th>
                   <th>İşlem</th>
                 </tr>
               </thead>
@@ -6416,6 +7502,7 @@ function UsersPage({
                     <td>{departmentLabelFor(user.departmentId)}</td>
                     <td>{user.lastLogin}</td>
                     <td><span className={`badge ${user.active ? "badge-completed" : "badge-pending"}`}>{user.active ? "Aktif" : "Pasif"}</span></td>
+                    <td><span className={`badge ${canUseShiftTracking(user) ? "badge-inprogress" : "badge-pending"}`}>{canUseShiftTracking(user) ? "Açık" : "Kapalı"}</span></td>
                     <td>
                       <div className="td-actions">
                         <button className="btn btn-ghost btn-sm" onClick={() => editUser(user)}><PenLine size={13} /> Düzenle</button>
@@ -6481,6 +7568,14 @@ function UsersPage({
                 ))}
               </select>
             </div>
+            <label className="checklist-item checklist-clickable">
+              <input
+                type="checkbox"
+                checked={userDraft.shiftTrackingEnabled}
+                onChange={(event) => setUserDraft((draft) => ({ ...draft, shiftTrackingEnabled: event.target.checked }))}
+              />
+              <span className="ui-field-note">Bu personelde vardiya butonu görünsün</span>
+            </label>
             <details className="permission-details" open>
               <summary>Hamburger Menü Modülleri</summary>
               <div className="ui-body-compact">
@@ -6570,6 +7665,345 @@ function UsersPage({
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: RenderContext) {
+  const [selectedMonth, setSelectedMonth] = useState(() => dateInputValue(new Date()).slice(0, 7));
+  const [monthDays, setMonthDays] = useState<string[]>([]);
+  const [panels, setPanels] = useState<ShiftPanelRecord[]>([]);
+  const [configDrafts, setConfigDrafts] = useState<Record<string, ShiftPanelConfigDraft>>({});
+  const [cellDrafts, setCellDrafts] = useState<Record<string, ShiftPanelCellDraft>>({});
+  const [dirtyCells, setDirtyCells] = useState<Record<string, boolean>>({});
+  const [activeRosterCell, setActiveRosterCell] = useState<ActiveRosterCell | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [savingPanelId, setSavingPanelId] = useState("");
+  const canConfigure = canConfigureShiftPanels(session);
+  const activeRosterCellKey = activeRosterCell ? rosterCellKey(activeRosterCell.departmentId, activeRosterCell.userId, activeRosterCell.date) : "";
+
+  const loadPanels = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await apiRequest<{ month: string; days: string[]; items: ShiftPanelRecord[] }>(`/shift-panels?month=${encodeURIComponent(selectedMonth)}`);
+      setPanels(response.items);
+      setMonthDays(response.days);
+      setConfigDrafts(Object.fromEntries(response.items.map((panel) => [
+        panel.departmentId,
+        { enabled: panel.enabled, editorUserIds: panel.editorUserIds }
+      ])));
+      setCellDrafts(Object.fromEntries(response.items.flatMap((panel) => (
+        panel.cells.map((cell) => [rosterCellKey(panel.departmentId, cell.userId, cell.date), cellRecordToDraft(cell)] as const)
+      ))));
+      setDirtyCells({});
+      setActiveRosterCell(null);
+    } catch {
+      setAlert("Vardiya çizelgesi yüklenemedi.");
+      setPanels([]);
+      setMonthDays([]);
+      setActiveRosterCell(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedMonth, setAlert]);
+
+  useEffect(() => {
+    void loadPanels();
+  }, [loadPanels]);
+
+  const cellByKey = useMemo(() => {
+    const map = new Map<string, ShiftPanelCellRecord>();
+    for (const panel of panels) {
+      for (const cell of panel.cells) {
+        map.set(rosterCellKey(panel.departmentId, cell.userId, cell.date), cell);
+      }
+    }
+    return map;
+  }, [panels]);
+
+  const draftFor = useCallback((departmentId: string, userId: string, date: string) => {
+    const key = rosterCellKey(departmentId, userId, date);
+    return cellDrafts[key] ?? cellRecordToDraft(cellByKey.get(key));
+  }, [cellByKey, cellDrafts]);
+
+  const updateConfigDraft = (departmentId: string, patch: Partial<ShiftPanelConfigDraft>) => {
+    setConfigDrafts((current) => {
+      const existing = current[departmentId] ?? { enabled: false, editorUserIds: [] };
+      return { ...current, [departmentId]: { ...existing, ...patch } };
+    });
+  };
+
+  const toggleEditor = (departmentId: string, userId: string) => {
+    setConfigDrafts((current) => {
+      const existing = current[departmentId] ?? { enabled: false, editorUserIds: [] };
+      const editorUserIds = existing.editorUserIds.includes(userId)
+        ? existing.editorUserIds.filter((id) => id !== userId)
+        : [...existing.editorUserIds, userId];
+      return { ...current, [departmentId]: { ...existing, editorUserIds } };
+    });
+  };
+
+  const openCellOptions = (panel: ShiftPanelRecord, userId: string, date: string, target: HTMLButtonElement) => {
+    if (!panel.canEdit) return;
+    const key = rosterCellKey(panel.departmentId, userId, date);
+    setActiveRosterCell((current) => {
+      const currentKey = current ? rosterCellKey(current.departmentId, current.userId, current.date) : "";
+      if (currentKey === key) return null;
+
+      const rect = target.getBoundingClientRect();
+      const margin = 10;
+      const gap = 8;
+      const pickerWidth = 124;
+      const pickerHeight = Math.min(320, window.innerHeight - margin * 2);
+      let left = rect.right + gap;
+      if (left + pickerWidth > window.innerWidth - margin) {
+        left = rect.left - pickerWidth - gap;
+      }
+      left = Math.max(margin, Math.min(left, window.innerWidth - pickerWidth - margin));
+      const top = Math.max(
+        margin + pickerHeight / 2,
+        Math.min(rect.top + rect.height / 2, window.innerHeight - margin - pickerHeight / 2)
+      );
+
+      return { departmentId: panel.departmentId, userId, date, top, left };
+    });
+  };
+
+  const applyCellPreset = (panel: ShiftPanelRecord, userId: string, date: string, preset: (typeof shiftRosterPresets)[number]) => {
+    if (!panel.canEdit) return;
+    const key = rosterCellKey(panel.departmentId, userId, date);
+    const next = rosterPresetToDraft(preset);
+    setCellDrafts((current) => ({ ...current, [key]: next }));
+    setDirtyCells((current) => ({ ...current, [key]: true }));
+    setActiveRosterCell(null);
+  };
+
+  const savePanelConfig = async (panel: ShiftPanelRecord) => {
+    const draft = configDrafts[panel.departmentId] ?? { enabled: panel.enabled, editorUserIds: panel.editorUserIds };
+    try {
+      await apiRequest<{ item: ShiftPanelRecord }>(`/shift-panels/${encodeURIComponent(panel.departmentId)}/config`, {
+        method: "PATCH",
+        body: JSON.stringify(draft)
+      });
+      setAlert(`${departmentLabelFor(panel.departmentId)} vardiya paneli güncellendi.`);
+      await loadPanels();
+    } catch {
+      setAlert("Vardiya paneli ayarı kaydedilemedi.");
+    }
+  };
+
+  const savePanelRoster = async (panel: ShiftPanelRecord) => {
+    const keys = Object.keys(dirtyCells).filter((key) => key.startsWith(`${panel.departmentId}::`));
+    if (!keys.length) {
+      setAlert("Kaydedilecek çizelge değişikliği yok.");
+      return;
+    }
+    setSavingPanelId(panel.departmentId);
+    try {
+      for (const key of keys) {
+        const [, userId, date] = key.split("::");
+        const draft = cellDrafts[key] ?? emptyShiftPanelCellDraft();
+        await apiRequest<{ item: ShiftPanelCellRecord | null }>(`/shift-panels/${encodeURIComponent(panel.departmentId)}/cell`, {
+          method: "PATCH",
+          body: JSON.stringify({ userId, date, ...draft, color: rosterDraftColor(draft) })
+        });
+      }
+      setAlert(`${departmentLabelFor(panel.departmentId)} vardiya çizelgesi kaydedildi.`);
+      await loadPanels();
+    } catch {
+      setAlert("Vardiya çizelgesi kaydedilemedi. Düzenleme sorumlusu yetkisini kontrol edin.");
+    } finally {
+      setSavingPanelId("");
+    }
+  };
+
+  const exportPanelRoster = (panel: ShiftPanelRecord) => {
+    const filename = `nodera-${panel.departmentId}-vardiya-${selectedMonth}.xls`;
+    downloadShiftRosterExcel(filename, `${departmentLabelFor(panel.departmentId)} Vardiya Çizelgesi ${selectedMonth}`, panel, monthDays, draftFor);
+  };
+
+  const enabledPanels = panels.filter((panel) => panel.enabled);
+  const visiblePanels = canConfigure ? enabledPanels : panels;
+  const activePanel = activeRosterCell ? panels.find((panel) => panel.departmentId === activeRosterCell.departmentId) : null;
+  const activeDraft = activeRosterCell && activePanel ? draftFor(activeRosterCell.departmentId, activeRosterCell.userId, activeRosterCell.date) : null;
+
+  return (
+    <div className="ui-list-stack">
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Vardiya Çizelgesi</span>
+          <div className="ui-cluster-end">
+            <input className="form-control form-control-auto" type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadPanels()} disabled={loading}>
+              <RefreshCcw size={13} /> Yenile
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {canConfigure && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">İK Vardiya Paneli Ayarları</span>
+            <span className="ui-meta">Departman ve çizelge sorumlusu seçimi</span>
+          </div>
+          <div className="card-body ui-list-stack">
+            {panels.map((panel) => {
+              const draft = configDrafts[panel.departmentId] ?? { enabled: panel.enabled, editorUserIds: panel.editorUserIds };
+              const departmentUsers = users.filter((user) => user.departmentId === panel.departmentId && user.active);
+              return (
+                <div key={panel.departmentId} className="shift-panel-config">
+                  <div className="shift-panel-config-head">
+                    <label className="checklist-item checklist-clickable">
+                      <input
+                        type="checkbox"
+                        checked={draft.enabled}
+                        onChange={(event) => updateConfigDraft(panel.departmentId, { enabled: event.target.checked })}
+                      />
+                      <span>
+                        <strong>{departmentLabelFor(panel.departmentId)}</strong>
+                        <span className="ui-field-note">{draft.enabled ? "Çizelge açık" : "Çizelge kapalı"}</span>
+                      </span>
+                    </label>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void savePanelConfig(panel)}>
+                      <Save size={13} /> Kaydet
+                    </button>
+                  </div>
+                  <div className="shift-editor-list">
+                    {departmentUsers.length ? departmentUsers.map((user) => (
+                      <label key={user.id} className={`permission-toggle-row ${draft.enabled ? "" : "disabled"}`}>
+                        <input
+                          type="checkbox"
+                          disabled={!draft.enabled}
+                          checked={draft.editorUserIds.includes(user.id)}
+                          onChange={() => toggleEditor(panel.departmentId, user.id)}
+                        />
+                        <span className="ui-fill">{user.fullName}</span>
+                        <span className="ui-meta">{roleLabel(user.roleId)}</span>
+                      </label>
+                    )) : <div className="ui-empty-inline">Bu departmanda aktif personel yok.</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="ui-list-stack">
+        {visiblePanels.length ? visiblePanels.map((panel) => {
+          const dirtyCount = Object.keys(dirtyCells).filter((key) => key.startsWith(`${panel.departmentId}::`)).length;
+          return (
+            <div key={panel.departmentId} className="card">
+              <div className="card-header">
+                <span>
+                  <span className="card-title">{departmentLabelFor(panel.departmentId)}</span>
+                  <span className="ui-meta">
+                    {panel.editors.length
+                      ? `Sorumlu: ${panel.editors.map((editor) => editor.fullName).join(", ")}`
+                      : "Çizelge sorumlusu atanmadı"}
+                  </span>
+                </span>
+                <div className="ui-cluster-end">
+                  <span className={`badge ${panel.canEdit ? "badge-completed" : "badge-pending"}`}>
+                    {panel.canEdit ? "Düzenleyebilir" : "Görüntüleme"}
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => exportPanelRoster(panel)} disabled={!monthDays.length}>
+                    <Download size={13} /> Exceli İndir
+                  </button>
+                  {panel.canEdit && (
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void savePanelRoster(panel)} disabled={!dirtyCount || savingPanelId === panel.departmentId}>
+                      <Save size={13} /> {savingPanelId === panel.departmentId ? "Kaydediliyor" : dirtyCount ? `${dirtyCount} Hücreyi Kaydet` : "Kaydet"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="card-body">
+                <div className="shift-roster-legend">
+                  {shiftRosterPresets.filter((preset) => preset.id !== "empty").map((preset) => (
+                    <span key={preset.id} className={`shift-roster-legend-item shift-roster-${preset.color}`}>{preset.label}</span>
+                  ))}
+                </div>
+                <div className="shift-roster-scroll">
+                  <table className="shift-roster-table">
+                    <thead>
+                      <tr>
+                        <th className="shift-roster-person-head">Personel</th>
+                        {monthDays.map((date) => (
+                          <th key={date} className="shift-roster-day-head">
+                            <span>{shortWeekdayLabel(date)}</span>
+                            <strong>{dateDayNumber(date)}</strong>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {panel.staff.length ? panel.staff.map((staffUser) => (
+                        <tr key={staffUser.id}>
+                          <th className="shift-roster-person">{staffUser.fullName}</th>
+                          {monthDays.map((date) => {
+                            const key = rosterCellKey(panel.departmentId, staffUser.id, date);
+                            const draft = draftFor(panel.departmentId, staffUser.id, date);
+                            const display = rosterDraftDisplay(draft);
+                            const color = rosterDraftColor(draft);
+                            const cellActive = activeRosterCellKey === key;
+                            return (
+                              <td key={date} className="shift-roster-td">
+                                <button
+                                  type="button"
+                                  className={`shift-roster-cell shift-roster-${color} ${dirtyCells[key] ? "dirty" : ""} ${cellActive ? "active" : ""}`}
+                                  disabled={!panel.canEdit}
+                                  onClick={(event) => openCellOptions(panel, staffUser.id, date, event.currentTarget)}
+                                  title={`${staffUser.fullName} ${date}`}
+                                >
+                                  {display ? display.split("\n").map((line) => <span key={line}>{line}</span>) : <span>&nbsp;</span>}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td className="shift-roster-empty" colSpan={Math.max(1, monthDays.length + 1)}>Bu departmanda aktif personel yok.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {!panel.canEdit && (
+                  <div className="module-helper">
+                    Bu çizelgeyi yalnızca İK tarafından sorumlu seçilen kullanıcılar düzenleyebilir. Departman personeli sadece görüntüler.
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }) : (
+          <EmptyState
+            title={loading ? "Yükleniyor" : "Vardiya çizelgesi yok"}
+            description={canConfigure ? "İK ayarlarından bir departman için vardiya çizelgesini açabilirsiniz." : "Departmanınız için vardiya çizelgesi İK tarafından açılmamış."}
+          />
+        )}
+      </div>
+      {activeRosterCell && activePanel?.canEdit && activeDraft ? (
+        <div
+          className="shift-roster-cell-picker"
+          role="menu"
+          aria-label="Vardiya seçeneği"
+          style={{ top: activeRosterCell.top, left: activeRosterCell.left }}
+        >
+          {shiftRosterPresets.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`shift-roster-preset shift-roster-${preset.color} ${rosterPresetMatchesDraft(preset, activeDraft) ? "selected" : ""}`}
+              onClick={() => applyCellPreset(activePanel, activeRosterCell.userId, activeRosterCell.date, preset)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -7072,12 +8506,34 @@ function RemindersPage({
   );
 }
 
-function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "setAlert">) {
+function HotelPanelPage({
+  maintenanceStatus,
+  refreshMaintenanceStatus,
+  session,
+  setAlert,
+  showCredentialNotice
+}: Pick<RenderContext, "session" | "setAlert"> & {
+  maintenanceStatus: MaintenanceStatus;
+  refreshMaintenanceStatus: () => Promise<MaintenanceStatus>;
+  showCredentialNotice: (notice: Omit<CredentialNotice, "id">) => void;
+}) {
   const [hotels, setHotels] = useState<HotelRecord[]>([]);
   const [hotelDraft, setHotelDraft] = useState<HotelDraft>(() => newHotelDraft());
-  const [createdAdmin, setCreatedAdmin] = useState<{ hotel: HotelRecord; admin: DemoUser; temporaryPassword: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingHotelId, setDeletingHotelId] = useState<string | null>(null);
+  const [resettingUserId, setResettingUserId] = useState<string | null>(null);
+  const [savingMaintenanceMode, setSavingMaintenanceMode] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState(maintenanceStatus.message || DEFAULT_MAINTENANCE_MESSAGE);
+  const [selectedResetHotelId, setSelectedResetHotelId] = useState("");
+  const [selectedResetDepartmentId, setSelectedResetDepartmentId] = useState("");
+  const [selectedResetUserId, setSelectedResetUserId] = useState("");
+  const [expandedHotels, setExpandedHotels] = useState<Record<string, boolean>>({});
+  const [expandedDepartments, setExpandedDepartments] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setMaintenanceMessage(maintenanceStatus.message || DEFAULT_MAINTENANCE_MESSAGE);
+  }, [maintenanceStatus.message]);
 
   useEffect(() => {
     if (!isPlatformAdminUser(session)) return;
@@ -7108,9 +8564,41 @@ function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "
 
   const totalUsers = hotels.reduce((sum, hotel) => sum + hotel.counts.users, 0);
   const totalDepartments = hotels.reduce((sum, hotel) => sum + hotel.counts.departments, 0);
+  const resetCandidates = hotels.flatMap((hotel) => (
+    hotel.departments.flatMap((department) => (
+      department.users.map((user) => ({ hotel, department, user }))
+    ))
+  ));
+  const selectedResetHotel = hotels.find((hotel) => hotel.id === selectedResetHotelId);
+  const resetDepartmentOptions = selectedResetHotel?.departments ?? [];
+  const selectedResetDepartment = resetDepartmentOptions.find((department) => department.id === selectedResetDepartmentId);
+  const resetUserOptions = selectedResetDepartment?.users ?? [];
+  const selectedResetUser = resetCandidates.find((entry) => (
+    entry.hotel.id === selectedResetHotelId
+    && entry.department.id === selectedResetDepartmentId
+    && entry.user.id === selectedResetUserId
+  ));
 
   const updateDraft = (patch: Partial<HotelDraft>) => {
     setHotelDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const updateMaintenanceMode = async (enabled: boolean) => {
+    if (savingMaintenanceMode) return;
+    const message = maintenanceMessage.trim() || DEFAULT_MAINTENANCE_MESSAGE;
+    setSavingMaintenanceMode(true);
+    try {
+      await apiRequest<MaintenanceStatus>("/system/maintenance", {
+        method: "PATCH",
+        body: JSON.stringify({ enabled, message })
+      });
+      await refreshMaintenanceStatus();
+      setAlert(enabled ? "Bakım modu açıldı." : "Bakım modu kapatıldı.");
+    } catch {
+      setAlert("Bakım modu güncellenemedi. API bağlantısını kontrol edin.");
+    } finally {
+      setSavingMaintenanceMode(false);
+    }
   };
 
   const handleCreateHotel = async (event: FormEvent<HTMLFormElement>) => {
@@ -7120,35 +8608,38 @@ function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "
       setAlert("Otel adı zorunludur.");
       return;
     }
-    if (!hotelDraft.adminFullName.trim() || !hotelDraft.adminUsername.trim()) {
-      setAlert("Admin ad soyad ve kullanıcı adı zorunludur.");
-      return;
-    }
 
     setSaving(true);
     try {
       const payload = {
-        ...hotelDraft,
-        code: normalizeHotelCodeInput(hotelDraft.code || hotelDraft.name),
-        adminUsername: hotelDraft.adminUsername.trim().toLocaleLowerCase("tr-TR"),
-        adminEmail: hotelDraft.adminEmail.trim(),
-        adminPassword: hotelDraft.adminPassword.trim()
+        name: hotelDraft.name.trim(),
+        timezone: hotelDraft.timezone
       };
-      const response = await apiRequest<{ item: HotelRecord; admin: DemoUser; temporaryPassword: string }>("/hotels", {
+      const response = await apiRequest<{ item: HotelRecord; accounts: Array<{ label: string; user: DemoUser; temporaryPassword: string }> }>("/hotels", {
         method: "POST",
         body: JSON.stringify(payload)
       });
       setHotels((current) => [response.item, ...current.filter((hotel) => hotel.id !== response.item.id)]);
-      setCreatedAdmin({ hotel: response.item, admin: response.admin, temporaryPassword: response.temporaryPassword });
+      setExpandedHotels((current) => ({ ...current, [response.item.id]: true }));
       setHotelDraft(newHotelDraft());
-      setAlert(`${response.item.name} oteli oluşturuldu. Admin: ${response.admin.username} / Geçici şifre: ${response.temporaryPassword}`);
+      showCredentialNotice({
+        title: `${response.item.name} başlangıç hesapları`,
+        description: "Geçici şifreler bu kart siz X ile kapatana kadar ekranda kalır.",
+        items: response.accounts.map((account) => ({
+          label: account.label,
+          username: account.user.username,
+          password: account.temporaryPassword,
+          accountId: account.user.accountId
+        }))
+      });
+      setAlert(`${response.item.name} oluşturuldu. Başlangıç hesapları ayrı kartta gösteriliyor.`);
     } catch (error) {
       if (isApiRequestError(error) && error.code === "DUPLICATE_USERNAME") {
-        setAlert("Bu admin kullanıcı adı zaten kullanılıyor. Otel koduyla benzersiz bir kullanıcı adı girin.");
+        setAlert("Başlangıç kullanıcı adı çakıştı. Otel adını biraz farklılaştırıp tekrar deneyin.");
       } else if (isApiRequestError(error) && error.code === "DUPLICATE_EMAIL") {
-        setAlert("Bu admin e-posta adresi zaten kullanılıyor.");
+        setAlert("Başlangıç hesap e-posta adresi çakıştı. Tekrar deneyin.");
       } else if (isApiRequestError(error) && error.code === "DUPLICATE_RECORD") {
-        setAlert("Bu otel kodu zaten kullanılıyor.");
+        setAlert("Bu otel için sistem kimliği üretilemedi. Otel adını biraz farklılaştırın.");
       } else {
         setAlert("Otel kaydı oluşturulamadı. Bilgileri ve API bağlantısını kontrol edin.");
       }
@@ -7157,8 +8648,142 @@ function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "
     }
   };
 
+  const handleDeleteHotel = async (hotel: HotelRecord) => {
+    if (deletingHotelId) return;
+
+    const confirmed = window.confirm(`${hotel.name} oteli ve ona bağlı tüm operasyon kayıtları kalıcı olarak silinecek. Devam edilsin mi?`);
+    if (!confirmed) return;
+    const doubleConfirmed = window.confirm("Silmek istediğinize emin misiniz? Onaylarsanız otelin tüm kayıtları önce arşivlenir, ardından otel canlı sistemden kaldırılır.");
+    if (!doubleConfirmed) return;
+
+    setDeletingHotelId(hotel.id);
+    try {
+      await apiRequest<{ ok: true; item: HotelRecord }>(`/hotels/${hotel.id}`, { method: "DELETE" });
+      setHotels((current) => current.filter((item) => item.id !== hotel.id));
+      setAlert(`${hotel.name} oteli silindi.`);
+    } catch (error) {
+      if (isApiRequestError(error) && error.code === "CANNOT_DELETE_PLATFORM_HOTEL") {
+        setAlert("Platform sahibi oteli silinemez.");
+      } else if (isApiRequestError(error) && error.status === 404) {
+        setAlert("Silinecek otel kaydı bulunamadı.");
+        setHotels((current) => current.filter((item) => item.id !== hotel.id));
+      } else {
+        setAlert("Otel silinemedi. Bağlı kayıtlar veya API bağlantısı kontrol edilmeli.");
+      }
+    } finally {
+      setDeletingHotelId(null);
+    }
+  };
+
+  const toggleHotel = (hotelId: string) => {
+    setExpandedHotels((current) => ({ ...current, [hotelId]: !current[hotelId] }));
+  };
+
+  const toggleDepartment = (departmentId: string) => {
+    setExpandedDepartments((current) => ({ ...current, [departmentId]: !current[departmentId] }));
+  };
+
+  const choosePasswordResetTarget = (hotelId: string, departmentId: string, userId: string) => {
+    setSelectedResetHotelId(hotelId);
+    setSelectedResetDepartmentId(departmentId);
+    setSelectedResetUserId(userId);
+  };
+
+  const handlePlatformResetPassword = async (userId: string) => {
+    if (resettingUserId) return;
+    if (!selectedResetHotelId || !selectedResetDepartmentId || !userId) {
+      setAlert("Şifre oluşturmak için otel, departman ve personel seçilmelidir.");
+      return;
+    }
+    const target = resetCandidates.find((entry) => (
+      entry.hotel.id === selectedResetHotelId
+      && entry.department.id === selectedResetDepartmentId
+      && entry.user.id === userId
+    ));
+    if (!target) {
+      setAlert("Şifresi sıfırlanacak personel seçimi bulunamadı.");
+      return;
+    }
+
+    setResettingUserId(userId);
+    try {
+      const response = await apiRequest<{ ok: boolean; user: DemoUser; temporaryPassword: string }>(`/hotels/users/${userId}/reset-password`, { method: "POST" });
+      setHotels((current) => current.map((hotel) => ({
+        ...hotel,
+        departments: hotel.departments.map((department) => ({
+          ...department,
+          users: department.users.map((user) => (user.id === response.user.id ? response.user : user))
+        }))
+      })));
+      showCredentialNotice({
+        title: "Kullanıcı şifresi sıfırlandı",
+        description: "Yeni geçici şifreyi kullanıcıya güvenli kanaldan iletin. Bu kart siz X ile kapatana kadar kalır.",
+        items: [{
+          label: response.user.fullName,
+          username: response.user.username,
+          password: response.temporaryPassword,
+          accountId: response.user.accountId
+        }]
+      });
+      setAlert(`${response.user.fullName} için yeni geçici şifre oluşturuldu.`);
+    } catch {
+      setAlert("Kullanıcı şifresi sıfırlanamadı.");
+    } finally {
+      setResettingUserId(null);
+    }
+  };
+
   return (
     <div className="ui-list-stack">
+      <div className="card maintenance-control-card">
+        <div className="card-header">
+          <span className="card-title">Bakım Modu</span>
+          <span className={`badge ${maintenanceStatus.enabled ? "badge-maintenance" : "badge-completed"}`}>
+            {maintenanceStatus.enabled ? "Açık" : "Kapalı"}
+          </span>
+        </div>
+        <div className="card-body ui-body-form">
+          <label className="maintenance-toggle-row">
+            <input
+              type="checkbox"
+              checked={maintenanceStatus.enabled}
+              disabled={savingMaintenanceMode}
+              onChange={(event) => void updateMaintenanceMode(event.target.checked)}
+            />
+            <span>
+              <strong>{maintenanceStatus.enabled ? "Bakım modu açık" : "Bakım modu kapalı"}</strong>
+              <small>Tüm otel sayfalarında bakım ekranı gösterilir; Tenant Console açık kalır.</small>
+            </span>
+          </label>
+          <div className="form-row maintenance-message-row">
+            <div className="form-group ui-form-compact">
+              <label className="form-label" htmlFor="maintenanceMessage">Bakım Mesajı</label>
+              <input
+                id="maintenanceMessage"
+                className="form-control"
+                value={maintenanceMessage}
+                onChange={(event) => setMaintenanceMessage(event.target.value)}
+                placeholder={DEFAULT_MAINTENANCE_MESSAGE}
+              />
+            </div>
+            <div className="form-group ui-form-compact maintenance-save-group">
+              <button
+                type="button"
+                className="btn btn-secondary btn-full"
+                disabled={savingMaintenanceMode}
+                onClick={() => void updateMaintenanceMode(maintenanceStatus.enabled)}
+              >
+                <Save size={15} /> {savingMaintenanceMode ? "Kaydediliyor" : "Mesajı Kaydet"}
+              </button>
+            </div>
+          </div>
+          <p className="ui-meta">
+            Son güncelleme: {maintenanceStatus.source === "default" ? "-" : formatDateTime(maintenanceStatus.updatedAt)}
+            {maintenanceStatus.updatedBy ? ` · ${maintenanceStatus.updatedBy}` : ""}
+          </p>
+        </div>
+      </div>
+
       <div className="kpi-grid">
         <div className="kpi-card">
           <div className="kpi-icon completed"><LayoutDashboard size={19} /></div>
@@ -7177,67 +8802,106 @@ function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "
         </div>
       </div>
 
-      <div className="two-column-grid">
-        <div className="card">
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Hesap Şifresi Sıfırlama</span>
+          <span className="ui-meta">Platform Admin</span>
+        </div>
+        <div className="card-body ui-body-form">
+          <div className="form-row-3">
+            <div className="form-group ui-form-compact">
+              <label className="form-label">Otel <span className="required">*</span></label>
+              <select
+                className="form-control"
+                required
+                value={selectedResetHotelId}
+                onChange={(event) => {
+                  setSelectedResetHotelId(event.target.value);
+                  setSelectedResetDepartmentId("");
+                  setSelectedResetUserId("");
+                }}
+              >
+                <option value="">Otel seçin</option>
+                {hotels.map((hotel) => (
+                  <option key={hotel.id} value={hotel.id}>{hotel.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group ui-form-compact">
+              <label className="form-label">Otel Departmanı <span className="required">*</span></label>
+              <select
+                className="form-control"
+                required
+                disabled={!selectedResetHotelId}
+                value={selectedResetDepartmentId}
+                onChange={(event) => {
+                  setSelectedResetDepartmentId(event.target.value);
+                  setSelectedResetUserId("");
+                }}
+              >
+                <option value="">
+                  {!selectedResetHotelId ? "Önce otel seçin" : resetDepartmentOptions.length ? "Departman seçin" : "Bu otelde departman yok"}
+                </option>
+                {resetDepartmentOptions.map((department) => (
+                  <option key={department.id} value={department.id}>{department.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group ui-form-compact">
+              <label className="form-label">Otel Personeli <span className="required">*</span></label>
+              <select
+                className="form-control"
+                required
+                disabled={!selectedResetDepartmentId}
+                value={selectedResetUserId}
+                onChange={(event) => setSelectedResetUserId(event.target.value)}
+              >
+                <option value="">
+                  {!selectedResetDepartmentId ? "Önce departman seçin" : resetUserOptions.length ? "Personel seçin" : "Bu departmanda personel yok"}
+                </option>
+                {resetUserOptions.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.fullName} / {user.username} / {getRole(user.roleId).labelTR}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-warning btn-full"
+            disabled={!selectedResetHotel || !selectedResetDepartment || !selectedResetUser || Boolean(resettingUserId)}
+            onClick={() => void handlePlatformResetPassword(selectedResetUserId)}
+          >
+            <RefreshCcw size={15} /> {resettingUserId ? "Sıfırlanıyor" : "Rastgele Geçici Şifre Oluştur"}
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
           <div className="card-header">
             <span className="card-title">Otel Kaydı</span>
           </div>
           <form className="card-body ui-body-form" onSubmit={handleCreateHotel}>
-            <div className="form-group">
-              <label className="form-label">Otel Adı <span className="required">*</span></label>
-              <input className="form-control" value={hotelDraft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="Örn: A Otel" />
-            </div>
             <div className="form-row">
               <div className="form-group ui-form-compact">
-                <label className="form-label">Otel Kodu</label>
-                <input className="form-control" value={hotelDraft.code} onChange={(event) => updateDraft({ code: normalizeHotelCodeInput(event.target.value) })} placeholder="A_OTEL" />
+                <label className="form-label">Otel Adı <span className="required">*</span></label>
+                <input className="form-control" value={hotelDraft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="Örn: Pullman Accord Hotel" />
               </div>
               <div className="form-group ui-form-compact">
                 <label className="form-label">Zaman Dilimi</label>
-                <input className="form-control" value={hotelDraft.timezone} onChange={(event) => updateDraft({ timezone: event.target.value })} />
+                <select className="form-control" value={hotelDraft.timezone} onChange={(event) => updateDraft({ timezone: event.target.value })}>
+                  {HOTEL_TIMEZONE_OPTIONS.map((timezone) => (
+                    <option key={timezone} value={timezone}>{timezone}</option>
+                  ))}
+                </select>
               </div>
             </div>
-            <div className="form-group">
-              <label className="form-label">Admin Ad Soyad <span className="required">*</span></label>
-              <input className="form-control" value={hotelDraft.adminFullName} onChange={(event) => updateDraft({ adminFullName: event.target.value })} placeholder="Otel genel müdürü" />
-            </div>
-            <div className="form-row">
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Admin Kullanıcı Adı <span className="required">*</span></label>
-                <input className="form-control" value={hotelDraft.adminUsername} onChange={(event) => updateDraft({ adminUsername: event.target.value.toLocaleLowerCase("tr-TR") })} placeholder="a.admin" />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Admin E-posta</label>
-                <input className="form-control" type="email" value={hotelDraft.adminEmail} onChange={(event) => updateDraft({ adminEmail: event.target.value })} placeholder="ops@aotel.com" />
-              </div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Geçici Şifre</label>
-              <input className="form-control" type="text" value={hotelDraft.adminPassword} onChange={(event) => updateDraft({ adminPassword: event.target.value })} placeholder="Boş kalırsa otomatik üretilir" />
-            </div>
+            <p className="ui-meta">Otel oluşturulunca Genel Müdür ve İnsan Kaynakları Müdürü hesapları geçici şifreyle otomatik açılır.</p>
             <button type="submit" className="btn btn-primary btn-full" disabled={saving}>
               <Plus size={15} /> {saving ? "Oluşturuluyor" : "Otel Kaydı Oluştur"}
             </button>
           </form>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Son Oluşturulan</span>
-          </div>
-          <div className="card-body">
-            {createdAdmin ? (
-              <div className="ui-list-stack-compact">
-                <div className="stat-row"><span className="stat-label">Otel</span><span className="stat-value">{createdAdmin.hotel.name}</span></div>
-                <div className="stat-row"><span className="stat-label">Kod</span><span className="badge badge-inprogress">{createdAdmin.hotel.code}</span></div>
-                <div className="stat-row"><span className="stat-label">Admin</span><span className="stat-value">{createdAdmin.admin.username}</span></div>
-                <div className="stat-row"><span className="stat-label">Şifre</span><span className="badge badge-pending">{createdAdmin.temporaryPassword}</span></div>
-              </div>
-            ) : (
-              <EmptyState title="Yeni kayıt yok" description="Otel oluşturulduğunda admin bilgisi burada görünür." />
-            )}
-          </div>
-        </div>
       </div>
 
       <div className="card">
@@ -7246,21 +8910,80 @@ function HotelPanelPage({ session, setAlert }: Pick<RenderContext, "session" | "
           <span className="ui-meta">{loading ? "Yükleniyor" : `${hotels.length} kayıt`}</span>
         </div>
         <div className="card-body ui-list-stack-compact">
-          {hotels.length ? hotels.map((hotel) => (
-            <div className="job-card" key={hotel.id}>
-              <span className="priority-strip normal" />
-              <span className="job-main">
-                <span className="job-title">{hotel.name}</span>
-                <span className="job-meta">
-                  <span className="badge badge-inprogress">{hotel.code}</span>
-                  <span className="job-meta-item">{hotel.timezone}</span>
-                  <span className="job-meta-item">{hotel.counts.users} kullanıcı</span>
-                  <span className="job-meta-item">{hotel.counts.departments} departman</span>
-                  <span className="job-meta-item">{formatDateTime(hotel.createdAt)}</span>
-                </span>
-              </span>
-            </div>
-          )) : (
+          {hotels.length ? hotels.map((hotel) => {
+            const deleting = deletingHotelId === hotel.id;
+            const expanded = expandedHotels[hotel.id] ?? false;
+            return (
+              <div className="department-accordion" key={hotel.id}>
+                <button type="button" className="department-accordion-header" onClick={() => toggleHotel(hotel.id)}>
+                  <span>
+                    <strong>{hotel.name}</strong>
+                    <small>Otel ID {hotel.publicId || "-"} · {hotel.timezone} · {hotel.counts.users} kullanıcı · {hotel.counts.departments} departman · {formatDateTime(hotel.createdAt)}</small>
+                  </span>
+                  <span className="td-actions">
+                    <span className="badge badge-inprogress">{hotel.code}</span>
+                    <ChevronRight className={`accordion-chevron ${expanded ? "open" : ""}`} size={16} />
+                  </span>
+                </button>
+                {expanded ? (
+                  <div className="department-employee-list">
+                    {hotel.departments.length ? hotel.departments.map((department) => {
+                      const departmentExpanded = expandedDepartments[department.id] ?? false;
+                      return (
+                        <div className="department-accordion" key={department.id}>
+                          <button type="button" className="department-accordion-header" onClick={() => toggleDepartment(department.id)}>
+                            <span>
+                              <strong>{department.name}</strong>
+                              <small>{department.users.length} çalışan</small>
+                            </span>
+                            <ChevronRight className={`accordion-chevron ${departmentExpanded ? "open" : ""}`} size={16} />
+                          </button>
+                          {departmentExpanded ? (
+                            <div className="department-employee-list">
+                              {department.users.length ? department.users.map((user) => (
+                                <div className="employee-card" key={user.id}>
+                                  <span className="avatar">{initials(user.fullName)}</span>
+                                  <span className="employee-main">
+                                    <strong>{user.fullName}</strong>
+                                    <span>{user.username} · ID {user.accountId || "-"}</span>
+                                  </span>
+                                  <span className="td-actions">
+                                    <span className="badge badge-pending">{getRole(user.roleId).labelTR}</span>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost btn-sm"
+                                      onClick={() => choosePasswordResetTarget(hotel.id, department.id, user.id)}
+                                    >
+                                      <CheckCircle2 size={12} /> Seç
+                                    </button>
+                                  </span>
+                                </div>
+                              )) : (
+                                <EmptyState title="Çalışan yok" description="Bu departmanda kayıtlı çalışan bulunmuyor." />
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }) : (
+                      <EmptyState title="Departman yok" description="Bu otelde departman kaydı bulunmuyor." />
+                    )}
+                    <div className="action-row">
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={deleting}
+                        title="Oteli sil"
+                        onClick={() => void handleDeleteHotel(hotel)}
+                      >
+                        <Trash2 size={13} /> {deleting ? "Siliniyor" : "Oteli Sil"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          }) : (
             <EmptyState title={loading ? "Yükleniyor" : "Otel kaydı yok"} description="Yeni otel kaydı oluşturabilirsiniz." />
           )}
         </div>
@@ -7406,54 +9129,186 @@ function DepartmentManagementCard({
   );
 }
 
-function SettingsPage({ session }: RenderContext) {
+function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, setAlert }: RenderContext) {
+  const [profileDraft, setProfileDraft] = useState({
+    username: session.username,
+    currentPassword: ""
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  useEffect(() => {
+    setProfileDraft({ username: session.username, currentPassword: "" });
+  }, [session.id, session.username]);
+
+  async function handleProfileChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (savingProfile) return;
+
+    const username = profileDraft.username.trim();
+    if (username.length < 2) {
+      setAlert("Kullanıcı adı en az 2 karakter olmalı.");
+      return;
+    }
+    if (!profileDraft.currentPassword) {
+      setAlert("Kullanıcı adını değiştirmek için mevcut şifre zorunludur.");
+      return;
+    }
+
+    const previousUsername = session.username;
+    setSavingProfile(true);
+    try {
+      const response = await apiRequest<{ ok: boolean; user: DemoUser }>("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          username,
+          currentPassword: profileDraft.currentPassword
+        })
+      });
+      rememberAuthenticatedPassword(response.user, profileDraft.currentPassword);
+      setProfileDraft({ username: response.user.username, currentPassword: "" });
+      setAlert(previousUsername === response.user.username ? "Profil bilgileri güncel." : "Kullanıcı adı güncellendi.");
+      await refreshData();
+    } catch (error) {
+      setAlert(profileUpdateErrorMessage(error));
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handlePasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (changingPassword) return;
+
+    if (!passwordDraft.currentPassword || !passwordDraft.newPassword || !passwordDraft.confirmPassword) {
+      setAlert("Şifre alanları zorunludur.");
+      return;
+    }
+    if (passwordDraft.newPassword.length < 6) {
+      setAlert("Yeni şifre en az 6 karakter olmalı.");
+      return;
+    }
+    if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
+      setAlert("Yeni şifreler eşleşmiyor.");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      await apiRequest<{ ok: boolean; user: DemoUser }>("/auth/password", {
+        method: "PATCH",
+        body: JSON.stringify({
+          currentPassword: passwordDraft.currentPassword,
+          newPassword: passwordDraft.newPassword
+        })
+      });
+      setPasswordDraft({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setAlert("Şifre değiştirildi.");
+      await refreshData();
+    } catch (error) {
+      setAlert(passwordChangeErrorMessage(error));
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
   return (
     <>
       <div className="two-column-grid">
-      <div className="card">
+        <div className="card">
           <div className="card-header"><span className="card-title">Profilim</span></div>
-        <div className="card-body">
+          <form className="card-body" onSubmit={handleProfileChange}>
             <div className="ui-profile-summary">
               <div className="avatar avatar-xl">{initials(session.fullName)}</div>
               <div className="ui-profile-name">{session.fullName}</div>
+              <div className="ui-profile-id">ID:{session.accountId || session.id}</div>
               <div className="ui-profile-role">{roleLabel(session.roleId)}</div>
             </div>
             <div className="form-group">
               <label className="form-label">Ad Soyad</label>
-              <input className="form-control" defaultValue={session.fullName} />
+              <input className="form-control" value={session.fullName} disabled />
             </div>
             <div className="form-group">
               <label className="form-label">E-posta</label>
-              <input className="form-control" defaultValue={session.email} />
+              <input className="form-control" value={session.email} disabled />
             </div>
             <div className="form-group">
-              <label className="form-label">Telefon</label>
-              <input className="form-control" placeholder="+90 555 000 00 00" />
+              <label className="form-label" htmlFor="settingsUsername">Kullanıcı Adı <span className="required">*</span></label>
+              <input
+                id="settingsUsername"
+                className="form-control"
+                value={profileDraft.username}
+                onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))}
+                autoComplete="username"
+              />
             </div>
-            <button className="btn btn-primary btn-full"><Save size={15} /> Profili Güncelle</button>
-          </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="settingsProfilePassword">Mevcut Şifre <span className="required">*</span></label>
+              <input
+                id="settingsProfilePassword"
+                className="form-control"
+                type="password"
+                value={profileDraft.currentPassword}
+                onChange={(event) => setProfileDraft((draft) => ({ ...draft, currentPassword: event.target.value }))}
+                placeholder="Kullanıcı adı değişikliği için"
+                autoComplete="current-password"
+              />
+            </div>
+            <button type="submit" className="btn btn-primary btn-full" disabled={savingProfile} aria-busy={savingProfile}>
+              <Save size={15} /> {savingProfile ? "Kaydediliyor" : "Profili Güncelle"}
+            </button>
+          </form>
         </div>
 
         <div className="card">
           <div className="card-header"><span className="card-title">Şifre Değiştir</span></div>
-          <div className="card-body">
+          <form className="card-body" onSubmit={handlePasswordChange}>
             <div className="form-group">
-              <label className="form-label">Mevcut Şifre <span className="required">*</span></label>
-              <input className="form-control" type="password" placeholder="Mevcut şifreniz" />
+              <label className="form-label" htmlFor="settingsCurrentPassword">Mevcut Şifre <span className="required">*</span></label>
+              <input
+                id="settingsCurrentPassword"
+                className="form-control"
+                type="password"
+                value={passwordDraft.currentPassword}
+                onChange={(event) => setPasswordDraft((draft) => ({ ...draft, currentPassword: event.target.value }))}
+                placeholder="Mevcut şifreniz"
+                autoComplete="current-password"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">Yeni Şifre <span className="required">*</span></label>
-              <input className="form-control" type="password" placeholder="En az 6 karakter" />
+              <label className="form-label" htmlFor="settingsNewPassword">Yeni Şifre <span className="required">*</span></label>
+              <input
+                id="settingsNewPassword"
+                className="form-control"
+                type="password"
+                value={passwordDraft.newPassword}
+                onChange={(event) => setPasswordDraft((draft) => ({ ...draft, newPassword: event.target.value }))}
+                placeholder="En az 6 karakter"
+                autoComplete="new-password"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">Yeni Şifre (Tekrar) <span className="required">*</span></label>
-              <input className="form-control" type="password" placeholder="Şifreyi tekrar girin" />
+              <label className="form-label" htmlFor="settingsConfirmPassword">Yeni Şifre (Tekrar) <span className="required">*</span></label>
+              <input
+                id="settingsConfirmPassword"
+                className="form-control"
+                type="password"
+                value={passwordDraft.confirmPassword}
+                onChange={(event) => setPasswordDraft((draft) => ({ ...draft, confirmPassword: event.target.value }))}
+                placeholder="Şifreyi tekrar girin"
+                autoComplete="new-password"
+              />
             </div>
-            <button className="btn btn-warning btn-full"><LockKeyhole size={15} /> Şifre Değiştir</button>
-          </div>
+            <button type="submit" className="btn btn-warning btn-full" disabled={changingPassword} aria-busy={changingPassword}>
+              <LockKeyhole size={15} /> {changingPassword ? "Kaydediliyor" : "Şifre Değiştir"}
+            </button>
+          </form>
         </div>
-
-        <SecurityMatrixCard />
 
         {session.roleId === "generalManager" && (
           <>
@@ -7492,34 +9347,6 @@ function SettingsPage({ session }: RenderContext) {
         </div>
       </div>
     </>
-  );
-}
-
-function SecurityMatrixCard() {
-  const securityItems: Array<{ label: string; icon: LucideIcon }> = [
-    { label: "JWT Authentication", icon: KeyRound },
-    { label: "Session Management", icon: LockKeyhole },
-    { label: "2FA Desteği", icon: ShieldCheck },
-    { label: "IP Log ve Login History", icon: FileText },
-    { label: "Audit Log", icon: ClipboardCheck },
-    { label: "Rate Limit", icon: AlertTriangle }
-  ];
-
-  return (
-    <div className="card">
-      <div className="card-header"><span className="card-title">Güvenlik</span></div>
-      <div className="card-body ui-body-compact">
-        {securityItems.map(({ label, icon: SecurityIcon }) => {
-          return (
-            <div key={label} className="checklist-item">
-              <SecurityIcon size={16} color="#2563EB" />
-              <span className="ui-field-note">{label}</span>
-              <span className="badge badge-completed">Aktif</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
