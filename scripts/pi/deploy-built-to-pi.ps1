@@ -73,7 +73,11 @@ function Copy-RequiredDirectory {
     [Parameter(Mandatory = $true)]
     [string] $To,
 
-    [switch] $ExcludeDownloads
+    [switch] $ExcludeDownloads,
+
+    [string[]] $ExcludeDirectoryNames = @(),
+
+    [string[]] $ExcludeFileNames = @()
   )
 
   if (-not (Test-Path $From)) {
@@ -94,6 +98,15 @@ function Copy-RequiredDirectory {
 
   if ($ExcludeDownloads) {
     $robocopyArgs += @("/XD", (Join-Path $From "downloads"))
+  }
+  if ($ExcludeDirectoryNames.Count -gt 0) {
+    $robocopyArgs += @("/XD")
+    foreach ($directoryName in $ExcludeDirectoryNames) {
+      $robocopyArgs += (Join-Path $From $directoryName)
+    }
+  }
+  if ($ExcludeFileNames.Count -gt 0) {
+    $robocopyArgs += @("/XF") + $ExcludeFileNames
   }
 
   & robocopy @robocopyArgs | Out-Null
@@ -346,6 +359,16 @@ try {
   Copy-RequiredItem -From (Join-Path $root "apps\desktop\package.json") -To (Join-Path $stage "apps\desktop\package.json")
   Copy-RequiredItem -From (Join-Path $root "apps\desktop\README.md") -To (Join-Path $stage "apps\desktop\README.md")
   Copy-RequiredItem -From (Join-Path $root "apps\desktop\MAC_BUILD.md") -To (Join-Path $stage "apps\desktop\MAC_BUILD.md")
+  Copy-RequiredDirectory `
+    -From (Join-Path $root "apps\android") `
+    -To (Join-Path $stage "apps\android") `
+    -ExcludeDirectoryNames @(".gradle", ".kotlin", ".idea", "build", "app\build", "app\.cxx", "captures", ".externalNativeBuild", ".cxx") `
+    -ExcludeFileNames @("local.properties", "hotelops-release.jks", "google-services.json", "*.iml")
+  Copy-RequiredDirectory `
+    -From (Join-Path $root "apps\ios") `
+    -To (Join-Path $stage "apps\ios") `
+    -ExcludeDirectoryNames @("build", "DerivedData", ".swiftpm", "xcuserdata") `
+    -ExcludeFileNames @("*.xcuserstate")
   Copy-RequiredItem -From (Join-Path $root "packages") -To (Join-Path $stage "packages")
   Copy-RequiredItem -From (Join-Path $root "docs") -To (Join-Path $stage "docs")
   Copy-RequiredItem -From (Join-Path $root "scripts") -To (Join-Path $stage "scripts")
@@ -553,6 +576,9 @@ sudo rsync -a --delete '$remoteStage/apps/desktop/build/' /opt/noderasoftware/ap
 sudo rsync -a '$remoteStage/apps/desktop/package.json' /opt/noderasoftware/apps/desktop/package.json
 sudo rsync -a '$remoteStage/apps/desktop/README.md' /opt/noderasoftware/apps/desktop/README.md
 sudo rsync -a '$remoteStage/apps/desktop/MAC_BUILD.md' /opt/noderasoftware/apps/desktop/MAC_BUILD.md
+sudo mkdir -p /opt/noderasoftware/apps/android /opt/noderasoftware/apps/ios
+sudo rsync -a --delete '$remoteStage/apps/android/' /opt/noderasoftware/apps/android/
+sudo rsync -a --delete '$remoteStage/apps/ios/' /opt/noderasoftware/apps/ios/
 sudo rsync -a --delete '$remoteStage/packages/' /opt/noderasoftware/packages/
 sudo rsync -a --delete '$remoteStage/docs/' /opt/noderasoftware/docs/
 sudo rsync -a --delete '$remoteStage/scripts/' /opt/noderasoftware/scripts/
@@ -563,12 +589,13 @@ sudo rsync -a '$remoteStage/.env.example' /opt/noderasoftware/.env.example
 sudo rsync -a '$remoteStage/.gitignore' /opt/noderasoftware/.gitignore
 sudo rsync -a '$remoteStage/README.md' /opt/noderasoftware/README.md
 
-sudo chown -R hotelops:hotelops /opt/noderasoftware/apps/api /opt/noderasoftware/apps/web /opt/noderasoftware/apps/desktop /opt/noderasoftware/packages /opt/noderasoftware/docs /opt/noderasoftware/scripts /opt/noderasoftware/prisma /opt/noderasoftware/package.json /opt/noderasoftware/package-lock.json /opt/noderasoftware/.env.example /opt/noderasoftware/.gitignore /opt/noderasoftware/README.md
+sudo chown -R hotelops:hotelops /opt/noderasoftware/apps/api /opt/noderasoftware/apps/web /opt/noderasoftware/apps/desktop /opt/noderasoftware/apps/android /opt/noderasoftware/apps/ios /opt/noderasoftware/packages /opt/noderasoftware/docs /opt/noderasoftware/scripts /opt/noderasoftware/prisma /opt/noderasoftware/package.json /opt/noderasoftware/package-lock.json /opt/noderasoftware/.env.example /opt/noderasoftware/.gitignore /opt/noderasoftware/README.md
 sudo find /opt/noderasoftware/apps/api/dist -type d -exec chmod 755 {} +
 sudo find /opt/noderasoftware/apps/api/dist -type f -exec chmod 644 {} +
 sudo find /opt/noderasoftware/apps/web/out -type d -exec chmod 755 {} +
 sudo find /opt/noderasoftware/apps/web/out -type f -exec chmod 644 {} +
 sudo chmod +x /opt/noderasoftware/apps/desktop/scripts/*.sh 2>/dev/null || true
+sudo chmod +x /opt/noderasoftware/apps/android/gradlew 2>/dev/null || true
 
 $dependencyCommand
 $databaseCommand
