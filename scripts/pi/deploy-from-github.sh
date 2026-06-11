@@ -92,10 +92,12 @@ cp "${APP_DIR}/scripts/pi/hotelops-api.service" /etc/systemd/system/hotelops-api
 systemctl daemon-reload
 systemctl restart hotelops-api
 
-if [ -f "${APP_DIR}/scripts/pi/noderasoftware-nginx.conf" ]; then
+if [ -f "/etc/letsencrypt/live/noderasoftware.com/fullchain.pem" ] && [ -f "${APP_DIR}/scripts/pi/noderasoftware-nginx-ssl.conf" ]; then
+  cp "${APP_DIR}/scripts/pi/noderasoftware-nginx-ssl.conf" /etc/nginx/sites-available/noderasoftware
+elif [ -f "${APP_DIR}/scripts/pi/noderasoftware-nginx.conf" ]; then
   cp "${APP_DIR}/scripts/pi/noderasoftware-nginx.conf" /etc/nginx/sites-available/noderasoftware
-  ln -sfn /etc/nginx/sites-available/noderasoftware /etc/nginx/sites-enabled/noderasoftware
 fi
+ln -sfn /etc/nginx/sites-available/noderasoftware /etc/nginx/sites-enabled/noderasoftware
 
 nginx -t
 systemctl reload nginx
