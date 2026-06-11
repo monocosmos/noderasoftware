@@ -33,6 +33,7 @@ import {
   RefreshCcw,
   Save,
   Search,
+  Send,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -528,6 +529,7 @@ type WorkOrderPolicyRecord = {
   departmentId: string;
   assignmentAuthorityUserIds: string[];
   deleteAuthorityUserIds: string[];
+  delayAuthorityUserIds: string[];
   users: DemoUser[];
   canConfigure: boolean;
 };
@@ -591,7 +593,7 @@ const HOTEL_TIMEZONE_OPTIONS = [
 ] as const;
 const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
 const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
-const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/reminders"] as const;
+const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/notifications"] as const;
 const ALERT_AUTO_DISMISS_SECONDS = 5;
 const MAX_SAVED_LOGIN_ACCOUNTS = 8;
 
@@ -687,7 +689,7 @@ function notificationTargetPath(notification: Pick<NotificationRecord, "title" |
   if (normalizedTitle.includes("vardiya") || normalizedChannel === "SHIFT_START_REMINDER") return "/dashboard";
   if (normalizedChannel.includes("REMINDER")) return "/reminders";
 
-  return "/reminders";
+  return "/notifications";
 }
 
 function mobileTabIndexForPath(path: string) {
@@ -701,6 +703,7 @@ function mobileTabIndexForPath(path: string) {
 
 function isNavPathActive(currentPath: string, itemPath: string) {
   if (itemPath.includes("?")) return currentPath === itemPath;
+  if (currentPath.startsWith("/jobs?") && itemPath === "/jobs") return false;
 
   const currentPathname = (currentPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
   const itemPathname = (itemPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
@@ -3617,6 +3620,17 @@ function statusClass(status: JobStatus) {
   return classes[status];
 }
 
+function jobStatusStripClass(status: JobStatus) {
+  const classes: Record<JobStatus, string> = {
+    Pending: "pending",
+    InProgress: "inprogress",
+    Completed: "completed",
+    Delayed: "delayed",
+    Cancelled: "pending"
+  };
+  return classes[status];
+}
+
 function typeClass(type: JobType) {
   const classes: Record<JobType, string> = {
     Job: "job",
@@ -3633,15 +3647,25 @@ function canViewDepartment(user: DemoUser, departmentId: string) {
   return getRole(user.roleId).visibleDepartments.includes(departmentId as DepartmentId) || user.departmentId === departmentId;
 }
 
-function canTrackDepartmentOriginatedJobs(user: Pick<DemoUser, "roleId">) {
-  return user.roleId !== "staff";
+function canTrackDepartmentOriginatedJobs() {
+  return true;
 }
 
 function canViewOriginatedJob(user: DemoUser, job: Pick<JobRecord, "createdBy" | "createdByUserId" | "createdByAccountId" | "createdByDepartmentId">) {
   if (job.createdByUserId === user.id) return true;
   if (job.createdByAccountId && job.createdByAccountId === user.accountId) return true;
   if (!job.createdByUserId && !job.createdByAccountId && job.createdBy === user.username) return true;
-  return canTrackDepartmentOriginatedJobs(user) && job.createdByDepartmentId === user.departmentId;
+  return canTrackDepartmentOriginatedJobs() && job.createdByDepartmentId === user.departmentId;
+}
+
+function isIncomingDepartmentJob(user: DemoUser, job: Pick<JobRecord, "departmentId">) {
+  if (user.roleId === "generalManager") return true;
+  return job.departmentId === user.departmentId;
+}
+
+function isOutgoingDepartmentJob(user: DemoUser, job: Pick<JobRecord, "createdByDepartmentId" | "departmentId">) {
+  if (user.roleId === "generalManager") return false;
+  return job.createdByDepartmentId === user.departmentId && job.departmentId !== user.departmentId;
 }
 
 function canManageUsers(user: DemoUser) {
@@ -3782,6 +3806,11 @@ function canClaimDepartmentJob(user: DemoUser, job: Pick<JobRecord, "assignee" |
 
 function canAssignJob(user: DemoUser, job: Pick<JobRecord, "departmentId">, policy: WorkOrderPolicyRecord | null) {
   if (user.departmentId === job.departmentId && policy?.assignmentAuthorityUserIds.includes(user.id)) return true;
+  return canManageJobStatus(user, job);
+}
+
+function canDelayJob(user: DemoUser, job: Pick<JobRecord, "departmentId">, policy: WorkOrderPolicyRecord | null) {
+  if (user.departmentId === job.departmentId && (policy?.delayAuthorityUserIds ?? []).includes(user.id)) return true;
   return canManageJobStatus(user, job);
 }
 
@@ -5849,7 +5878,7 @@ export function HotelOpsSystem() {
               {pageTitle.title} <span className="header-subtitle">{pageTitle.subtitle}</span>
             </div>
             <div className="header-actions">
-              <button type="button" className="header-btn" title="Bildirimler" onClick={() => navigate("/reminders")}>
+              <button type="button" className="header-btn" title="Bildirimler" onClick={() => navigate("/notifications")}>
                 <Bell size={17} />
                 {unreadNotificationCount > 0 && <span className="notif-badge">{unreadNotificationCount}</span>}
               </button>
@@ -6448,9 +6477,11 @@ function SidebarNav({
   const [query, setQuery] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ "Bugün": true, "Operasyon": true });
   const activeJobs = visibleJobs.filter((job) => job.status !== "Completed");
-  const assignedJobs = activeJobs.filter((job) => job.assignee === session.fullName);
-  const delayedJobs = activeJobs.filter((job) => job.status === "Delayed" || job.slaRisk);
-  const urgentJobs = activeUrgentJobsForUser(session, activeJobs);
+  const incomingJobs = activeJobs.filter((job) => isIncomingDepartmentJob(session, job));
+  const outgoingJobs = activeJobs.filter((job) => isOutgoingDepartmentJob(session, job));
+  const assignedJobs = incomingJobs.filter((job) => job.assignee === session.fullName);
+  const delayedJobs = incomingJobs.filter((job) => job.status === "Delayed" || job.slaRisk);
+  const urgentJobs = activeUrgentJobsForUser(session, incomingJobs);
   const unreadCount = notifications.filter((notification) => !notification.readAt).length;
   const requestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status)).length;
   const unreadRequestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status) && !request.readAt).length;
@@ -6482,7 +6513,7 @@ function SidebarNav({
     ...(can("managementRequests") ? [entry("requests-priority", "managementRequests", "/modules/requests", unreadRequestCount ? "Okunmamış Talepler" : "Talepler", MessageSquareText, unreadRequestCount || requestCount, "onay yönetici talep")] : []),
     ...(session.roleId === "hrManager" ? [] : [entry("urgent", "jobs", "/jobs?view=urgent", urgentJobsNavLabel, AlertTriangle, urgentJobs.length, urgentJobsKeywords())]),
     entry("delayed", "jobs", "/jobs?view=delayed", "Geciken İşler", Clock, delayedJobs.length, "sla geç kalan"),
-    entry("notifications", "reminders", "/reminders", "Bildirimler", Bell, unreadCount, "hatırlatma uyarı")
+    entry("notifications", "reminders", "/notifications", "Bildirimler", Bell, unreadCount, "uyarı sistem operasyon")
   ];
   const sections = [
     {
@@ -6492,11 +6523,12 @@ function SidebarNav({
     {
       title: "Operasyon",
       items: [
-        entry("jobs", "jobs", "/jobs", "İşler", ClipboardList, undefined, "iş görev liste"),
+        entry("incoming-jobs", "jobs", "/jobs", "Gelen İşler", ClipboardList, incomingJobs.length, "iş görev liste gelen departman havuzu"),
+        entry("outgoing-jobs", "jobs", "/jobs?view=outgoing", "Giden İşler", Send, outgoingJobs.length, "iş görev liste giden departman havuzu"),
         ...(canCreateJobType(session, "PlannedMaintenance") ? [entry("periodic-maintenance", "periodicMaintenance", "/jobs/new?type=PlannedMaintenance", "Periyodik Bakım Planı", CalendarDays, undefined, "planlı bakım periyodik departman")] : []),
         entry("housekeeping", "housekeeping", "/housekeeping", "HK Planları", Home, undefined, "kat temizlik housekeeping"),
         entry("calendar", "departmentCalendar", "/calendar/department", "Takvim", CalendarDays, todayPlannedJobCount, `${departmentLabelFor(session.departmentId)} bugün planlı iş`),
-        entry("reminders", "reminders", "/reminders", "Hatırlatmalar", Bell, unreadCount, "uyarı"),
+        entry("reminders", "reminders", "/reminders", "Hatırlatmalar", Bell, undefined, "hatırlatma"),
         entry("shift-panels", "shiftPanels", "/shift-panels", "Vardiya Paneli", Timer, undefined, "vardiya çizelge excel sorumlu")
       ]
     },
@@ -6593,9 +6625,9 @@ function MobileBottomNav({
 }) {
   const items = ([
     { path: "/dashboard", label: "Ana Sayfa", icon: LayoutDashboard, moduleId: "dashboard" },
-    { path: "/jobs", label: "İşler", icon: ClipboardList, moduleId: "jobs" },
+    { path: "/jobs", label: "Gelen", icon: ClipboardList, moduleId: "jobs" },
     { path: "/calendar/department", label: "Takvim", icon: CalendarDays, moduleId: "departmentCalendar" },
-    { path: "/reminders", label: "Uyarılar", icon: Bell, moduleId: "reminders", badge: unreadCount || undefined }
+    { path: "/notifications", label: "Bildirim", icon: Bell, moduleId: "reminders", badge: unreadCount || undefined }
   ] satisfies Array<{ path: string; label: string; icon: LucideIcon; moduleId: ModuleId; badge?: number }>).filter((item) => canUseModule(session, item.moduleId));
   const activeIndex = items.findIndex((item) => isNavPathActive(currentPath, item.path));
   const indicatorWidth = `calc((100% - 12px - ${Math.max(items.length - 1, 0) * 4}px) / ${Math.max(items.length, 1)})`;
@@ -6671,13 +6703,14 @@ function NavItem({
 function getPageTitle(path: string) {
   if (path === "/jobs/new") return { title: "Yeni İş Oluştur", subtitle: "" };
   if (path === "/jobs/detail") return { title: "İş Detayı", subtitle: "" };
-  if (path === "/jobs") return { title: "İş Listesi", subtitle: "" };
+  if (path === "/jobs") return { title: "Gelen İşler", subtitle: "" };
   if (path === "/maintenance") return { title: "Takvim", subtitle: "Departman Takvimi" };
   if (path === "/housekeeping") return { title: "Planlı İşler", subtitle: "Housekeeping" };
   if (path.startsWith("/calendar")) return { title: "Takvim", subtitle: "Operasyon Planı" };
   if (path === "/users") return { title: "Kullanıcı Yönetimi", subtitle: "" };
   if (path === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
+  if (path === "/notifications") return { title: "Bildirimler", subtitle: "" };
   if (path === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
   if (path === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
   if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
@@ -6772,7 +6805,7 @@ function moduleForPath(path: string): ModuleId {
   if (path === "/maintenance") return "departmentCalendar";
   if (path === "/housekeeping") return "housekeeping";
   if (path.startsWith("/calendar")) return "departmentCalendar";
-  if (path === "/reminders") return "reminders";
+  if (path === "/reminders" || path === "/notifications") return "reminders";
   if (path === "/shift-panels") return "shiftPanels";
   if (path === "/department-tables") return "departmentTables";
   if (path === "/users") return "users";
@@ -6804,6 +6837,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/users") return <UsersPage {...context} />;
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
+  if (currentPath === "/notifications") return <NotificationsPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
   if (currentPath === "/modules/requests") return <ManagementRequestsPage {...context} />;
@@ -7836,8 +7870,17 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const quickView = queryParams.get("view");
-  const departmentPoolCount = visibleJobs.filter((job) => job.departmentId === session.departmentId && isDepartmentPoolJob(job)).length;
-  const completedCount = visibleJobs.filter((job) => job.status === "Completed").length;
+  const poolView = quickView === "pool" && queryParams.get("pool") === "delayed" ? "delayed" : "priority";
+  const incomingVisibleJobs = visibleJobs.filter((job) => isIncomingDepartmentJob(session, job));
+  const outgoingVisibleJobs = visibleJobs.filter((job) => isOutgoingDepartmentJob(session, job));
+  const incomingFilteredJobs = filteredJobs.filter((job) => isIncomingDepartmentJob(session, job));
+  const outgoingFilteredJobs = filteredJobs.filter((job) => isOutgoingDepartmentJob(session, job));
+  const activeIncomingCount = incomingVisibleJobs.filter((job) => job.status !== "Completed").length;
+  const activeOutgoingCount = outgoingVisibleJobs.filter((job) => job.status !== "Completed").length;
+  const departmentPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job)).length;
+  const priorityPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status !== "Delayed").length;
+  const delayedPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status === "Delayed").length;
+  const completedCount = incomingVisibleJobs.filter((job) => job.status === "Completed").length;
   const blankFilters = {
     search: "",
     status: "",
@@ -7850,23 +7893,30 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
     slaRisk: ""
   };
   const applyQuickFilter = (nextFilters: Partial<typeof blankFilters>) => setFilters({ ...blankFilters, ...nextFilters });
-  const listSource = quickView ? visibleJobs : filteredJobs;
+  const listSource = quickView === "outgoing"
+    ? outgoingFilteredJobs
+    : quickView
+      ? incomingVisibleJobs
+      : incomingFilteredJobs;
   const showCompletedJobs = quickView === "completed" || (!quickView && filters.status === "Completed");
   const listJobs = listSource
-    .filter((job) => showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
+    .filter((job) => quickView === "outgoing" ? job.status !== "Completed" : showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
     .filter((job) => {
       if (quickView === "assigned") return job.assignee === session.fullName;
-      if (quickView === "pool") return job.departmentId === session.departmentId && isDepartmentPoolJob(job);
+      if (quickView === "pool") return isDepartmentPoolJob(job) && (poolView === "delayed" ? job.status === "Delayed" : job.status !== "Delayed");
       if (quickView === "urgent") return isUrgentJobForUser(session, job);
       if (quickView === "delayed") return job.status === "Delayed" || Boolean(job.slaRisk);
       if (quickView === "periodic") return job.type === "PlannedMaintenance";
+      if (quickView === "outgoing") return true;
       if (quickView === "completed") return true;
       return true;
     });
   const quickViewLabel = quickView === "assigned"
     ? "Bana Atanan"
     : quickView === "pool"
-      ? departmentPoolLabel(session.departmentId, departmentLabelFor)
+      ? poolView === "delayed" ? "Ertelenen Arıza" : "Öncelikli Arıza"
+    : quickView === "outgoing"
+      ? "Giden İşler"
     : quickView === "urgent"
       ? urgentJobsLabel()
     : quickView === "delayed"
@@ -7940,10 +7990,18 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
       {filtersOpen && <button type="button" className="filter-backdrop" onClick={() => setFiltersOpen(false)} aria-label="Filtreleri kapat" />}
 
       <div className="jobs-view-tabs" role="tablist" aria-label="İş listesi görünümü">
-        <button type="button" className={`jobs-view-tab ${quickView !== "completed" && quickView !== "pool" ? "active" : ""}`} onClick={() => navigate("/jobs")}>Aktif İşler</button>
-        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool")}>İş Havuzu ({departmentPoolCount})</button>
+        <button type="button" className={`jobs-view-tab ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Gelen İşler ({activeIncomingCount})</button>
+        <button type="button" className={`jobs-view-tab ${quickView === "outgoing" ? "active" : ""}`} onClick={() => navigate("/jobs?view=outgoing")}>Giden İşler ({activeOutgoingCount})</button>
+        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
         <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
       </div>
+
+      {quickView === "pool" && (
+        <div className="jobs-pool-tabs" role="tablist" aria-label="İş havuzu alt görünümü">
+          <button type="button" className={`jobs-pool-tab ${poolView === "priority" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>Öncelikli Arıza ({priorityPoolCount})</button>
+          <button type="button" className={`jobs-pool-tab ${poolView === "delayed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=delayed")}>Ertelenen Arıza ({delayedPoolCount})</button>
+        </div>
+      )}
 
       <div className="list-toolbar">
         <span className="ui-muted">{quickViewLabel ? `${quickViewLabel}: ` : ""}{listJobs.length} kayıt listeleniyor</span>
@@ -7952,7 +8010,8 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool")}>İş Havuzu ({departmentPoolCount})</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => navigate("/jobs?view=outgoing")}>Giden İşler ({activeOutgoingCount})</button>
           <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>
           <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>
         </div>
@@ -7968,7 +8027,7 @@ function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel }: {
     <div className="job-list">
       {jobs.map((job) => (
         <button key={job.id} className={`job-card status-${job.status.toLowerCase()} priority-${job.priority.toLowerCase()}`} onClick={() => navigate(`/jobs/detail?id=${job.id}`)}>
-          <span className={`priority-strip ${priorityClass(job.priority)}`} />
+          <span className={`priority-strip ${jobStatusStripClass(job.status)}`} />
           <span className="job-main">
             <span className="job-title">{job.title}</span>
             <span className="job-meta">
@@ -8483,6 +8542,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const comments = job.comments ?? [];
   const timeline = job.timeline ?? [];
   const canEditJobStatus = canManageJobStatus(session, job);
+  const canDelayCurrentJob = canDelayJob(session, job, departmentWorkPolicy);
   const canClaimJob = canClaimDepartmentJob(session, job);
   const canAssignCurrentJob = canAssignJob(session, job, departmentWorkPolicy);
   const canCompleteCurrentJob = canCompleteJob(session, job);
@@ -8598,7 +8658,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
           {canClaimJob && <button type="button" className="btn btn-start" onClick={claimJob}><Wrench size={15} /> İşi Al</button>}
           {canCompleteCurrentJob && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
           {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
-          {canEditJobStatus && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
+          {canDelayCurrentJob && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
           <button type="button" className="btn btn-secondary" onClick={addComment}><MessageSquareText size={15} /> Not Ekle</button>
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
           <button type="button" className="btn btn-secondary" onClick={() => document.getElementById("job-detail-media")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Camera size={15} /> Medyayı Gör</button>
@@ -8612,7 +8672,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
         <div>
           <div className="card ui-section-bottom">
             <div className="card-body">
-              <div className={`priority-strip-lg ${priorityClass(job.priority)}`} />
+              <div className={`priority-strip-lg ${jobStatusStripClass(job.status)}`} />
 
               <div className="ui-cluster-between ui-section-bottom-sm">
                 <div className="ui-fill">
@@ -8791,7 +8851,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
               <div className="card-body ui-list-stack">
                 {roomHistory.length ? roomHistory.map((item) => (
                   <button key={item.code} type="button" className="job-card" onClick={() => navigate(`/jobs/detail?id=${item.code}`)}>
-                    <span className={`priority-strip ${priorityClass(item.priority)}`} />
+                    <span className={`priority-strip ${jobStatusStripClass(item.status)}`} />
                     <span className="job-main">
                       <span className="job-title">{item.title}</span>
                       <span className="job-meta">
@@ -8870,7 +8930,7 @@ function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }
   );
 }
 
-function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptions, navigate, refreshData, session, setAlert, setJobs, visibleJobs }: RenderContext) {
+function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptions, departmentWorkPolicy, navigate, refreshData, session, setAlert, setJobs, visibleJobs }: RenderContext) {
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -9080,9 +9140,9 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
                     <>
                       <button type="button" className="btn btn-primary btn-sm" onClick={() => updateCalendarJobStatus(job, "Completed")}>Yapıldı</button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => updateCalendarJobStatus(job, "InProgress")}>Devam Ediyor</button>
-                      <button type="button" className="btn btn-warning btn-sm" onClick={() => updateCalendarJobStatus(job, "Delayed")}>Ertelendi</button>
                     </>
                   )}
+                  {canDelayJob(session, job, departmentWorkPolicy) && <button type="button" className="btn btn-warning btn-sm" onClick={() => updateCalendarJobStatus(job, "Delayed")}>Ertelendi</button>}
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/jobs/detail?id=${job.id}`)}>Detay</button>
                 </div>
               </div>
@@ -10952,24 +11012,13 @@ function isReminderNotification(notification: NotificationRecord) {
   return title.includes("hatırlatma") || title.includes("hatirlatma") || body.includes("hatırlatma") || body.includes("hatirlatma");
 }
 
-function RemindersPage({
-  completeReminder,
-  departmentLabelFor,
-  handleCreateReminder,
+function NotificationsPage({
   markNotificationRead,
   markNotificationsRead,
   navigate,
-  notifications,
-  reminderDraft,
-  reminderRecipients,
-  reminders,
-  session,
-  setReminderDraft
+  notifications
 }: RenderContext) {
-  const [formOpen, setFormOpen] = useState(false);
-  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
   const [notificationFilter, setNotificationFilter] = useState<"all" | "operation" | "system" | "due">("all");
-  const visibleReminders = reminders.filter((reminder) => reminder.assignedTo.id === session.id || reminder.createdBy.id === session.id);
   const systemNotifications = notifications.filter(isSystemNotification);
   const operationNotifications = notifications.filter((notification) => !isSystemNotification(notification));
   const reminderNotifications = operationNotifications.filter(isReminderNotification);
@@ -10987,17 +11036,10 @@ function RemindersPage({
     { id: "all" as const, label: "Toplam", count: notifications.length }
   ];
   const selectedNotificationFilter = notificationFilterOptions.find((option) => option.id === notificationFilter) ?? notificationFilterOptions[3];
-  const departmentChief = reminderRecipients.find((user) => ["technicalChief", "floorChief"].includes(user.roleId));
-  const departmentManager = reminderRecipients.find((user) => user.roleId !== "staff" && !["technicalChief", "floorChief"].includes(user.roleId) && user.id !== session.id);
-  const departmentStaff = reminderRecipients.filter((user) => user.roleId === "staff" && user.id !== session.id);
   const openNotification = (notification: NotificationRecord) => {
     const targetPath = notificationTargetPath(notification);
     void markNotificationRead(notification.id);
     navigate(targetPath);
-  };
-  const openReminderForm = (assignedToId: string) => {
-    setReminderDraft((draft) => ({ ...draft, assignedToId, remindAt: draft.remindAt || dateTimeLocalValue(new Date()) }));
-    setFormOpen(true);
   };
   const renderNotificationList = (items: NotificationRecord[], emptyText: string) => (
     <div className="notification-list-shell notification-list-grouped">
@@ -11016,6 +11058,64 @@ function RemindersPage({
       )) : <div className="ui-empty-inline ui-empty-inline-lg">{emptyText}</div>}
     </div>
   );
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">Bildirimler</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={markNotificationsRead}>Tümünü Okundu Say</button>
+      </div>
+      <div className="notification-summary notification-filter-summary">
+        {notificationFilterOptions.map((option) => {
+          const active = option.id === notificationFilter;
+          const disabled = option.count === 0 && option.id !== "all";
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className={`notification-filter-card ${active ? "active" : ""}`}
+              disabled={disabled}
+              aria-pressed={active}
+              onClick={() => setNotificationFilter(option.id)}
+            >
+              <strong>{option.count}</strong>
+              <span>{option.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="notification-active-filter">
+        <strong>{selectedNotificationFilter.label}</strong>
+        <span>{selectedNotificationFilter.count} kayıt</span>
+      </div>
+      {renderNotificationList(
+        filteredNotifications,
+        notificationFilter === "all" ? "Bildirim yok" : `${selectedNotificationFilter.label} bildirimi yok`
+      )}
+    </div>
+  );
+}
+
+function RemindersPage({
+  completeReminder,
+  departmentLabelFor,
+  handleCreateReminder,
+  reminderDraft,
+  reminderRecipients,
+  reminders,
+  session,
+  setReminderDraft
+}: RenderContext) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
+  const visibleReminders = reminders.filter((reminder) => reminder.assignedTo.id === session.id || reminder.createdBy.id === session.id);
+  const departmentChief = reminderRecipients.find((user) => ["technicalChief", "floorChief"].includes(user.roleId));
+  const departmentManager = reminderRecipients.find((user) => user.roleId !== "staff" && !["technicalChief", "floorChief"].includes(user.roleId) && user.id !== session.id);
+  const departmentStaff = reminderRecipients.filter((user) => user.roleId === "staff" && user.id !== session.id);
+  const openReminderForm = (assignedToId: string) => {
+    setReminderDraft((draft) => ({ ...draft, assignedToId, remindAt: draft.remindAt || dateTimeLocalValue(new Date()) }));
+    setFormOpen(true);
+  };
   return (
     <div className="side-panel-grid">
       <div>
@@ -11118,41 +11218,6 @@ function RemindersPage({
         </div>
       </div>
 
-      <div>
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Bildirimler</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={markNotificationsRead}>Tümünü Okundu Say</button>
-          </div>
-          <div className="notification-summary notification-filter-summary">
-            {notificationFilterOptions.map((option) => {
-              const active = option.id === notificationFilter;
-              const disabled = option.count === 0 && option.id !== "all";
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`notification-filter-card ${active ? "active" : ""}`}
-                  disabled={disabled}
-                  aria-pressed={active}
-                  onClick={() => setNotificationFilter(option.id)}
-                >
-                  <strong>{option.count}</strong>
-                  <span>{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="notification-active-filter">
-            <strong>{selectedNotificationFilter.label}</strong>
-            <span>{selectedNotificationFilter.count} kayıt</span>
-          </div>
-          {renderNotificationList(
-            filteredNotifications,
-            notificationFilter === "all" ? "Bildirim yok" : `${selectedNotificationFilter.label} bildirimi yok`
-          )}
-        </div>
-      </div>
       <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
     </div>
   );
@@ -11901,10 +11966,10 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
     }
   }
 
-  const togglePolicyUser = (field: "assignmentAuthorityUserIds" | "deleteAuthorityUserIds", userId: string) => {
+  const togglePolicyUser = (field: "assignmentAuthorityUserIds" | "delayAuthorityUserIds" | "deleteAuthorityUserIds", userId: string) => {
     setPolicyDraft((draft) => {
       if (!draft) return draft;
-      const values = new Set(draft[field]);
+      const values = new Set(draft[field] ?? []);
       if (values.has(userId)) {
         values.delete(userId);
       } else {
@@ -11922,6 +11987,7 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
         method: "PATCH",
         body: JSON.stringify({
           assignmentAuthorityUserIds: policyDraft.assignmentAuthorityUserIds,
+          delayAuthorityUserIds: policyDraft.delayAuthorityUserIds ?? [],
           deleteAuthorityUserIds: policyDraft.deleteAuthorityUserIds
         })
       });
@@ -12050,6 +12116,7 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
                   <div className="policy-grid policy-grid-header">
                     <span>Personel</span>
                     <span>Atama</span>
+                    <span>Erteleme</span>
                     <span>Silme</span>
                   </div>
                   {policyDraft.users.map((user) => {
@@ -12065,6 +12132,12 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
                           checked={lockedManager || policyDraft.assignmentAuthorityUserIds.includes(user.id)}
                           disabled={lockedManager}
                           onChange={() => togglePolicyUser("assignmentAuthorityUserIds", user.id)}
+                        />
+                        <input
+                          type="checkbox"
+                          checked={lockedManager || (policyDraft.delayAuthorityUserIds ?? []).includes(user.id)}
+                          disabled={lockedManager}
+                          onChange={() => togglePolicyUser("delayAuthorityUserIds", user.id)}
                         />
                         <input
                           type="checkbox"

@@ -733,7 +733,8 @@ function emitMaintenanceChanged(status: MaintenanceStatus) {
 }
 
 function canTrackScopedDepartmentOrigin(auth: AuthContext) {
-  return auth.roleId !== "staff";
+  void auth;
+  return true;
 }
 
 function normalizedPlatformUsername(username: string) {
@@ -1834,7 +1835,8 @@ const departmentSchema = z.object({
 
 const workOrderPolicySchema = z.object({
   assignmentAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([]),
-  deleteAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([])
+  deleteAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([]),
+  delayAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([])
 });
 
 const departmentTableColumnSchema = z.object({
@@ -2954,7 +2956,8 @@ async function workOrderPolicySets(hotelId: string, departmentDbId: string) {
   const policy = await workOrderDepartmentPolicy(hotelId, departmentDbId);
   return {
     assignmentAuthorityUserIds: new Set(parseUserIdArray(policy?.assignerUserIdsJson)),
-    deleteAuthorityUserIds: new Set(parseUserIdArray(policy?.deleterUserIdsJson))
+    deleteAuthorityUserIds: new Set(parseUserIdArray(policy?.deleterUserIdsJson)),
+    delayAuthorityUserIds: new Set(parseUserIdArray(policy?.delayerUserIdsJson))
   };
 }
 
@@ -2976,6 +2979,13 @@ async function canDeleteAssignedDepartmentWorkOrder(
   if (workOrder.assignedToId !== auth.userId) return false;
   const policy = await workOrderPolicySets(auth.hotelId, workOrder.departmentId);
   return policy.deleteAuthorityUserIds.has(auth.userId);
+}
+
+async function canDelayWorkOrder(auth: AuthContext, departmentId: string, departmentDbId: string) {
+  if (auth.departmentId !== departmentId) return false;
+  if (canManageWorkOrderStatus(auth, departmentId)) return true;
+  const policy = await workOrderPolicySets(auth.hotelId, departmentDbId);
+  return policy.delayAuthorityUserIds.has(auth.userId);
 }
 
 function canDeleteOwnWorkOrder(auth: AuthContext) {
@@ -3001,7 +3011,7 @@ function canUpdateWorkOrderStatus(auth: AuthContext, workOrder: { assignedToId: 
 
 function serializeWorkOrderPolicy(
   departmentId: string,
-  policy: { assignerUserIdsJson: string; deleterUserIdsJson: string } | null,
+  policy: { assignerUserIdsJson: string; deleterUserIdsJson: string; delayerUserIdsJson?: string } | null,
   users: Array<User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }>,
   auth: AuthContext
 ) {
@@ -3009,6 +3019,7 @@ function serializeWorkOrderPolicy(
     departmentId,
     assignmentAuthorityUserIds: parseUserIdArray(policy?.assignerUserIdsJson),
     deleteAuthorityUserIds: parseUserIdArray(policy?.deleterUserIdsJson),
+    delayAuthorityUserIds: parseUserIdArray(policy?.delayerUserIdsJson),
     users: users.map(serializeUser),
     canConfigure: canConfigureWorkOrderPolicy(auth, departmentId)
   };
@@ -5079,7 +5090,8 @@ app.patch("/work-order-policies/:departmentId", authenticate, requireModuleAcces
   const activeUserIds = new Set(users.map((user) => user.id));
   const assignmentAuthorityUserIds = Array.from(new Set(payload.assignmentAuthorityUserIds)).filter(Boolean);
   const deleteAuthorityUserIds = Array.from(new Set(payload.deleteAuthorityUserIds)).filter(Boolean);
-  const invalidUserIds = [...assignmentAuthorityUserIds, ...deleteAuthorityUserIds].filter((userId) => !activeUserIds.has(userId));
+  const delayAuthorityUserIds = Array.from(new Set(payload.delayAuthorityUserIds)).filter(Boolean);
+  const invalidUserIds = [...assignmentAuthorityUserIds, ...deleteAuthorityUserIds, ...delayAuthorityUserIds].filter((userId) => !activeUserIds.has(userId));
   if (invalidUserIds.length) {
     res.status(422).json({ error: "POLICY_USER_SCOPE_DENIED", invalidUserIds });
     return;
@@ -5089,13 +5101,15 @@ app.patch("/work-order-policies/:departmentId", authenticate, requireModuleAcces
     where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
     update: {
       assignerUserIdsJson: JSON.stringify(assignmentAuthorityUserIds),
-      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds)
+      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds),
+      delayerUserIdsJson: JSON.stringify(delayAuthorityUserIds)
     },
     create: {
       hotelId: req.auth!.hotelId,
       departmentId: department.id,
       assignerUserIdsJson: JSON.stringify(assignmentAuthorityUserIds),
-      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds)
+      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds),
+      delayerUserIdsJson: JSON.stringify(delayAuthorityUserIds)
     }
   });
   await audit(req, "WorkOrderDepartmentPolicy", policy.id, "UPSERT", null, serializeWorkOrderPolicy(departmentId, policy, users, req.auth!));
@@ -5550,9 +5564,16 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
     res.status(403).json({ error: "WORK_ORDER_ASSIGN_DENIED" });
     return;
   }
-  if (statusRequested && !canUpdateWorkOrderStatus(req.auth!, existing, departmentId)) {
-    res.status(403).json({ error: "WORK_ORDER_STATUS_DENIED" });
-    return;
+  if (statusRequested) {
+    if (payload.status === "Delayed") {
+      if (!await canDelayWorkOrder(req.auth!, departmentId, existing.departmentId)) {
+        res.status(403).json({ error: "WORK_ORDER_DELAY_DENIED" });
+        return;
+      }
+    } else if (!canUpdateWorkOrderStatus(req.auth!, existing, departmentId)) {
+      res.status(403).json({ error: "WORK_ORDER_STATUS_DENIED" });
+      return;
+    }
   }
 
   const data: Prisma.WorkOrderUpdateInput = {};
@@ -5695,7 +5716,10 @@ app.patch("/calendar/work-orders/:code/status", authenticate, requirePermission(
     res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
     return;
   }
-  if (!canManageWorkOrderStatus(req.auth!, departmentId)) {
+  const canUpdateCalendarStatus = payload.status === "Delayed"
+    ? await canDelayWorkOrder(req.auth!, departmentId, existing.departmentId)
+    : canManageWorkOrderStatus(req.auth!, departmentId);
+  if (!canUpdateCalendarStatus) {
     res.status(403).json({ error: "WORK_ORDER_MANAGER_REQUIRED" });
     return;
   }
