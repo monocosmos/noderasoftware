@@ -19,6 +19,11 @@ if ! command -v git >/dev/null 2>&1; then
   apt-get install -y git
 fi
 
+if ! command -v git-lfs >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y git-lfs
+fi
+
 if [ ! -d "${APP_DIR}/.git" ]; then
   if [ -z "${REPO_URL}" ]; then
     echo "${APP_DIR} icinde Git deposu yok ve REPO_URL verilmedi."
@@ -44,6 +49,8 @@ if [ "${CURRENT_BRANCH}" != "${BRANCH}" ]; then
 fi
 
 git reset --hard "origin/${BRANCH}"
+git lfs install --local
+git lfs pull
 git clean -fd \
   -e .env \
   -e node_modules/ \
