@@ -74,6 +74,10 @@ JWT_SECRET="${JWT_SECRET}"
 WEB_ORIGIN="${WEB_ORIGIN}"
 PORT=${PORT}
 HOST=${HOST}
+AUTH_CACHE_TTL_MS=15000
+MAINTENANCE_STATUS_CACHE_TTL_MS=5000
+SYNC_STATE_CACHE_TTL_MS=750
+REQUEST_REMINDER_CHECK_INTERVAL_MS=15000
 EOF
   chown "${APP_USER}:${APP_GROUP}" "${APP_DIR}/.env"
   chmod 600 "${APP_DIR}/.env"
@@ -119,6 +123,12 @@ server {
     server_name ${DOMAIN} ${WWW_DOMAIN};
     root ${APP_DIR}/apps/web/out;
     index index.html;
+    access_log off;
+    sendfile on;
+    tcp_nopush on;
+    open_file_cache max=1000 inactive=60s;
+    open_file_cache_valid 120s;
+    open_file_cache_min_uses 2;
 
     ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
@@ -140,6 +150,7 @@ server {
         add_header Cache-Control "no-store" always;
         proxy_pass http://127.0.0.1:${PORT}/;
         proxy_http_version 1.1;
+        proxy_set_header Connection "";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;

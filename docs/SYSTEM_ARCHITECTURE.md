@@ -27,7 +27,7 @@ docs/
 
 - State: rol, aktif modül, dashboard parçaları, takvim görünümü ve kullanıcı oturumu.
 - UI: mobil öncelikli kart, alt menü, hamburger menü ve departman bazlı modül görünürlüğü.
-- Responsive: iş listesi, arıza kartları, takvim ve yapılacak işler mobil ekrana taşmadan sığacak şekilde düzenlenir.
+- Responsive: iş listesi, iş kartları, takvim ve yapılacak işler mobil ekrana taşmadan sığacak şekilde düzenlenir.
 - RBAC: `src/lib/rbac.ts` görünür departmanları ve permission setlerini belirler.
 
 ## 4. Backend Mimarisi

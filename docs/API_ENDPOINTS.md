@@ -20,7 +20,7 @@
 | Method | Endpoint | Açıklama |
 | --- | --- | --- |
 | GET | `/work-orders` | Rol ve departman kapsamına göre filtreli liste. |
-| POST | `/work-orders` | Yetkili rol için iş, arıza veya planlı görev oluşturur. |
+| POST | `/work-orders` | Yetkili rol için iş veya planlı görev oluşturur. |
 | GET | `/work-orders/:id` | Detay, yorum, fotoğraf ve timeline. |
 | PATCH | `/work-orders/:id` | Departman müdürü/şefi için durum ve atama güncelleme; diğer alanlar scope içinde kalır. |
 | DELETE | `/work-orders/:id` | Soft delete; sadece politika izin veriyorsa. |

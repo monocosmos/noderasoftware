@@ -1,6 +1,6 @@
 # Nodera Software - HotelOps Enterprise Platform
 
-Nodera Software HotelOps, otel operasyonlarını tek merkezden yönetmek için geliştirilen web, API, masaüstü ve mobil istemci bileşenlerinden oluşan bir monorepo projesidir. Sistem; departman bazlı iş emirleri, arıza yönetimi, takvim planlama, personel ve yetki yönetimi, yönetici talepleri, hatırlatmalar, raporlar, audit kayıtları ve canlı bildirim akışlarını tek bir operasyon panelinde toplar.
+Nodera Software HotelOps, otel operasyonlarını tek merkezden yönetmek için geliştirilen web, API, masaüstü ve mobil istemci bileşenlerinden oluşan bir monorepo projesidir. Sistem; departman bazlı iş emirleri, iş yönetimi, takvim planlama, personel ve yetki yönetimi, yönetici talepleri, hatırlatmalar, raporlar, audit kayıtları ve canlı bildirim akışlarını tek bir operasyon panelinde toplar.
 
 Bu depo artık projenin ana kaynak noktasıdır. Raspberry Pi canlı sunucudur; fakat canlıya gönderilen her kalıcı düzenleme önce GitHub üzerinde kayıt altına alınmalıdır.
 
@@ -35,7 +35,7 @@ HotelOps, otel içindeki departmanların günlük operasyonlarını izlenebilir,
 
 Sistem aşağıdaki operasyon ihtiyaçlarını karşılar:
 
-- Teknik servis arıza ve bakım işlerinin takibi.
+- Teknik servis iş ve bakım kayıtlarının takibi.
 - Housekeeping oda, kat ve VIP kontrol planlarının yönetimi.
 - Ön bürodan diğer departmanlara iş veya talep açılması.
 - Güvenlik, SPA ve F&B departmanlarının kendi iş listelerini takip etmesi.
@@ -113,7 +113,7 @@ HotelOps aşağıdaki ürün yüzeylerini içerir:
 
 - Rol bazlı giriş ve oturum yönetimi.
 - Departman kapsamlı dashboard.
-- İş emri, arıza, planlı görev ve takvim işi oluşturma.
+- İş emri, planlı görev ve takvim işi oluşturma.
 - İş emri detay sayfası, timeline, yorum, dosya/fotoğraf akışı.
 - Öncelik, durum, atama, oda, konum ve son tarih takibi.
 - Departman takvimi ve operasyon yoğunluğu görünümü.
@@ -768,7 +768,7 @@ Temel ilkeler:
 | --- | --- |
 | `docs/SYSTEM_ARCHITECTURE.md` | Sistem mimarisi, katmanlar, RBAC ve veri modeli özeti |
 | `docs/API_ENDPOINTS.md` | Endpoint tasarımları |
-| `docs/WORKFLOWS.md` | Arıza, talep, departman görünürlüğü ve audit akışları |
+| `docs/WORKFLOWS.md` | İş, talep, departman görünürlüğü ve audit akışları |
 | `docs/RASPBERRY_PI_DEPLOYMENT.md` | Raspberry Pi kurulum ve deploy notları |
 | `docs/DESKTOP_REGRESSION_GUARDRAILS.md` | Desktop değişiklikleri için zorunlu test kuralları |
 | `docs/CODEX_PROJECT_HANDOFF.md` | Proje devir notları |

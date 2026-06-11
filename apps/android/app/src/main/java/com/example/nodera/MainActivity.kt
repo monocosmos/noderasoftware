@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
     private var pendingFileChooserCapture = false
     private var pendingFileChooserAllowMultiple = false
     private var pendingFileChooserAcceptTypes: Array<String> = emptyArray()
+    private var isBlockingWebViewMultiTouch = false
     @Volatile private var pendingMediaPickerKind = ""
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -230,7 +232,7 @@ class MainActivity : ComponentActivity() {
         }, 2200)
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun setupWebView() {
         // Debug kapali tutulur; APK profesyonel uygulama gibi davransin, uzun
         // basma ve yatay kaydirma da web hissini azaltmak icin kapatilir.
@@ -363,6 +365,9 @@ class MainActivity : ComponentActivity() {
             overScrollMode = WebView.OVER_SCROLL_NEVER
             isLongClickable = false
             setOnLongClickListener { true }
+            setOnTouchListener { view, event ->
+                blockWebViewMultiTouchZoom(view as WebView, event)
+            }
             setDownloadListener { url, _, _, _, _ ->
                 // APK gibi dosya indirmeleri WebView icinde kalmasin; Android'in
                 // guvenilir harici indirme/tarayici akisina devredilsin.
@@ -394,6 +399,28 @@ class MainActivity : ComponentActivity() {
         )
 
         webView.loadUrl(routeUrlFromIntent(intent) ?: siteUrl)
+    }
+
+    private fun blockWebViewMultiTouchZoom(view: WebView, event: MotionEvent): Boolean {
+        val hasMultiplePointers = event.pointerCount > 1
+        if (!hasMultiplePointers && !isBlockingWebViewMultiTouch) {
+            return false
+        }
+
+        if (hasMultiplePointers && !isBlockingWebViewMultiTouch) {
+            isBlockingWebViewMultiTouch = true
+            MotionEvent.obtain(event).also { cancelEvent ->
+                cancelEvent.action = MotionEvent.ACTION_CANCEL
+                view.onTouchEvent(cancelEvent)
+                cancelEvent.recycle()
+            }
+        }
+
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            isBlockingWebViewMultiTouch = false
+        }
+
+        return true
     }
 
     private fun requestNotificationPermissionIfNeeded() {

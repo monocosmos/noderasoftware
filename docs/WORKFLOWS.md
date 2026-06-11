@@ -1,11 +1,11 @@
 ﻿# Workflow Tasarımları
 
-## Arıza Akışı
+## İş Akışı
 
 ```mermaid
 flowchart LR
-  A["Arıza bildirildi"] --> B["Departman müdürü veya şefi atama yaptı"]
-  B --> C["Atanan kişi görevi aldı"]
+  A["İş talebi oluşturuldu"] --> B["İş departman havuzuna düştü"]
+  B --> C["Yetkili ekip işi aldı veya devretti"]
   C --> D["İş yapılıyor"]
   D --> E{"Tamamlandı mı?"}
   E -- "Evet" --> F["Tamamlandı olarak işaretlendi"]

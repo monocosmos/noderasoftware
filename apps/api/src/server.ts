@@ -244,18 +244,30 @@ function defaultMaintenanceStatus(): MaintenanceStatus {
   };
 }
 
+let maintenanceStatusCache: { status: MaintenanceStatus; expiresAt: number } | null = null;
+
 function readMaintenanceStatus(): MaintenanceStatus {
+  const now = Date.now();
+  if (maintenanceStatusCache && maintenanceStatusCache.expiresAt > now) {
+    return maintenanceStatusCache.status;
+  }
+
   for (const statusPath of maintenanceStatusPaths()) {
     if (!existsSync(statusPath)) continue;
     try {
       const parsed = JSON.parse(readFileSync(statusPath, "utf8")) as unknown;
       const status = normalizeMaintenanceStatus(parsed);
-      if (status) return status;
+      if (status) {
+        maintenanceStatusCache = { status, expiresAt: now + maintenanceStatusCacheTtlMs };
+        return status;
+      }
     } catch {
       // Try the next copy; a partially written status file should not break the API.
     }
   }
-  return defaultMaintenanceStatus();
+  const fallback = defaultMaintenanceStatus();
+  maintenanceStatusCache = { status: fallback, expiresAt: now + maintenanceStatusCacheTtlMs };
+  return fallback;
 }
 
 function writeMaintenanceStatus(status: MaintenanceStatus) {
@@ -274,6 +286,7 @@ function writeMaintenanceStatus(status: MaintenanceStatus) {
   if (!wrote) {
     throw new Error(`Maintenance status could not be written. ${errors.join(" | ")}`);
   }
+  maintenanceStatusCache = { status, expiresAt: Date.now() + maintenanceStatusCacheTtlMs };
 }
 
 type ActiveSessionEntry = {
@@ -299,7 +312,80 @@ const configuredSyncStateMaxWaitMs = Number(process.env.SYNC_STATE_MAX_WAIT_MS ?
 const syncStateMaxWaitMs = Number.isFinite(configuredSyncStateMaxWaitMs)
   ? Math.min(60000, Math.max(0, configuredSyncStateMaxWaitMs))
   : 25000;
+const authCacheTtlMs = positiveIntegerEnv("AUTH_CACHE_TTL_MS", 15000);
+const maintenanceStatusCacheTtlMs = positiveIntegerEnv("MAINTENANCE_STATUS_CACHE_TTL_MS", 5000);
+const syncStateCacheTtlMs = positiveIntegerEnv("SYNC_STATE_CACHE_TTL_MS", 750);
+const reminderRequestCheckIntervalMs = positiveIntegerEnv("REQUEST_REMINDER_CHECK_INTERVAL_MS", 15000);
 const activeSessions = new Map<string, ActiveSessionEntry>();
+
+type AuthCacheEntry = {
+  auth: AuthContext;
+  user: AuthedUser;
+  sessionExpiresAt: number;
+  cacheUntil: number;
+};
+
+const authCache = new Map<string, AuthCacheEntry>();
+
+function cacheAuthenticatedRequest(token: string, auth: AuthContext, user: AuthedUser, sessionExpiresAt: Date) {
+  authCache.set(token, {
+    auth,
+    user,
+    sessionExpiresAt: sessionExpiresAt.getTime(),
+    cacheUntil: Date.now() + authCacheTtlMs
+  });
+}
+
+function cachedAuthenticatedRequest(token: string) {
+  const cached = authCache.get(token);
+  const now = Date.now();
+  if (!cached) return null;
+  if (cached.cacheUntil <= now || cached.sessionExpiresAt <= now) {
+    authCache.delete(token);
+    return null;
+  }
+  return cached;
+}
+
+function invalidateAuthCache(predicate?: (entry: AuthCacheEntry) => boolean) {
+  if (!predicate) {
+    authCache.clear();
+    return;
+  }
+  for (const [token, entry] of authCache) {
+    if (predicate(entry)) {
+      authCache.delete(token);
+    }
+  }
+}
+
+function invalidateAuthCacheForUser(userId: string) {
+  invalidateAuthCache((entry) => entry.auth.userId === userId);
+}
+
+function invalidateAuthCacheForSession(sessionId: string) {
+  invalidateAuthCache((entry) => entry.auth.sessionId === sessionId);
+}
+
+function pruneInMemoryCaches() {
+  const now = Date.now();
+  for (const [token, entry] of authCache) {
+    if (entry.cacheUntil <= now || entry.sessionExpiresAt <= now) {
+      authCache.delete(token);
+    }
+  }
+  for (const [key, entry] of syncStateCache) {
+    if (!entry.pending && entry.expiresAt <= now) {
+      syncStateCache.delete(key);
+    }
+  }
+  const reminderCutoff = now - Math.max(reminderRequestCheckIntervalMs * 4, 60_000);
+  for (const [userId, checkedAt] of reminderRequestLastCheckedAt) {
+    if (checkedAt < reminderCutoff) {
+      reminderRequestLastCheckedAt.delete(userId);
+    }
+  }
+}
 
 function markSessionSeen(auth: AuthContext, userAgent = "unknown") {
   const existing = activeSessions.get(auth.sessionId);
@@ -524,6 +610,15 @@ async function authenticate(req: express.Request, res: express.Response, next: e
   }
 
   try {
+    const cached = cachedAuthenticatedRequest(token);
+    if (cached) {
+      req.auth = cached.auth;
+      req.user = cached.user;
+      markSessionSeen(cached.auth, String(clientUserAgent(req)));
+      next();
+      return;
+    }
+
     const payload = verifyToken(token);
     const session = await prisma.authSession.findUnique({ where: { id: payload.sessionId } });
     if (!session || session.revokedAt || session.expiresAt < new Date()) {
@@ -552,6 +647,7 @@ async function authenticate(req: express.Request, res: express.Response, next: e
       sessionId: session.id
     };
     req.user = user;
+    cacheAuthenticatedRequest(token, req.auth, user, session.expiresAt);
     markSessionSeen(req.auth, String(clientUserAgent(req)));
     next();
   } catch {
@@ -622,6 +718,7 @@ let appDataEventVersion = 0;
 
 function emitHotelDataChanged(auth: AuthContext, entityType: string, action: string) {
   appDataEventVersion += 1;
+  invalidateSyncStateCache();
   io.to(hotelSocketRoom(auth.hotelId)).emit("app-data.changed", {
     version: appDataEventVersion,
     entityType,
@@ -631,6 +728,7 @@ function emitHotelDataChanged(auth: AuthContext, entityType: string, action: str
 }
 
 function emitMaintenanceChanged(status: MaintenanceStatus) {
+  invalidateSyncStateCache();
   io.to(systemSocketRoom).emit("maintenance.changed", status);
 }
 
@@ -946,6 +1044,10 @@ async function uniqueHotelCode(tx: Prisma.TransactionClient, value: string) {
 
 function generatedNineDigitId() {
   return crypto.randomInt(100_000_000, 1_000_000_000).toString();
+}
+
+function generatedWorkOrderCode(prefix: string) {
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}${crypto.randomInt(1000, 10_000)}`;
 }
 
 async function reserveAccountId(tx: Prisma.TransactionClient) {
@@ -1417,7 +1519,7 @@ function serializeWorkOrder(
 function workOrderNotificationText(workOrder: Prisma.WorkOrderGetPayload<{ include: { department: true } }>) {
   const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
   const title = workOrder.type === "FAULT"
-    ? "Yeni arıza"
+    ? `${departmentName(departmentId)} - Yeni iş`
     : workOrder.type === "PLANNED_MAINTENANCE"
       ? "Yeni planlı bakım"
       : workOrder.type === "PLANNED_HOUSEKEEPING"
@@ -2295,6 +2397,61 @@ async function buildSyncState(req: express.Request) {
   };
 }
 
+type SyncStateSnapshot = Awaited<ReturnType<typeof buildSyncState>>;
+
+type SyncStateCacheEntry = {
+  expiresAt: number;
+  snapshot?: SyncStateSnapshot;
+  pending?: Promise<SyncStateSnapshot>;
+};
+
+const syncStateCache = new Map<string, SyncStateCacheEntry>();
+
+function invalidateSyncStateCache() {
+  syncStateCache.clear();
+}
+
+function syncStateCacheKey(req: express.Request) {
+  const auth = req.auth!;
+  const user = req.user!;
+  return [
+    auth.hotelId,
+    auth.userId,
+    auth.roleId,
+    auth.departmentId,
+    user.moduleAccessJson,
+    appDataEventVersion
+  ].join(":");
+}
+
+async function getCachedSyncState(req: express.Request) {
+  if (syncStateCacheTtlMs <= 0) return buildSyncState(req);
+
+  const now = Date.now();
+  const key = syncStateCacheKey(req);
+  const cached = syncStateCache.get(key);
+  if (cached?.snapshot && cached.expiresAt > now) {
+    return {
+      ...cached.snapshot,
+      serverTime: new Date().toISOString()
+    };
+  }
+  if (cached?.pending) return cached.pending;
+
+  const pending = buildSyncState(req).then((snapshot) => {
+    syncStateCache.set(key, {
+      snapshot,
+      expiresAt: Date.now() + syncStateCacheTtlMs
+    });
+    return snapshot;
+  }).catch((error) => {
+    syncStateCache.delete(key);
+    throw error;
+  });
+  syncStateCache.set(key, { pending, expiresAt: now + syncStateCacheTtlMs });
+  return pending;
+}
+
 type ShiftPanelWithEditors = Prisma.ShiftPanelGetPayload<{
   include: {
     department: true;
@@ -2691,6 +2848,7 @@ async function sendPushNotifications(
 async function createNotificationAndPush(data: NotificationUncheckedCreateInputWithPush) {
   const { pushPath, pushType, pushTag, ...notificationData } = data;
   const notification = await prisma.notification.create({ data: notificationData });
+  invalidateSyncStateCache();
   await sendPushNotifications([notification], new Map([[notification.id, notificationPushData({ pushPath, pushType, pushTag })]]));
   return notification;
 }
@@ -2706,6 +2864,7 @@ async function createNotificationsAndPush(data: NotificationCreateManyInputWithP
     notifications.push(notification);
     pushDataByNotificationId.set(notification.id, notificationPushData({ pushPath, pushType, pushTag }));
   }
+  invalidateSyncStateCache();
   await sendPushNotifications(notifications, pushDataByNotificationId);
   return notifications;
 }
@@ -3309,6 +3468,16 @@ async function processDueReminders(userId: string) {
   }
 }
 
+const reminderRequestLastCheckedAt = new Map<string, number>();
+
+async function processDueRemindersForRequest(userId: string) {
+  const now = Date.now();
+  const lastCheckedAt = reminderRequestLastCheckedAt.get(userId) ?? 0;
+  if (now - lastCheckedAt < reminderRequestCheckIntervalMs) return;
+  reminderRequestLastCheckedAt.set(userId, now);
+  await processDueReminders(userId);
+}
+
 async function processAllDueReminders() {
   const now = new Date();
   const oneHourThreshold = new Date(now.getTime() + 60 * 60 * 1000);
@@ -3717,9 +3886,11 @@ app.post("/auth/login", authLoginRateLimiter, asyncHandler(async (req, res) => {
     data: { lastLoginAt: new Date() },
     include: userInclude
   });
+  const token = signToken(auth);
+  cacheAuthenticatedRequest(token, auth, updated, session.expiresAt);
 
   res.json({
-    token: signToken(auth),
+    token,
     refreshToken,
     user: serializeUser(updated),
     permissions: rolePermissions[auth.roleId] ?? [],
@@ -3729,6 +3900,7 @@ app.post("/auth/login", authLoginRateLimiter, asyncHandler(async (req, res) => {
 
 app.post("/auth/logout", authenticate, async (req, res) => {
   await prisma.authSession.update({ where: { id: req.auth!.sessionId }, data: { revokedAt: new Date() } });
+  invalidateAuthCacheForSession(req.auth!.sessionId);
   forgetActiveSession(req.auth!.sessionId);
   res.json({ ok: true });
 });
@@ -3812,6 +3984,7 @@ app.patch("/auth/profile", authenticate, asyncHandler(async (req, res) => {
     data,
     include: userInclude
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, "UPDATE_PROFILE", before, serializeUser(updated));
 
   res.json({ ok: true, user: serializeUser(updated) });
@@ -3839,6 +4012,7 @@ app.patch("/auth/password", authenticate, asyncHandler(async (req, res) => {
     },
     data: { revokedAt: changedAt }
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, "CHANGE_PASSWORD", null, { username: updated.username });
 
   res.json({ ok: true, user: serializeUser(updated) });
@@ -4154,6 +4328,7 @@ app.post("/hotels/users/:id/reset-password", authenticate, requirePlatformAdmin,
     data: { passwordHash: await bcrypt.hash(temporaryPassword, 12) },
     include: userInclude
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, "PLATFORM_RESET_PASSWORD", null, {
     username: updated.username,
     accountId: updated.accountId,
@@ -4575,7 +4750,7 @@ app.patch("/shift-panels/:departmentId/entry", authenticate, asyncHandler(async 
 }));
 
 app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
-  await processDueReminders(req.auth!.userId);
+  await processDueRemindersForRequest(req.auth!.userId);
   await ensureHotelUserAccountIds(req.auth!.hotelId);
   const departments = scopeDepartmentIds(req.auth!);
   const departmentTablesEnabled = hasFeatureAccess(req, "departmentTables");
@@ -4630,7 +4805,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     user: serializeUser(req.user!),
     permissions: rolePermissions[req.auth!.roleId] ?? [],
     scope: departments,
-    jobs: workOrders.map(serializeWorkOrder),
+    jobs: workOrders.map((workOrder) => serializeWorkOrder(workOrder)),
     users: users.map(serializeUser),
     reminders: reminders.map(serializeReminder),
     departments: activeDepartments.map(serializeDepartment),
@@ -4642,20 +4817,20 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
 }));
 
 app.get("/sync/state", authenticate, asyncHandler(async (req, res) => {
-  await processDueReminders(req.auth!.userId);
+  await processDueRemindersForRequest(req.auth!.userId);
   markSessionHeartbeat(req.auth!, String(clientUserAgent(req)));
 
   const since = typeof req.query.since === "string" ? req.query.since : "";
   const requestedWaitMs = Math.max(0, queryNumber(req.query.waitMs, 0));
   const waitMs = Math.min(requestedWaitMs, syncStateMaxWaitMs);
   const deadline = Date.now() + waitMs;
-  let snapshot = await buildSyncState(req);
+  let snapshot = await getCachedSyncState(req);
 
   while (since && snapshot.etag === since && Date.now() < deadline && !req.aborted) {
     await sleep(Math.min(syncStatePollIntervalMs, Math.max(0, deadline - Date.now())));
-    await processDueReminders(req.auth!.userId);
+    await processDueRemindersForRequest(req.auth!.userId);
     markSessionHeartbeat(req.auth!, String(clientUserAgent(req)));
-    snapshot = await buildSyncState(req);
+    snapshot = await getCachedSyncState(req);
   }
 
   if (req.aborted) return;
@@ -4741,6 +4916,7 @@ app.patch("/users/:id", authenticate, requirePermission("users:write"), asyncHan
     }
     return updatedUser;
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, "UPDATE", serializeUser(existing), serializeUser(updated));
   res.json(serializeUser(updated));
 }));
@@ -4758,6 +4934,7 @@ app.post("/users/:id/reset-password", authenticate, requirePermission("users:res
     data: { passwordHash: await bcrypt.hash(temporaryPassword, 12) },
     include: userInclude
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, "RESET_PASSWORD", null, { username: updated.username });
   res.json({ ok: true, user: serializeUser(updated), temporaryPassword });
 });
@@ -4775,6 +4952,7 @@ app.patch("/users/:id/status", authenticate, requirePermission("users:write"), a
     data: { isActive: payload.active },
     include: userInclude
   });
+  invalidateAuthCacheForUser(updated.id);
   await audit(req, "User", updated.id, payload.active ? "ACTIVATE" : "DEACTIVATE", null, { active: payload.active });
   res.json(serializeUser(updated));
 });
@@ -4807,6 +4985,7 @@ app.delete("/users/:id", authenticate, requirePermission("users:write"), async (
     where: { userId, revokedAt: null },
     data: { revokedAt: deletedAt }
   });
+  invalidateAuthCacheForUser(userId);
   await audit(req, "User", updated.id, "SOFT_DELETE", serializeUser(existing), { deletedAt: deletedAt.toISOString() });
   res.json({ ok: true });
 });
@@ -5130,7 +5309,7 @@ app.get("/work-orders", authenticate, requirePermission("work-orders:read"), req
     include: workOrderInclude,
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }]
   });
-  res.json({ items: workOrders.map(serializeWorkOrder) });
+  res.json({ items: workOrders.map((workOrder) => serializeWorkOrder(workOrder)) });
 });
 
 app.get("/work-orders/:code", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
@@ -5169,10 +5348,9 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
     return;
   }
   const prefix = payload.type === "Fault" ? "FLT" : payload.type === "PlannedHousekeeping" ? "HK" : payload.type === "PlannedMaintenance" ? "PM" : "WO";
-  const code = `${prefix}-${Date.now().toString().slice(-5)}`;
+  const code = generatedWorkOrderCode(prefix);
   const initialStatus = payload.status;
-  const isDepartmentWorkIncidentPool = ["Job", "Fault"].includes(payload.type) && !assignee && initialStatus !== "Completed";
-  const initialPriority = isDepartmentWorkIncidentPool ? "Urgent" : payload.priority;
+  const initialPriority = payload.priority;
 
   const created = await prisma.workOrder.create({
     data: {
@@ -5248,7 +5426,7 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
   }
 
   const prefix = payload.type === "PlannedHousekeeping" ? "HK" : payload.type === "PlannedMaintenance" ? "PM" : "PLN";
-  const code = `${prefix}-${Date.now().toString().slice(-5)}`;
+  const code = generatedWorkOrderCode(prefix);
   const created = await prisma.workOrder.create({
     data: {
       code,
@@ -5422,7 +5600,7 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
     timelineEntries.push({
       actorId: req.auth!.userId,
       status: (data.status as Prisma.EnumWorkOrderStatusFilter["equals"] | undefined) ?? existing.status,
-      message: data.assignedTo ? "İş personele atandı." : "İş-Arıza havuzuna geri bırakıldı.",
+      message: data.assignedTo ? "İş personele atandı." : "İş havuzuna geri bırakıldı.",
       metadata: { assigneeId: payload.assigneeId ?? "", assignee: payload.assignee ?? "" }
     });
   }
@@ -5901,7 +6079,7 @@ app.patch("/operation-documents/:id/read", authenticate, requireModuleAccess("op
 }));
 
 app.get("/reminders", authenticate, requireModuleAccess("reminders"), asyncHandler(async (req, res) => {
-  await processDueReminders(req.auth!.userId);
+  await processDueRemindersForRequest(req.auth!.userId);
   const reminders = await prisma.reminder.findMany({
     where: {
       hotelId: req.auth!.hotelId,
@@ -6091,7 +6269,7 @@ app.get("/rooms/:number/history", authenticate, requirePermission("work-orders:r
 });
 
 app.get("/notifications", authenticate, async (req, res) => {
-  await processDueReminders(req.auth!.userId);
+  await processDueRemindersForRequest(req.auth!.userId);
   const notifications = await prisma.notification.findMany({
     where: { userId: req.auth!.userId },
     orderBy: { createdAt: "desc" },
@@ -6105,6 +6283,7 @@ app.patch("/notifications/read-all", authenticate, async (req, res) => {
     where: { userId: req.auth!.userId, readAt: null },
     data: { readAt: new Date() }
   });
+  if (result.count) invalidateSyncStateCache();
   res.json({ ok: true, count: result.count });
 });
 
@@ -6117,6 +6296,7 @@ app.patch("/notifications/:id/read", authenticate, async (req, res) => {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
   }
+  invalidateSyncStateCache();
   res.json({ ok: true });
 });
 
@@ -6210,6 +6390,8 @@ server.listen(port, host, () => {
   console.log(`HotelOps API listening on http://${host}:${port}`);
 });
 
+setInterval(pruneInMemoryCaches, 60 * 1000);
+
 let reminderWorkerRunning = false;
 setInterval(() => {
   if (reminderWorkerRunning) return;
@@ -6248,4 +6430,3 @@ setInterval(() => {
       slaWorkerRunning = false;
     });
 }, 5 * 60 * 1000);
-

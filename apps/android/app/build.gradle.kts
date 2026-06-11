@@ -18,8 +18,8 @@ android {
         minSdk = 23
         targetSdk = 36
         // versionName kullaniciya gorunen surumdur; versionCode teknik guncelleme sirasidir.
-        versionCode = 2026060501
-        versionName = "1.0.12"
+        versionCode = 2026061102
+        versionName = "1.0.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,7 +28,7 @@ android {
     productFlavors {
         create("direct") {
             dimension = "distribution"
-            applicationId = "com.example.nodera"
+            applicationId = "com.noderasoftware.hotelops.direct"
             buildConfigField("String", "HOTELOPS_DISTRIBUTION", "\"direct\"")
         }
         create("play") {

@@ -184,9 +184,11 @@ type AppUpdateNotice = {
   currentVersion: string;
   latestVersion: string;
   latestCode: number;
+  minimumCode: number;
   downloadUrl: string;
   title: string;
   message: string;
+  required: boolean;
 };
 
 type DemoUser = {
@@ -924,6 +926,7 @@ function appVersionPlatform(info: ShellAppInfo) {
 function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformManifest): AppUpdateNotice | null {
   if (!Number.isFinite(info.versionCode) || !Number.isFinite(platform.latestCode)) return null;
   if (info.versionCode >= platform.latestCode) return null;
+  const minimumCode = Number.isFinite(platform.minimumCode) ? platform.minimumCode ?? platform.latestCode : platform.latestCode;
 
   return {
     runtime: info.runtime,
@@ -932,9 +935,11 @@ function buildAppUpdateNotice(info: ShellAppInfo, platform: AppVersionPlatformMa
     currentVersion: info.version,
     latestVersion: platform.latestVersion,
     latestCode: platform.latestCode,
+    minimumCode,
     downloadUrl: platform.downloadUrl,
     title: platform.title,
-    message: platform.message
+    message: platform.message,
+    required: info.versionCode < platform.latestCode
   };
 }
 
@@ -2517,7 +2522,7 @@ const departmentOptions: Array<{ id: DepartmentId; label: string }> = [
 
 const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "dashboard", label: "Ana Sayfa", group: "Günlük Operasyon" },
-  { id: "jobs", label: "İşlerim ve Arızalar", group: "Günlük Operasyon" },
+  { id: "jobs", label: "İşlerim", group: "Günlük Operasyon" },
   { id: "periodicMaintenance", label: "Periyodik Bakım Planı", group: "Günlük Operasyon" },
   { id: "housekeeping", label: "HK Planlı İşler", group: "Günlük Operasyon" },
   { id: "departmentCalendar", label: "Departman Takvimi", group: "Takvim & Hatırlatma" },
@@ -2544,7 +2549,7 @@ const moduleGroups = ["Günlük Operasyon", "Takvim & Hatırlatma", "Yönetim", 
 
 const dashboardPartOptions: Array<{ id: DashboardPartId; label: string }> = [
   { id: "dashboardUrgentJobs", label: "Acil İşler kartı" },
-  { id: "dashboardFaultRecords", label: "Arıza Kayıtları kartı" },
+  { id: "dashboardFaultRecords", label: "İş Kayıtları kartı" },
   { id: "dashboardDelayedJobs", label: "Geciken İşler kartı" },
   { id: "dashboardInProgressJobs", label: "Devam Eden kartı" },
   { id: "dashboardPendingJobs", label: "Bekleyen İşler kartı" },
@@ -2612,7 +2617,7 @@ const operationalModules: OperationalModuleConfig[] = [
     metrics: [{ label: "Kirli Oda", value: "14", tone: "pending" }, { label: "Blokajlı", value: "3", tone: "delayed" }],
     records: [
       { title: "Oda 1008", meta: "Çıkış sonrası temizlik bekliyor", status: "Kirli" },
-      { title: "Oda 1108", meta: "Teknik arıza bekliyor", status: "Blokajlı" },
+      { title: "Oda 1108", meta: "Teknik iş bekliyor", status: "Blokajlı" },
       { title: "Oda 1214", meta: "Misafir rahatsız edilmeyecek", status: "DND - Rahatsız Etmeyin" },
       { title: "Oda 1410", meta: "Bakım nedeniyle satış dışı", status: "OOO - Out of Order" },
       { title: "Oda 1501", meta: "VIP final kontrol", status: "Kontrol Bekliyor" }
@@ -2744,8 +2749,8 @@ const initialUsers: DemoUser[] = [
 const initialJobs: JobRecord[] = [
   {
     id: "WO-24081",
-    title: "1108 numaralı odada klima arızası",
-    type: "Fault",
+    title: "1108 numaralı odada klima sorunu",
+    type: "Job",
     departmentId: "technical",
     priority: "Urgent",
     status: "InProgress",
@@ -3288,6 +3293,47 @@ function AppUpdateCard({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate
   );
 }
 
+function RequiredAppUpdateScreen({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate: (notice: AppUpdateNotice) => void }) {
+  const details = notice.runtime === "android"
+    ? "Yeni Android APK ayri paket adiyla kurulur. Kurulumdan sonra yeni Nodera HotelOps uygulamasini acin; eski uygulama cihazda kalirsa calismaz."
+    : "Windows uygulamasinin eski surumu artik kullanilamaz. Yeni kurulum dosyasini indirip kurun.";
+
+  return (
+    <main className="classic-app maintenance-mode-page">
+      <section className="maintenance-mode-panel" role="alert" aria-live="assertive">
+        <div className="maintenance-mode-topbar">
+          <div className="maintenance-mode-brand">
+            <span className="logo-mark logo-mark-image maintenance-mode-logo"><BrandLogo /></span>
+            <span>Nodera Sistem</span>
+          </div>
+          <div className="maintenance-mode-badge">
+            <AlertTriangle size={16} />
+            Zorunlu guncelleme
+          </div>
+        </div>
+        <div className="maintenance-mode-body">
+          <div className="maintenance-mode-icon">
+            <AlertTriangle size={34} />
+          </div>
+          <div>
+            <p className="maintenance-mode-eyebrow">Uygulama guncel degil</p>
+            <h1>{notice.title}</h1>
+            <p className="maintenance-mode-copy">{notice.message}</p>
+            <p className="maintenance-mode-copy">{details}</p>
+          </div>
+        </div>
+        <div className="maintenance-mode-status">
+          <span>Mevcut: {notice.label} v{notice.currentVersion}</span>
+          <span>Gerekli: v{notice.latestVersion}</span>
+        </div>
+        <button type="button" className="btn btn-danger app-update-btn" onClick={() => onUpdate(notice)}>
+          Guncelle
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function formatDateTime(value: string) {
   if (!value) return "-";
   const date = new Date(value);
@@ -3329,7 +3375,7 @@ function statusLabel(status: JobStatus) {
 function typeLabel(type: JobType) {
   const labels: Record<JobType, string> = {
     Job: "İş",
-    Fault: "Arıza",
+    Fault: "İş",
     PlannedMaintenance: "Planlı Bakım",
     PlannedHousekeeping: "HK Planlı İş"
   };
@@ -3574,7 +3620,7 @@ function statusClass(status: JobStatus) {
 function typeClass(type: JobType) {
   const classes: Record<JobType, string> = {
     Job: "job",
-    Fault: "fault",
+    Fault: "job",
     PlannedMaintenance: "maintenance",
     PlannedHousekeeping: "housekeeping"
   };
@@ -3727,7 +3773,7 @@ function isDepartmentPoolJob(job: Pick<JobRecord, "assignee" | "status" | "type"
 }
 
 function departmentPoolLabel(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
-  return `${departmentLabelFor(departmentId)} İş-Arıza Havuzu`;
+  return `${departmentLabelFor(departmentId)} İş Havuzu`;
 }
 
 function canClaimDepartmentJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "departmentId" | "status" | "type">) {
@@ -3771,7 +3817,7 @@ function urgentJobsLabel() {
 }
 
 function urgentJobsKeywords() {
-  return "acil kritik iş arıza";
+  return "acil kritik iş";
 }
 
 function isUrgentJobForUser(_user: Pick<DemoUser, "departmentId">, job: Pick<JobRecord, "priority" | "type">) {
@@ -4374,6 +4420,7 @@ export function HotelOpsSystem() {
   const [savedAccountsModalOpen, setSavedAccountsModalOpen] = useState(false);
   const [logoutRememberPrompt, setLogoutRememberPrompt] = useState<LogoutRememberPrompt | null>(null);
   const [logoutInProgress, setLogoutInProgress] = useState(false);
+  const [jobCreateInProgress, setJobCreateInProgress] = useState(false);
   const [filters, setFilters] = useState({
     search: "",
     status: "",
@@ -4399,6 +4446,7 @@ export function HotelOpsSystem() {
   const didSyncInitialPathRef = useRef(false);
   const appUpdateNotifiedRef = useRef("");
   const lastAuthenticatedPasswordRef = useRef("");
+  const jobCreateInProgressRef = useRef(false);
   const syncEtagRef = useRef("");
 
   const setAlert = useCallback((value: string) => {
@@ -5088,6 +5136,7 @@ export function HotelOpsSystem() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function handleCreateJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (jobCreateInProgressRef.current) return;
     if (!session || !canCreateJobType(session, jobDraft.type)) return;
     if (!jobDraft.title.trim()) {
       setAlert("Başlık alanı zorunludur.");
@@ -5103,9 +5152,13 @@ export function HotelOpsSystem() {
       ? jobDraft.departmentId
       : allowedDepartments[0];
     const idPrefix = jobDraft.type === "Fault" ? "FLT" : jobDraft.type === "PlannedHousekeeping" ? "HK" : jobDraft.type === "PlannedMaintenance" ? "PM" : "WO";
+    jobCreateInProgressRef.current = true;
+    setJobCreateInProgress(true);
     const record: JobRecord = {
       ...jobDraft,
       departmentId,
+      assignee: "",
+      assigneeId: "",
       id: `${idPrefix}-${Math.floor(10000 + Math.random() * 89999)}`,
       status: jobDraft.initialStatus === "Completed" ? "Completed" : "Pending",
       createdBy: session.username,
@@ -5119,6 +5172,8 @@ export function HotelOpsSystem() {
     setJobDraft(newJobDraft(session));
     setChecklistText("");
     navigate(record.status === "Completed" ? "/jobs?view=completed" : "/jobs");
+    jobCreateInProgressRef.current = false;
+    setJobCreateInProgress(false);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -5312,6 +5367,7 @@ export function HotelOpsSystem() {
 
   async function handleCreateJobApi(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (jobCreateInProgressRef.current) return;
     if (!session || !canCreateJobType(session, jobDraft.type)) return;
     if (!jobDraft.title.trim()) {
       setAlert("Başlık alanı zorunludur.");
@@ -5332,11 +5388,13 @@ export function HotelOpsSystem() {
       ? jobDraft.departmentId
       : allowedDepartments[0];
 
+    jobCreateInProgressRef.current = true;
+    setJobCreateInProgress(true);
     try {
       const endpoint = jobDraft.initialStatus === "Completed" ? "/work-orders" : isPlannedJobType(jobDraft.type) ? "/calendar/work-orders" : "/work-orders";
       const created = await apiRequest<JobRecord>(endpoint, {
         method: "POST",
-        body: JSON.stringify({ ...jobDraft, status: jobDraft.initialStatus ?? "Pending", photos: photosUploadPayload(jobDraft.photos ?? []), departmentId, assigneeId: jobDraft.assignee })
+        body: JSON.stringify({ ...jobDraft, assignee: "", assigneeId: "", status: jobDraft.initialStatus ?? "Pending", photos: photosUploadPayload(jobDraft.photos ?? []), departmentId })
       });
       setJobs((current) => [created, ...current]);
       if (created.status !== "Completed") emitWorkOrderNotification(created);
@@ -5347,6 +5405,9 @@ export function HotelOpsSystem() {
       navigate(created.status === "Completed" ? "/jobs?view=completed" : "/jobs");
     } catch (error) {
       setAlert(workOrderCreateErrorMessage(error));
+    } finally {
+      jobCreateInProgressRef.current = false;
+      setJobCreateInProgress(false);
     }
   }
 
@@ -5641,6 +5702,11 @@ export function HotelOpsSystem() {
   }
 
   const platformPanelRequest = isPlatformPanelPath(currentPath);
+  const requiredAppUpdateNotice = appUpdateNotice?.required ? appUpdateNotice : null;
+
+  if (requiredAppUpdateNotice) {
+    return <RequiredAppUpdateScreen notice={requiredAppUpdateNotice} onUpdate={openAppUpdateDownload} />;
+  }
 
   if (routeNotFound) {
     return <HotelRouteNotFound path={currentPath} />;
@@ -5815,6 +5881,7 @@ export function HotelOpsSystem() {
                 departmentTables,
                 departmentLabelFor: activeDepartmentLabel,
                 jobDraft,
+                jobCreateInProgress,
                 jobs,
                 notifications,
                 operationDocumentDraft,
@@ -6425,7 +6492,7 @@ function SidebarNav({
     {
       title: "Operasyon",
       items: [
-        entry("jobs", "jobs", "/jobs", "İşler", ClipboardList, undefined, "arıza görev liste"),
+        entry("jobs", "jobs", "/jobs", "İşler", ClipboardList, undefined, "iş görev liste"),
         ...(canCreateJobType(session, "PlannedMaintenance") ? [entry("periodic-maintenance", "periodicMaintenance", "/jobs/new?type=PlannedMaintenance", "Periyodik Bakım Planı", CalendarDays, undefined, "planlı bakım periyodik departman")] : []),
         entry("housekeeping", "housekeeping", "/housekeeping", "HK Planları", Home, undefined, "kat temizlik housekeeping"),
         entry("calendar", "departmentCalendar", "/calendar/department", "Takvim", CalendarDays, todayPlannedJobCount, `${departmentLabelFor(session.departmentId)} bugün planlı iş`),
@@ -6604,7 +6671,7 @@ function NavItem({
 function getPageTitle(path: string) {
   if (path === "/jobs/new") return { title: "Yeni İş Oluştur", subtitle: "" };
   if (path === "/jobs/detail") return { title: "İş Detayı", subtitle: "" };
-  if (path === "/jobs") return { title: "İş / Arıza Listesi", subtitle: "" };
+  if (path === "/jobs") return { title: "İş Listesi", subtitle: "" };
   if (path === "/maintenance") return { title: "Takvim", subtitle: "Departman Takvimi" };
   if (path === "/housekeeping") return { title: "Planlı İşler", subtitle: "Housekeeping" };
   if (path.startsWith("/calendar")) return { title: "Takvim", subtitle: "Operasyon Planı" };
@@ -6645,6 +6712,7 @@ type RenderContext = {
   departmentTables: DepartmentTableRecord[];
   departmentLabelFor: (departmentId: string) => string;
   jobDraft: JobDraft;
+  jobCreateInProgress: boolean;
   jobs: JobRecord[];
   managementRequestDraft: ManagementRequestDraft;
   managementRequestRecipients: DemoUser[];
@@ -6894,7 +6962,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
             {canCreateJob(session) ? (
               <>
                 {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate("/jobs/new")}>{newJobActionLabel()}</button>}
-                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Fault&departmentId=technical" : "/jobs/new?type=Fault")}>{isHousekeepingUser ? "Tekniğe Arıza Aç" : "Acil Arıza Bildir"}</button>}
+                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Job&departmentId=technical&priority=Urgent" : "/jobs/new?type=Job&priority=Urgent")}>{isHousekeepingUser ? "Tekniğe İş Aç" : "Acil İş Bildir"}</button>}
                 {session.departmentId === "technical" && canUseModule(session, "periodicMaintenance") && <button className="btn btn-warning btn-full" onClick={() => navigate("/jobs/new?type=PlannedMaintenance")}>Planlı Bakım Ekle</button>}
                 {session.departmentId === "housekeeping" && canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?type=PlannedHousekeeping")}>HK Planlı İş Ekle</button>}
               </>
@@ -7378,7 +7446,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
             )}
             <button type="button" className="btn btn-primary btn-full" onClick={createOperationalRecord} disabled={!canCreateRoomStatus}><Plus size={15} /> {module.primaryAction}</button>
             <div className="module-helper">
-              Kayıt bu cihazda operasyon taslağı olarak saklanır; ana iş emri gerekiyorsa İşlerim ve Arızalar ekranından görev açılır.
+              Kayıt bu cihazda operasyon taslağı olarak saklanır; ana iş emri gerekiyorsa İşlerim ekranından görev açılır.
             </div>
           </div>
         </div>}
@@ -7855,7 +7923,6 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           <select className="form-control" value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value }))}>
             <option value="">Tüm Tipler</option>
             <option value="Job">İş</option>
-            <option value="Fault">Arıza</option>
             <option value="PlannedMaintenance">Planlı Bakım</option>
             <option value="PlannedHousekeeping">HK Planlı İş</option>
           </select>
@@ -7874,7 +7941,7 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
 
       <div className="jobs-view-tabs" role="tablist" aria-label="İş listesi görünümü">
         <button type="button" className={`jobs-view-tab ${quickView !== "completed" && quickView !== "pool" ? "active" : ""}`} onClick={() => navigate("/jobs")}>Aktif İşler</button>
-        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool")}>İş-Arıza Havuzu ({departmentPoolCount})</button>
+        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool")}>İş Havuzu ({departmentPoolCount})</button>
         <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
       </div>
 
@@ -7885,7 +7952,7 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool")}>İş-Arıza Havuzu ({departmentPoolCount})</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool")}>İş Havuzu ({departmentPoolCount})</button>
           <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>
           <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>
         </div>
@@ -8101,12 +8168,12 @@ function PhotoPicker({
 }
 
 function JobFormPage({
-  departmentAssignees,
   departmentLabelFor,
   departmentOptions,
   checklistText,
   handleCreateJob,
   jobDraft,
+  jobCreateInProgress,
   navigate,
   queryParams,
   session,
@@ -8116,10 +8183,10 @@ function JobFormPage({
   const isPlannedJob = jobDraft.type === "PlannedMaintenance" || jobDraft.type === "PlannedHousekeeping";
   const availableDepartmentIds = useMemo(() => departmentOptions.map((department) => department.id), [departmentOptions]);
   const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
-  const assigneeOptions = departmentAssignees.filter((user) => user.departmentId === jobDraft.departmentId);
 
   useEffect(() => {
-    const type = queryParams.get("type") as JobType | null;
+    const requestedType = queryParams.get("type") as JobType | null;
+    const type = requestedType === "Fault" ? "Job" : requestedType;
     const title = queryParams.get("title");
     const departmentId = queryParams.get("departmentId");
     const room = queryParams.get("room");
@@ -8140,9 +8207,7 @@ function JobFormPage({
         initialStatus: nextInitialStatus,
         priority: priority && ["Urgent", "High", "Normal", "Low"].includes(priority)
           ? priority
-          : nextInitialStatus !== "Completed" && (type === "Job" || type === "Fault")
-            ? "Urgent"
-            : draft.priority,
+          : draft.priority,
         room: room ?? draft.room,
         location: location ?? draft.location,
         description: description ?? draft.description
@@ -8158,7 +8223,7 @@ function JobFormPage({
 
   return (
     <div className="form-shell">
-      <form onSubmit={handleCreateJob}>
+      <form onSubmit={handleCreateJob} aria-busy={jobCreateInProgress}>
         <div className="card">
           <div className="card-header">
             <span className="card-title">İş Bilgileri</span>
@@ -8167,7 +8232,7 @@ function JobFormPage({
             <div className="form-group">
               <label className="form-label">İş Tipi <span className="required">*</span></label>
               <div className="type-selector">
-                {(["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"] as JobType[]).filter((type) => canCreateJobType(session, type)).map((type) => (
+                {(["Job", "PlannedMaintenance", "PlannedHousekeeping"] as JobType[]).filter((type) => canCreateJobType(session, type)).map((type) => (
                   <button
                     key={type}
                     type="button"
@@ -8179,8 +8244,7 @@ function JobFormPage({
                       return {
                         ...draft,
                         type,
-                        departmentId,
-                        priority: draft.initialStatus !== "Completed" && (type === "Job" || type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                        departmentId
                       };
                     })}
                   >
@@ -8216,8 +8280,7 @@ function JobFormPage({
                     setJobDraft((draft) => ({
                       ...draft,
                       departmentId,
-                      assignee: "",
-                      priority: draft.initialStatus !== "Completed" && (draft.type === "Job" || draft.type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                      assignee: ""
                     }));
                   }}
                   disabled={allowedDepartments.length === 1}
@@ -8229,11 +8292,11 @@ function JobFormPage({
               </div>
               <div className="form-group ui-form-compact">
                 <label className="form-label">Öncelik <span className="required">*</span></label>
-                <select className="form-control" value={jobDraft.priority} onChange={(event) => setJobDraft((draft) => ({ ...draft, priority: event.target.value as Priority }))}>
+                <select className={`form-control priority-select priority-${priorityClass(jobDraft.priority)}`} value={jobDraft.priority} onChange={(event) => setJobDraft((draft) => ({ ...draft, priority: event.target.value as Priority }))}>
                   <option value="Normal">Normal</option>
                   <option value="Low">Düşük</option>
                   <option value="High">Yüksek</option>
-                  <option value="Urgent">Acil</option>
+                  <option value="Urgent" className="priority-option-urgent">Acil</option>
                 </select>
               </div>
             </div>
@@ -8249,31 +8312,14 @@ function JobFormPage({
               </div>
             </div>
 
-            <div className="form-row ui-section-sm">
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Atanan Kişi</label>
-                <select
-                  className="form-control"
-                  value={jobDraft.assignee}
-                  onChange={(event) => setJobDraft((draft) => ({
-                    ...draft,
-                    assignee: event.target.value,
-                    priority: !event.target.value && draft.initialStatus !== "Completed" && (draft.type === "Job" || draft.type === "Fault") ? "Urgent" : draft.priority
-                  }))}
-                >
-                  <option value="">Seçilmedi</option>
-                  {assigneeOptions.map((user) => (
-                    <option key={user.id} value={user.id}>{user.fullName} - {roleLabel(user.roleId)}</option>
-                  ))}
-                </select>
-              </div>
-              {isPlannedJob && (
+            {isPlannedJob && (
+              <div className="form-row ui-section-sm">
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Plan Tarihi / Saat</label>
                   <input className="form-control" type="datetime-local" value={jobDraft.due} onChange={(event) => setJobDraft((draft) => ({ ...draft, due: event.target.value }))} />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             <label className="job-completed-toggle ui-section-sm">
               <input
@@ -8281,8 +8327,7 @@ function JobFormPage({
                 checked={jobDraft.initialStatus === "Completed"}
                 onChange={(event) => setJobDraft((draft) => ({
                   ...draft,
-                  initialStatus: event.target.checked ? "Completed" : "Pending",
-                  priority: !event.target.checked && (draft.type === "Job" || draft.type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                  initialStatus: event.target.checked ? "Completed" : "Pending"
                 }))}
               />
               <span>
@@ -8343,8 +8388,10 @@ function JobFormPage({
         </div>
 
         <div className="action-row ui-actions">
-          <button type="button" className="btn btn-ghost btn-lg" onClick={() => navigate("/jobs")}>İptal</button>
-          <button type="submit" className="btn btn-primary btn-lg"><CheckCircle2 size={17} /> {submitJobLabel(jobDraft.initialStatus)}</button>
+          <button type="button" className="btn btn-ghost btn-lg" onClick={() => navigate("/jobs")} disabled={jobCreateInProgress}>İptal</button>
+          <button type="submit" className="btn btn-primary btn-lg" disabled={jobCreateInProgress}>
+            <CheckCircle2 size={17} /> {jobCreateInProgress ? "Oluşturuluyor" : submitJobLabel(jobDraft.initialStatus)}
+          </button>
         </div>
       </form>
     </div>
@@ -8354,7 +8401,6 @@ function JobFormPage({
 function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWorkPolicy, jobs, navigate, queryParams, refreshData, session, setAlert, setJobs }: RenderContext) {
   const id = queryParams.get("id") ?? "";
   const job = jobs.find((item) => item.id === id);
-  const [activeTab, setActiveTab] = useState<"notes" | "photos" | "checklist" | "log">("notes");
   const [transferTo, setTransferTo] = useState("");
   const [detailAssignees, setDetailAssignees] = useState<DemoUser[]>([]);
   const [participantIds, setParticipantIds] = useState<string[]>([]);
@@ -8516,7 +8562,6 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
       setJobs((current) => current.map((item) => (
         item.id === job.id ? { ...item, comments: [...(item.comments ?? []), created] } : item
       )));
-      setActiveTab("notes");
       setAlert("Not eklendi.");
       await refreshData();
     } catch {
@@ -8539,7 +8584,6 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
       setJobs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       if (phase === "BEFORE") setBeforePhotos([]);
       if (phase === "AFTER") setAfterPhotos([]);
-      setActiveTab("photos");
       setAlert("Medya eklendi.");
       await refreshData();
     } catch (error) {
@@ -8549,15 +8593,15 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
 
   return (
     <>
-      <div className="page-header action-bar ui-section-bottom-sm">
-        <div className="action-group">
+      <div className="page-header action-bar job-detail-actions ui-section-bottom-sm">
+        <div className="action-group job-detail-action-group">
           {canClaimJob && <button type="button" className="btn btn-start" onClick={claimJob}><Wrench size={15} /> İşi Al</button>}
           {canCompleteCurrentJob && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
           {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
           {canEditJobStatus && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
           <button type="button" className="btn btn-secondary" onClick={addComment}><MessageSquareText size={15} /> Not Ekle</button>
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
-          <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("photos")}><Camera size={15} /> Medyayı Gör</button>
+          <button type="button" className="btn btn-secondary" onClick={() => document.getElementById("job-detail-media")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Camera size={15} /> Medyayı Gör</button>
           {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={deleteJob}><Trash2 size={15} /> Sil</button>}
           {canEditJobStatus && job.status !== "Cancelled" && <button type="button" className="btn btn-danger" onClick={() => updateJob({ status: "Cancelled" })}>İptal Et</button>}
         </div>
@@ -8601,98 +8645,90 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
                   {job.description || "Açıklama yok."}
                 </div>
               </div>
-            </div>
-          </div>
 
-          <div className="card">
-            <div className="card-body card-body-flush-top">
-              <div className="tabs-container">
-                <div className="tabs">
-                  <button type="button" className={`tab-btn ${activeTab === "notes" ? "active" : ""}`} onClick={() => setActiveTab("notes")}>Notlar ({comments.length})</button>
-                  <button type="button" className={`tab-btn ${activeTab === "photos" ? "active" : ""}`} onClick={() => setActiveTab("photos")}>Medya ({job.photos?.length ?? 0})</button>
-                  <button type="button" className={`tab-btn ${activeTab === "checklist" ? "active" : ""}`} onClick={() => setActiveTab("checklist")}>Kontrol Listesi</button>
-                  <button type="button" className={`tab-btn ${activeTab === "log" ? "active" : ""}`} onClick={() => setActiveTab("log")}>Aktivite</button>
-                </div>
-
-                {activeTab === "notes" && (
-                  <div className="tab-panel active">
-                    {comments.length ? comments.map((note) => (
-                      <div className="note-item" key={note.id}>
-                        <div className="note-header">
-                          <div className="avatar avatar-xs">{initials(note.author)}</div>
-                          <span className="note-author">{note.author}</span>
-                          <span className="note-time">{formatDateTime(note.createdAt)}</span>
-                        </div>
-                        <div className="note-text">{note.body}</div>
+              <div className="job-detail-sections">
+                <section className="job-detail-section">
+                  <div className="job-detail-section-header">
+                    <h3>Notlar ({comments.length})</h3>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={addComment}>Not Ekle</button>
+                  </div>
+                  {comments.length ? comments.map((note) => (
+                    <div className="note-item" key={note.id}>
+                      <div className="note-header">
+                        <div className="avatar avatar-xs">{initials(note.author)}</div>
+                        <span className="note-author">{note.author}</span>
+                        <span className="note-time">{formatDateTime(note.createdAt)}</span>
                       </div>
-                    )) : <div className="ui-empty-inline">Bu iş için not eklenmemiş.</div>}
-                    <div className="ui-section-top-sm">
-                      <button type="button" className="btn btn-outline btn-sm btn-full" onClick={addComment}>Not Ekle</button>
+                      <div className="note-text">{note.body}</div>
+                    </div>
+                  )) : <div className="ui-empty-inline">Bu iş için not eklenmemiş.</div>}
+                </section>
+
+                <section className="job-detail-section" id="job-detail-media">
+                  <div className="job-detail-section-header">
+                    <h3>Medya ({job.photos?.length ?? 0})</h3>
+                  </div>
+                  {canUseAccess(session, "featureBeforeAfterPhotos") && <div className="two-column-grid media-upload-grid ui-section-bottom-xs">
+                    <div className="media-upload-panel">
+                      <div className="info-label ui-section-bottom-xs">Önce Medyası</div>
+                      <PhotoPicker phase="BEFORE" photos={beforePhotos} setPhotos={setBeforePhotos} />
+                      <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("BEFORE")}>Önce Medyasını Ekle</button>
+                    </div>
+                    <div className="media-upload-panel">
+                      <div className="info-label ui-section-bottom-xs">Sonra Medyası</div>
+                      <PhotoPicker phase="AFTER" photos={afterPhotos} setPhotos={setAfterPhotos} />
+                      <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("AFTER")}>Sonra Medyasını Ekle</button>
+                    </div>
+                  </div>}
+                  <div className="photo-grid">
+                    {job.photos?.length ? job.photos.map((photo, index) => (
+                      <button type="button" className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || (isVideoAttachment(photo) ? "Video" : "Fotoğraf")} büyüt`}>
+                        <MediaPreview photo={photo} width={180} height={120} />
+                        <span className="badge badge-pending">{photo.phase === "BEFORE" ? "Önce" : photo.phase === "AFTER" ? "Sonra" : "Genel"}</span>
+                        {isVideoAttachment(photo) ? <span className="photo-video-badge"><Video size={12} /> Video</span> : null}
+                      </button>
+                    )) : <EmptyState title="Medya yok" description="Bu kayıt için fotoğraf veya video eklenmemiş." />}
+                  </div>
+                </section>
+
+                <section className="job-detail-section">
+                  <div className="job-detail-section-header">
+                    <h3>Kontrol Listesi</h3>
+                    <span className="ui-tiny-muted">{checklistDone}/{checklistTotal} (%{checklistPct})</span>
+                  </div>
+                  <div className="ui-section-bottom-xs">
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${checklistPct}%` }} />
                     </div>
                   </div>
-                )}
+                  {job.checklist.length ? job.checklist.map((item, index) => (
+                    <div key={item} className={`checklist-item ${index < checklistDone ? "done" : ""}`}>
+                      <input type="checkbox" defaultChecked={index < checklistDone} />
+                      <label>{item}</label>
+                    </div>
+                  )) : (
+                    <div className="ui-empty-inline">Bu iş için kontrol listesi tanımlanmamış.</div>
+                  )}
+                </section>
 
-                {activeTab === "photos" && (
-                  <div className="tab-panel active">
-                    {canUseAccess(session, "featureBeforeAfterPhotos") && <div className="two-column-grid ui-section-bottom-xs">
+                <section className="job-detail-section">
+                  <div className="job-detail-section-header">
+                    <h3>Aktivite</h3>
+                  </div>
+                  {timeline.length ? timeline.map((item) => (
+                    <div className="activity-item" key={item.id}>
+                      <div className="activity-dot" />
                       <div>
-                        <div className="info-label ui-section-bottom-xs">Önce Medyası</div>
-                        <PhotoPicker phase="BEFORE" photos={beforePhotos} setPhotos={setBeforePhotos} />
-                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("BEFORE")}>Önce Medyasını Ekle</button>
+                        <div className="activity-text"><strong>{item.status}</strong> - {item.message}</div>
+                        <div className="activity-time">{formatDateTime(item.createdAt)}</div>
                       </div>
-                      <div>
-                        <div className="info-label ui-section-bottom-xs">Sonra Medyası</div>
-                        <PhotoPicker phase="AFTER" photos={afterPhotos} setPhotos={setAfterPhotos} />
-                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("AFTER")}>Sonra Medyasını Ekle</button>
-                      </div>
-                    </div>}
-                    <div className="photo-grid">
-                      {job.photos?.length ? job.photos.map((photo, index) => (
-                        <button type="button" className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || (isVideoAttachment(photo) ? "Video" : "Fotoğraf")} büyüt`}>
-                          <MediaPreview photo={photo} width={180} height={120} />
-                          <span className="badge badge-pending">{photo.phase === "BEFORE" ? "Önce" : photo.phase === "AFTER" ? "Sonra" : "Genel"}</span>
-                          {isVideoAttachment(photo) ? <span className="photo-video-badge"><Video size={12} /> Video</span> : null}
-                        </button>
-                      )) : <EmptyState title="Medya yok" description="Bu kayıt için fotoğraf veya video eklenmemiş." />}
                     </div>
-                  </div>
-                )}
-
-                {activeTab === "checklist" && (
-                  <div className="tab-panel active">
-                    <div className="ui-section-bottom-xs">
-                      <div className="progress-bar">
-                        <div className="progress-fill" style={{ width: `${checklistPct}%` }} />
-                      </div>
-                      <div className="ui-tiny-muted ui-section-top-xs">{checklistDone}/{checklistTotal} (%{checklistPct})</div>
-                    </div>
-                    {job.checklist.length ? job.checklist.map((item, index) => (
-                      <div key={item} className={`checklist-item ${index < checklistDone ? "done" : ""}`}>
-                        <input type="checkbox" defaultChecked={index < checklistDone} />
-                        <label>{item}</label>
-                      </div>
-                    )) : (
-                      <div className="ui-empty-inline">Bu iş için kontrol listesi tanımlanmamış.</div>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "log" && (
-                  <div className="tab-panel active">
-                    {timeline.length ? timeline.map((item) => (
-                      <div className="activity-item" key={item.id}>
-                        <div className="activity-dot" />
-                        <div>
-                          <div className="activity-text"><strong>{item.status}</strong> - {item.message}</div>
-                          <div className="activity-time">{formatDateTime(item.createdAt)}</div>
-                        </div>
-                      </div>
-                    )) : <div className="ui-empty-inline">Aktivite kaydı yok.</div>}
-                  </div>
-                )}
+                  )) : <div className="ui-empty-inline">Aktivite kaydı yok.</div>}
+                </section>
               </div>
             </div>
           </div>
+
         </div>
 
         <div>
@@ -8738,7 +8774,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
                 <div className="form-group">
                   <label className="form-label">Yeni Atanan</label>
                   <select className="form-control" value={transferTo} onChange={(event) => setTransferTo(event.target.value)}>
-                    <option value="">İş-Arıza havuzuna bırak</option>
+                    <option value="">İş havuzuna bırak</option>
                     {assigneeOptions.map((user) => (
                       <option key={user.id} value={user.id}>{user.fullName} - {roleLabel(user.roleId)}</option>
                     ))}
@@ -8826,7 +8862,7 @@ function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }
           {transferredTechnicalRecords.length ? (
             <JobCardList jobs={transferredTechnicalRecords} navigate={navigate} departmentLabelFor={departmentLabelFor} />
           ) : (
-            <EmptyState title="Tekniğe paslanan iş yok" description="HK tarafından teknik servise açılan iş ve arızalar burada takip edilir." />
+            <EmptyState title="Tekniğe paslanan iş yok" description="HK tarafından teknik servise açılan işler burada takip edilir." />
           )}
         </div>
       </div>
@@ -10578,7 +10614,6 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
   const guestImpactCount = reportJobs.filter((job) => job.guestImpact).length;
   const slaRiskCount = reportJobs.filter((job) => job.slaRisk || job.status === "Delayed").length;
   const plannedCount = reportJobs.filter((job) => job.type === "PlannedMaintenance" || job.type === "PlannedHousekeeping").length;
-  const faultCount = reportJobs.filter((job) => job.type === "Fault").length;
   const noteCount = reportJobs.reduce((total, job) => total + (job.description ? 1 : 0) + (job.comments?.length ?? 0), 0);
   const approvalCount = reportJobs.reduce((total, job) => total + (job.approvals?.length ?? 0), 0);
   const flowCount = reportJobs.reduce((total, job) => total + Math.max(1, job.timeline?.length ?? 0), 0);
@@ -10688,7 +10723,6 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
     ];
     const jobRows = reportJobs.map(jobRow);
     const plannedRows = reportJobs.filter((job) => job.type === "PlannedMaintenance" || job.type === "PlannedHousekeeping").map(jobRow);
-    const faultRows = reportJobs.filter((job) => job.type === "Fault").map(jobRow);
     const noteRows = reportJobs.flatMap((job) => [
       ...(job.description ? [[job.id, job.title, "Açıklama", job.description, job.createdBy, formatReportDateTime(job.createdAt)]] : []),
       ...(job.comments ?? []).map((comment) => [job.id, job.title, "Yorum", comment.body, comment.author, formatReportDateTime(comment.createdAt)])
@@ -10734,7 +10768,6 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
       ["Tarih Aralığı", `${reportStartDate} / ${reportEndDate}`],
       ["Toplam İş", reportJobs.length],
       ["Planlı İş", plannedCount],
-      ["Arıza", faultCount],
       ["Tamamlanan", completed],
       ["Geciken", delayed],
       ["SLA Riski", slaRiskCount],
@@ -10749,7 +10782,6 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
       { title: "Özet", headers: ["Alan", "Değer"], rows: summaryRows },
       { title: "İşler", headers: baseJobHeaders, rows: jobRows },
       { title: "Planlı İşler", headers: baseJobHeaders, rows: plannedRows },
-      { title: "Arızalar", headers: baseJobHeaders, rows: faultRows },
       { title: "Notlar ve Yorumlar", headers: ["Kod", "Başlık", "Not Tipi", "Not", "Yazan", "Tarih/Saat"], rows: noteRows },
       { title: "Onaylar", headers: ["Kod", "Başlık", "Onay ID", "Onaylayan ID", "Durum", "Not", "Oluşturma", "Güncelleme"], rows: approvalRows },
       { title: "Tarih Saat Akışı", headers: ["Kod", "Başlık", "Akış Durumu", "Açıklama", "Tarih/Saat"], rows: flowRows },
@@ -10785,7 +10817,6 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
         <div className="report-scope-grid">
           <span><strong>{reportJobs.length}</strong> toplam iş</span>
           <span><strong>{plannedCount}</strong> planlı iş</span>
-          <span><strong>{faultCount}</strong> arıza</span>
           <span><strong>{noteCount}</strong> not/yorum</span>
           <span><strong>{approvalCount}</strong> onay</span>
           <span><strong>{flowCount}</strong> akış</span>

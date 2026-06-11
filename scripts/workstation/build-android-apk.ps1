@@ -13,7 +13,7 @@ $privatePropsPath = Join-Path $root "secrets\android-keystore.properties"
 $privateHandoffPath = Join-Path $root "docs\CODEX_PRIVATE_HANDOFF.local.md"
 
 $keyAlias = "hotelops"
-$expectedCertSha256 = "8111440efb2d6b13e7bf548acee01f64f1f10df31b9698939af88ec6cf12d5ff"
+$expectedCertSha256 = "069657a11913e7fbd8153fa67e7e182ef170d96834bc167916e72c567d3a697c"
 
 # Bundan sonraki tum APK'lar ayni keystore ile imzalanmali. Beklenen sertifika
 # hash'i kontrol edilmezse Android cihazlar guncellemeyi farkli uygulama sanabilir.

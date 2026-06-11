@@ -1,11 +1,8 @@
 package com.example.nodera
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -111,41 +108,10 @@ class HotelOpsAndroidBridge(context: Context) {
 
     companion object {
         private const val SITE_ORIGIN = "https://noderasoftware.com"
-        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
-        private val pendingApkDownloads = mutableMapOf<Long, String>()
-        private var downloadReceiverRegistered = false
-
-        private val downloadReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val downloadId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-                val title = pendingApkDownloads.remove(downloadId) ?: return
-                val manager = context.getSystemService(DownloadManager::class.java) ?: return
-                val downloadedUri = manager.getUriForDownloadedFile(downloadId) ?: return
-
-                val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(downloadedUri, APK_MIME_TYPE)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-
-                runCatching { context.startActivity(installIntent) }
-                    .onFailure {
-                        Toast.makeText(
-                            context,
-                            "$title indirildi. Kurulum icin bildirimlerden acabilirsiniz.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-            }
-        }
 
         fun openTrustedDownload(context: Context, rawUrl: String?): Boolean {
             val uri = normalizeDownloadUri(rawUrl) ?: return false
-            if (uri.path?.endsWith(".apk", ignoreCase = true) == true) {
-                return enqueueApkDownload(context.applicationContext, uri)
-            }
-
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
@@ -247,41 +213,6 @@ class HotelOpsAndroidBridge(context: Context) {
                 ?: "$fallbackName-${System.currentTimeMillis()}.$fallbackExtension"
 
             return if (cleaned.contains('.')) cleaned else "$cleaned.$fallbackExtension"
-        }
-
-        @Synchronized
-        private fun ensureDownloadReceiver(context: Context) {
-            if (downloadReceiverRegistered) return
-
-            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                context.registerReceiver(downloadReceiver, filter)
-            }
-            downloadReceiverRegistered = true
-        }
-
-        private fun enqueueApkDownload(context: Context, uri: Uri): Boolean {
-            val manager = context.getSystemService(DownloadManager::class.java) ?: return false
-            val fileName = uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: "HotelOps-Android-V1.apk"
-            val title = "HotelOps Android $fileName"
-            ensureDownloadReceiver(context)
-
-            val request = DownloadManager.Request(uri).apply {
-                setTitle(title)
-                setDescription("HotelOps guncellemesi indiriliyor")
-                setMimeType(APK_MIME_TYPE)
-                setAllowedOverMetered(true)
-                setAllowedOverRoaming(true)
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-            }
-
-            val downloadId = runCatching { manager.enqueue(request) }.getOrNull() ?: return false
-            pendingApkDownloads[downloadId] = title
-            Toast.makeText(context, "HotelOps guncellemesi indiriliyor.", Toast.LENGTH_SHORT).show()
-            return true
         }
 
         private fun normalizeDownloadUri(rawUrl: String?): Uri? {
