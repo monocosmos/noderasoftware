@@ -134,6 +134,7 @@ server {
     gzip_types text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml;
 
     add_header Cache-Control "no-cache" always;
+    error_page 404 /404/index.html;
 
     location /api/ {
         add_header Cache-Control "no-store" always;
@@ -187,19 +188,19 @@ server {
     }
 
     location ~ ^/hotel/modules/(inventory|rooms|lost-found|guest-requests|requests|operation-documents|training|minibar|equipment|announcements|vip)(/|$) {
-        try_files \$uri \$uri/ /hotel/index.html;
+        try_files \$uri \$uri/ =404;
     }
 
     location ~ ^/hotel/modules/ {
-        return 301 /hotel/dashboard/;
+        try_files \$uri \$uri/ =404;
     }
 
     location /hotel/ {
-        try_files \$uri \$uri/ /hotel/index.html;
+        try_files \$uri \$uri/ =404;
     }
 
     location / {
-        try_files \$uri \$uri/ /index.html;
+        try_files \$uri \$uri/ =404;
     }
 }
 EOF

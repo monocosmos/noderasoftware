@@ -16,6 +16,7 @@ export type RoleId =
   | "generalManager"
   | "hrManager"
   | "technicalManager"
+  | "technicalAssistant"
   | "hkManager"
   | "frontOfficeManager"
   | "securityManager"
@@ -108,6 +109,14 @@ export const roles: RoleDefinition[] = [
     department: "technical",
     visibleDepartments: ["technical"],
     permissions: ["workorder.assign", "workorder.edit", "asset.manage", "reports.view_all"]
+  },
+  {
+    id: "technicalAssistant",
+    labelTR: "Teknik Müdür Yardımcısı",
+    labelEN: "Assistant Engineering Manager",
+    department: "technical",
+    visibleDepartments: ["technical"],
+    permissions: ["workorder.edit", "asset.manage", "reports.view_all"]
   },
   {
     id: "hkManager",

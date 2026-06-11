@@ -45,6 +45,6 @@ Current baseline:
 
 - Windows visible version: `1.0.1`
 - Windows hidden build code: `6`
-- Android visible version: `1.0.7`
-- Android hidden product build: `11`
-- Android hidden update code: `2026053103`
+- Android visible version: `1.0.9`
+- Android hidden product build: `13`
+- Android hidden update code: `2026060102`

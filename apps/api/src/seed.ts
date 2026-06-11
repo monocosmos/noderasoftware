@@ -25,6 +25,7 @@ const roleDepartments: Record<string, DepartmentCode | null> = {
   generalManager: "EXECUTIVE",
   hrManager: "HR",
   technicalManager: "TECHNICAL",
+  technicalAssistant: "TECHNICAL",
   hkManager: "HOUSEKEEPING",
   frontOfficeManager: "FRONT_OFFICE",
   securityManager: "SECURITY",

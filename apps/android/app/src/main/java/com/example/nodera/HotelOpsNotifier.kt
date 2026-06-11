@@ -14,11 +14,14 @@ object HotelOpsNotifier {
     const val CHANNEL_SOUND_TRANSIENT = "hotelops_sound_transient"
     const val CHANNEL_SILENT_TRANSIENT = "hotelops_silent_transient"
     const val CHANNEL_SHIFT_STATUS = "hotelops_shift_status"
+    const val CHANNEL_SHIFT_REMINDER = "hotelops_shift_reminder"
     const val CHANNEL_WORK_ORDERS = CHANNEL_SOUND_TRANSIENT
     const val CHANNEL_REMINDERS = CHANNEL_SILENT_TRANSIENT
     const val CHANNEL_APP_UPDATES = CHANNEL_SOUND_TRANSIENT
     const val CHANNEL_SERVICE = CHANNEL_SILENT_TRANSIENT
+    const val EXTRA_ROUTE_PATH = "hotelops_route_path"
     private const val SHIFT_NOTIFICATION_ID = 20260531
+    private const val SHIFT_REMINDER_NOTIFICATION_ID = 20260601
 
     fun ensureChannels(context: Context) {
         // Android 8+ bildirimleri kanal bazinda yonetir. HotelOps tarafinda
@@ -65,29 +68,46 @@ object HotelOpsNotifier {
             setShowBadge(false)
         }
 
+        val shiftReminderChannel = NotificationChannel(
+            CHANNEL_SHIFT_REMINDER,
+            "Vardiya baslangic uyarisi",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Vardiya baslatilmazsa sesli ve kalici gosterilen HotelOps uyarisi."
+            setSound(defaultSound, soundAttributes)
+            enableVibration(true)
+        }
+
         notificationManager.createNotificationChannels(
-            listOf(soundTransientChannel, silentTransientChannel, shiftStatusChannel)
+            listOf(soundTransientChannel, silentTransientChannel, shiftStatusChannel, shiftReminderChannel)
         )
 
         listOf("hotelops_work_orders", "hotelops_reminders", "hotelops_app_updates", "hotelops_service")
             .forEach { notificationManager.deleteNotificationChannel(it) }
     }
 
-    fun showOperationNotification(context: Context, id: String, title: String, body: String, silent: Boolean = false) {
+    private fun contentIntent(context: Context, requestCode: Int, routePath: String? = null): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            if (!routePath.isNullOrBlank()) {
+                putExtra(EXTRA_ROUTE_PATH, routePath)
+            }
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    fun showOperationNotification(context: Context, id: String, title: String, body: String, silent: Boolean = false, routePath: String? = null) {
         // FCM'den gelen is/ariza bildirimleri varsayilan olarak sesli gecici
         // kanaldan gosterilir; backend sessiz isterse gecici sessiz kanal kullanilir.
         // Bildirime tiklaninca uygulama acilir ve kullanici panelini gorur.
         ensureChannels(context)
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            id.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = contentIntent(context, id.hashCode(), routePath)
 
         val channelId = if (silent) CHANNEL_SILENT_TRANSIENT else CHANNEL_SOUND_TRANSIENT
         val priority = if (silent) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH
@@ -112,15 +132,7 @@ object HotelOpsNotifier {
         // kullanilir; "arka planda calisiyor" gibi surekli servis bildirimi degildir.
         ensureChannels(context)
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            "hotelops-app-update".hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = contentIntent(context, "hotelops-app-update".hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_SOUND_TRANSIENT)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -140,15 +152,7 @@ object HotelOpsNotifier {
     fun showShiftNotification(context: Context, employeeName: String, departmentName: String, startedAtMillis: Long) {
         ensureChannels(context)
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            SHIFT_NOTIFICATION_ID,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = contentIntent(context, SHIFT_NOTIFICATION_ID, "/dashboard")
 
         val bodyParts = listOf(employeeName, departmentName).filter { it.isNotBlank() }
         val body = bodyParts.joinToString(" - ").ifBlank { "Vardiya devam ediyor." }
@@ -171,8 +175,37 @@ object HotelOpsNotifier {
         notificationManager.notify(SHIFT_NOTIFICATION_ID, notification)
     }
 
+    fun showShiftStartReminder(context: Context, title: String, body: String, routePath: String? = "/dashboard") {
+        ensureChannels(context)
+
+        val pendingIntent = contentIntent(context, SHIFT_REMINDER_NOTIFICATION_ID, routePath)
+        val cleanBody = body.ifBlank { "Vardiyan basladi. Ana sayfadan vardiya baslat." }
+        val notification = NotificationCompat.Builder(context, CHANNEL_SHIFT_REMINDER)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title.ifBlank { "Vardiya girisi gerekli" })
+            .setContentText(cleanBody)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(cleanBody))
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(false)
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .build()
+
+        val notificationManager = context.getSystemService(NotificationManager::class.java)
+        notificationManager.notify(SHIFT_REMINDER_NOTIFICATION_ID, notification)
+    }
+
     fun cancelShiftNotification(context: Context) {
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         notificationManager.cancel(SHIFT_NOTIFICATION_ID)
+    }
+
+    fun cancelShiftStartReminder(context: Context) {
+        val notificationManager = context.getSystemService(NotificationManager::class.java)
+        notificationManager.cancel(SHIFT_REMINDER_NOTIFICATION_ID)
     }
 }

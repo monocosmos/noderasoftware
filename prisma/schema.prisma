@@ -58,6 +58,7 @@ enum ApprovalStatus {
 enum AttachmentType {
   FILE
   PHOTO
+  VIDEO
   PDF
   EXCEL
   SIGNATURE
@@ -78,11 +79,11 @@ enum PushPlatform {
 }
 
 model Hotel {
-  id                  String              @id @default(cuid())
-  publicId            String?             @unique
+  id                  String                      @id @default(cuid())
+  publicId            String?                     @unique
   name                String
-  code                String              @unique
-  timezone            String              @default("Europe/Istanbul")
+  code                String                      @unique
+  timezone            String                      @default("Europe/Istanbul")
   publicIdReservation HotelIdReservation?
   departments         Department[]
   rooms               Room[]
@@ -93,8 +94,10 @@ model Hotel {
   reminders           Reminder[]
   managementRequests  ManagementRequest[]
   operationDocuments  OperationDocument[]
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  workOrderPolicies   WorkOrderDepartmentPolicy[]
+  departmentTables     DepartmentTable[]
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
 }
 
 model HotelIdReservation {
@@ -122,22 +125,24 @@ model HotelArchive {
 }
 
 model Department {
-  id             String          @id @default(cuid())
-  hotelId        String
-  code           String
-  name           String
-  hotel          Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  users          User[]
-  shiftSessions  ShiftSession[]
-  shiftPanels    ShiftPanel[]
-  workOrders     WorkOrder[]
-  calendarEvents CalendarEvent[]
-  reminders      Reminder[]
-  rooms          Room[]
-  assets         Asset[]
-  deletedAt      DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id              String                     @id @default(cuid())
+  hotelId         String
+  code            String
+  name            String
+  hotel           Hotel                      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  users           User[]
+  shiftSessions   ShiftSession[]
+  shiftPanels     ShiftPanel[]
+  workOrders      WorkOrder[]
+  workOrderPolicy WorkOrderDepartmentPolicy?
+  calendarEvents  CalendarEvent[]
+  reminders       Reminder[]
+  rooms           Room[]
+  assets          Asset[]
+  customTables    DepartmentTable[]
+  deletedAt       DateTime?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
 
   @@unique([hotelId, code])
   @@index([hotelId, code])
@@ -171,51 +176,57 @@ model RolePermission {
 }
 
 model User {
-  id                         String                  @id @default(cuid())
-  accountId                  String?                 @unique
-  hotelId                    String
-  departmentId               String
-  roleId                     String
-  username                   String                  @unique
-  email                      String                  @unique
-  passwordHash               String
-  fullName                   String
-  locale                     String                  @default("tr")
-  moduleAccessJson           String                  @default("{}")
-  shiftTrackingEnabled       Boolean                 @default(true)
-  twoFactorEnabled           Boolean                 @default(false)
-  isActive                   Boolean                 @default(true)
-  lastLoginAt                DateTime?
-  deletedAt                  DateTime?
-  hotel                      Hotel                   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  department                 Department              @relation(fields: [departmentId], references: [id])
-  role                       Role                    @relation(fields: [roleId], references: [id])
-  staffProfile               StaffProfile?
-  sessions                   AuthSession[]
-  loginHistory               LoginHistory[]
-  shiftSessions              ShiftSession[]
-  shiftPanelEditors          ShiftPanelEditor[]      @relation("ShiftPanelEditors")
-  shiftPanelCells            ShiftPanelCell[]        @relation("ShiftPanelCells")
-  createdShiftPanelEntries   ShiftPanelEntry[]       @relation("CreatedShiftPanelEntries")
-  updatedShiftPanelEntries   ShiftPanelEntry[]       @relation("UpdatedShiftPanelEntries")
-  updatedShiftPanelCells     ShiftPanelCell[]        @relation("UpdatedShiftPanelCells")
-  createdWorkOrders          WorkOrder[]             @relation("CreatedWorkOrders")
-  assignedWorkOrders         WorkOrder[]             @relation("AssignedWorkOrders")
-  comments                   Comment[]
-  auditLogs                  AuditLog[]
-  notifications              Notification[]
-  pushDevices                PushDevice[]
-  createdReminders           Reminder[]              @relation("CreatedReminders")
-  assignedReminders          Reminder[]              @relation("AssignedReminders")
-  createdManagementRequests  ManagementRequest[]     @relation("CreatedManagementRequests")
-  receivedManagementRequests ManagementRequest[]     @relation("ReceivedManagementRequests")
-  relatedManagementRequests  ManagementRequest[]     @relation("RelatedManagementRequests")
-  readManagementRequests     ManagementRequest[]     @relation("ReadManagementRequests")
-  createdOperationDocuments  OperationDocument[]     @relation("CreatedOperationDocuments")
-  operationDocumentReads     OperationDocumentRead[] @relation("OperationDocumentReads")
-  accountIdReservation       AccountIdReservation?
-  createdAt                  DateTime                @default(now())
-  updatedAt                  DateTime                @updatedAt
+  id                          String                  @id @default(cuid())
+  accountId                   String?                 @unique
+  hotelId                     String
+  departmentId                String
+  roleId                      String
+  username                    String                  @unique
+  email                       String                  @unique
+  passwordHash                String
+  fullName                    String
+  locale                      String                  @default("tr")
+  moduleAccessJson            String                  @default("{}")
+  shiftTrackingEnabled        Boolean                 @default(true)
+  twoFactorEnabled            Boolean                 @default(false)
+  isActive                    Boolean                 @default(true)
+  lastLoginAt                 DateTime?
+  deletedAt                   DateTime?
+  hotel                       Hotel                   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department                  Department              @relation(fields: [departmentId], references: [id])
+  role                        Role                    @relation(fields: [roleId], references: [id])
+  staffProfile                StaffProfile?
+  sessions                    AuthSession[]
+  loginHistory                LoginHistory[]
+  shiftSessions               ShiftSession[]
+  shiftPanelEditors           ShiftPanelEditor[]      @relation("ShiftPanelEditors")
+  shiftPanelCells             ShiftPanelCell[]        @relation("ShiftPanelCells")
+  createdShiftPanelEntries    ShiftPanelEntry[]       @relation("CreatedShiftPanelEntries")
+  updatedShiftPanelEntries    ShiftPanelEntry[]       @relation("UpdatedShiftPanelEntries")
+  updatedShiftPanelCells      ShiftPanelCell[]        @relation("UpdatedShiftPanelCells")
+  createdWorkOrders           WorkOrder[]             @relation("CreatedWorkOrders")
+  assignedWorkOrders          WorkOrder[]             @relation("AssignedWorkOrders")
+  workOrderParticipants       WorkOrderParticipant[]  @relation("WorkOrderParticipants")
+  taggedWorkOrderParticipants WorkOrderParticipant[]  @relation("TaggedWorkOrderParticipants")
+  comments                    Comment[]
+  auditLogs                   AuditLog[]
+  notifications               Notification[]
+  pushDevices                 PushDevice[]
+  createdReminders            Reminder[]              @relation("CreatedReminders")
+  assignedReminders           Reminder[]              @relation("AssignedReminders")
+  createdManagementRequests   ManagementRequest[]     @relation("CreatedManagementRequests")
+  receivedManagementRequests  ManagementRequest[]     @relation("ReceivedManagementRequests")
+  relatedManagementRequests   ManagementRequest[]     @relation("RelatedManagementRequests")
+  readManagementRequests      ManagementRequest[]     @relation("ReadManagementRequests")
+  createdOperationDocuments   OperationDocument[]     @relation("CreatedOperationDocuments")
+  operationDocumentReads      OperationDocumentRead[] @relation("OperationDocumentReads")
+  createdDepartmentTables      DepartmentTable[]       @relation("CreatedDepartmentTables")
+  updatedDepartmentTables      DepartmentTable[]       @relation("UpdatedDepartmentTables")
+  createdDepartmentTableRows   DepartmentTableRow[]    @relation("CreatedDepartmentTableRows")
+  updatedDepartmentTableRows   DepartmentTableRow[]    @relation("UpdatedDepartmentTableRows")
+  accountIdReservation        AccountIdReservation?
+  createdAt                   DateTime                @default(now())
+  updatedAt                   DateTime                @updatedAt
 
   @@index([hotelId, departmentId])
   @@index([roleId])
@@ -265,9 +276,9 @@ model TrainingAssignment {
 }
 
 model WorkOrder {
-  id               String              @id @default(cuid())
-  code             String              @unique
-  type             WorkOrderType       @default(JOB)
+  id               String                 @id @default(cuid())
+  code             String                 @unique
+  type             WorkOrderType          @default(JOB)
   departmentId     String
   createdById      String
   assignedToId     String?
@@ -276,25 +287,26 @@ model WorkOrder {
   room             String?
   location         String
   tags             String?
-  guestImpact      Boolean             @default(false)
+  guestImpact      Boolean                @default(false)
   shiftCode        String?
-  checklistJson    String              @default("[]")
-  priority         Priority            @default(MEDIUM)
-  status           WorkOrderStatus     @default(REPORTED)
+  checklistJson    String                 @default("[]")
+  priority         Priority               @default(MEDIUM)
+  status           WorkOrderStatus        @default(REPORTED)
   slaDueAt         DateTime?
   completedAt      DateTime?
   deletedAt        DateTime?
-  department       Department          @relation(fields: [departmentId], references: [id])
-  createdBy        User                @relation("CreatedWorkOrders", fields: [createdById], references: [id])
-  assignedTo       User?               @relation("AssignedWorkOrders", fields: [assignedToId], references: [id])
+  department       Department             @relation(fields: [departmentId], references: [id])
+  createdBy        User                   @relation("CreatedWorkOrders", fields: [createdById], references: [id])
+  assignedTo       User?                  @relation("AssignedWorkOrders", fields: [assignedToId], references: [id])
   timeline         WorkOrderTimeline[]
   comments         Comment[]
   attachments      Attachment[]
+  participants     WorkOrderParticipant[]
   purchaseRequests PurchaseRequest[]
   approvals        Approval[]
   auditLogs        AuditLog[]
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
 
   @@index([departmentId, status])
   @@index([assignedToId])
@@ -312,6 +324,80 @@ model WorkOrderTimeline {
   createdAt   DateTime        @default(now())
 
   @@index([workOrderId, createdAt])
+}
+
+model WorkOrderParticipant {
+  id          String    @id @default(cuid())
+  workOrderId String
+  userId      String
+  taggedById  String?
+  role        String    @default("HELPER")
+  note        String?
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  user        User      @relation("WorkOrderParticipants", fields: [userId], references: [id], onDelete: Cascade)
+  taggedBy    User?     @relation("TaggedWorkOrderParticipants", fields: [taggedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@unique([workOrderId, userId])
+  @@index([userId])
+}
+
+model WorkOrderDepartmentPolicy {
+  id                  String     @id @default(cuid())
+  hotelId             String
+  departmentId        String     @unique
+  assignerUserIdsJson String     @default("[]")
+  deleterUserIdsJson  String     @default("[]")
+  hotel               Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department          Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@unique([hotelId, departmentId])
+  @@index([hotelId])
+}
+
+model DepartmentTable {
+  id           String               @id @default(cuid())
+  hotelId      String
+  departmentId String
+  slug         String
+  title        String
+  description  String               @default("")
+  columnsJson  String               @default("[]")
+  showInMenu   Boolean              @default(true)
+  enabled      Boolean              @default(true)
+  createdById  String?
+  updatedById  String?
+  hotel        Hotel                @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department   Department           @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  createdBy    User?                @relation("CreatedDepartmentTables", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?                @relation("UpdatedDepartmentTables", fields: [updatedById], references: [id], onDelete: SetNull)
+  rows         DepartmentTableRow[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([hotelId, departmentId, slug])
+  @@index([hotelId, departmentId, enabled])
+  @@index([showInMenu])
+}
+
+model DepartmentTableRow {
+  id          String          @id @default(cuid())
+  tableId     String
+  valuesJson  String          @default("{}")
+  note        String          @default("")
+  createdById String?
+  updatedById String?
+  table       DepartmentTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("CreatedDepartmentTableRows", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?           @relation("UpdatedDepartmentTableRows", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([tableId, updatedAt])
+  @@index([createdById])
+  @@index([updatedById])
 }
 
 model Comment {
@@ -598,6 +684,7 @@ model ShiftPanel {
   hotelId      String
   departmentId String
   enabled      Boolean            @default(false)
+  presets      Json?
   hotel        Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   department   Department         @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   editors      ShiftPanelEditor[]

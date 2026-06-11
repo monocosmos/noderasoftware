@@ -3,6 +3,7 @@ param(
   [switch] $SkipBuild,
   [switch] $InstallDependencies,
   [switch] $PushDatabaseSchema,
+  [switch] $SkipDatabaseSchemaPush,
   [switch] $SkipLocalPiBackup,
   [switch] $UpdateLandingPage
 )
@@ -25,6 +26,7 @@ if ($SkipBuild) { $args += "-SkipBuild" }
 if ($IncludeDownloads) { $args += "-IncludeDownloads" }
 if ($InstallDependencies) { $args += "-InstallDependencies" }
 if ($PushDatabaseSchema) { $args += "-PushDatabaseSchema" }
+if ($SkipDatabaseSchemaPush) { $args += "-SkipDatabaseSchemaPush" }
 if ($SkipLocalPiBackup) { $args += "-SkipLocalPiBackup" }
 # Use -UpdateLandingPage only when intentionally publishing the personal root page.
 if ($UpdateLandingPage) { $args += "-UpdateLandingPage" }
