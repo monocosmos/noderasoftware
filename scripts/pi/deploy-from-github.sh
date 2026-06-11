@@ -103,6 +103,16 @@ systemctl reload nginx
 echo "==> Canli saglik kontrolu"
 systemctl is-active --quiet hotelops-api
 systemctl is-active --quiet nginx
-curl -fsS "http://127.0.0.1:${PORT}/health"
+for attempt in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:${PORT}/health"; then
+    break
+  fi
+  if [ "${attempt}" -eq 30 ]; then
+    echo "API health kontrolu basarisiz oldu."
+    journalctl -u hotelops-api -n 80 --no-pager || true
+    exit 1
+  fi
+  sleep 1
+done
 echo
 echo "Deploy tamamlandi: ${BRANCH} -> ${APP_DIR}"
