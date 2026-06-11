@@ -11,6 +11,8 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
@@ -41,6 +43,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
 
@@ -49,6 +53,10 @@ class MainActivity : ComponentActivity() {
     private var systemBarInsets: Insets = Insets.NONE
 
     private val siteUrl = "https://noderasoftware.com/hotel/"
+    private val healthUrl = "https://noderasoftware.com/api/health"
+    private val connectionCheckIntervalMs = 15000L
+    private val connectionCheckTimeoutMs = 5000
+    private val connectionHandler = Handler(Looper.getMainLooper())
     private val notificationPermissionRequest = 4101
     private val cameraPermissionRequest = 4102
     private val fileChooserRequest = 4103
@@ -59,7 +67,17 @@ class MainActivity : ComponentActivity() {
     private var pendingFileChooserAllowMultiple = false
     private var pendingFileChooserAcceptTypes: Array<String> = emptyArray()
     private var isBlockingWebViewMultiTouch = false
+    @Volatile private var connectionCheckInFlight = false
+    private var showingConnectionError = false
+    private var lastTrustedUrl = siteUrl
     @Volatile private var pendingMediaPickerKind = ""
+
+    private val connectionCheckRunnable = object : Runnable {
+        override fun run() {
+            checkLiveConnection()
+            connectionHandler.postDelayed(this, connectionCheckIntervalMs)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +117,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        stopConnectionMonitor()
         if (::webView.isInitialized) {
             webView.onPause()
             webView.pauseTimers()
@@ -111,6 +130,7 @@ class MainActivity : ComponentActivity() {
         if (::webView.isInitialized) {
             webView.resumeTimers()
             webView.onResume()
+            startConnectionMonitor()
         }
         HotelOpsPushRegistrar.sync(this)
     }
@@ -307,6 +327,10 @@ class MainActivity : ComponentActivity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    if (isTrustedHotelUrl(url)) {
+                        lastTrustedUrl = url ?: siteUrl
+                        showingConnectionError = false
+                    }
                     injectHotelOpsShellBridge()
                 }
 
@@ -399,6 +423,50 @@ class MainActivity : ComponentActivity() {
         )
 
         webView.loadUrl(routeUrlFromIntent(intent) ?: siteUrl)
+        startConnectionMonitor()
+    }
+
+    private fun startConnectionMonitor() {
+        connectionHandler.removeCallbacks(connectionCheckRunnable)
+        connectionHandler.post(connectionCheckRunnable)
+    }
+
+    private fun stopConnectionMonitor() {
+        connectionHandler.removeCallbacks(connectionCheckRunnable)
+    }
+
+    private fun checkLiveConnection() {
+        if (connectionCheckInFlight) return
+        connectionCheckInFlight = true
+
+        Thread {
+            val connected = runCatching {
+                val connection = URL(healthUrl).openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = connectionCheckTimeoutMs
+                connection.readTimeout = connectionCheckTimeoutMs
+                connection.useCaches = false
+                try {
+                    connection.responseCode in 200..299
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrDefault(false)
+
+            runOnUiThread {
+                connectionCheckInFlight = false
+                if (!::webView.isInitialized) return@runOnUiThread
+
+                if (connected) {
+                    if (showingConnectionError) {
+                        showingConnectionError = false
+                        webView.loadUrl(lastTrustedUrl.ifBlank { siteUrl })
+                    }
+                } else if (!showingConnectionError) {
+                    showConnectionError()
+                }
+            }
+        }.start()
     }
 
     private fun blockWebViewMultiTouchZoom(view: WebView, event: MotionEvent): Boolean {
@@ -462,6 +530,16 @@ class MainActivity : ComponentActivity() {
         pendingFileChooserAllowMultiple = false
         pendingFileChooserAcceptTypes = emptyArray()
         pendingMediaPickerKind = ""
+    }
+
+    private fun isTrustedHotelUrl(value: String?): Boolean {
+        return runCatching {
+            val uri = Uri.parse(value)
+            val host = uri.host?.lowercase()
+            uri.scheme == "https" &&
+                (host == "noderasoftware.com" || host == "www.noderasoftware.com") &&
+                (uri.path == "/hotel" || uri.path.orEmpty().startsWith("/hotel/"))
+        }.getOrDefault(false)
     }
 
     private fun consumeMediaPickerKind(): String {
@@ -770,6 +848,7 @@ class MainActivity : ComponentActivity() {
         // Ana sayfa yuklenemezse kullaniciya native bir hata ekrani gosterilir;
         // retry butonu tekrar canli /hotel adresini yukler.
         if (!::webView.isInitialized) return
+        showingConnectionError = true
 
         webView.loadDataWithBaseURL(
             null,
@@ -844,6 +923,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        stopConnectionMonitor()
         if (::webView.isInitialized) {
             webView.stopLoading()
             webView.webChromeClient = null

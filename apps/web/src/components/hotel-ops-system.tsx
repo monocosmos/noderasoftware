@@ -596,6 +596,7 @@ const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
 const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/notifications"] as const;
 const ALERT_AUTO_DISMISS_SECONDS = 5;
 const MAX_SAVED_LOGIN_ACCOUNTS = 8;
+const CONNECTION_HEALTH_INTERVAL_MS = 15000;
 
 type LoginResponse = {
   token: string;
@@ -4597,10 +4598,35 @@ export function HotelOpsSystem() {
     refreshLoginCacheState();
     window.addEventListener("popstate", syncPath);
     setIsOnline(navigator.onLine);
-    const online = () => setIsOnline(true);
+    const checkConnection = async () => {
+      if (!navigator.onLine) {
+        setIsOnline(false);
+        return;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(`${apiBaseUrl()}/health`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        setIsOnline(response.ok);
+      } catch {
+        setIsOnline(false);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+    const online = () => {
+      setIsOnline(true);
+      void checkConnection();
+    };
     const offline = () => setIsOnline(false);
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
+    const connectionIntervalId = window.setInterval(checkConnection, CONNECTION_HEALTH_INTERVAL_MS);
+    void checkConnection();
 
     const loadSession = async () => {
       const token = storedApiToken();
@@ -4686,6 +4712,7 @@ export function HotelOpsSystem() {
       window.removeEventListener("popstate", syncPath);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
+      window.clearInterval(connectionIntervalId);
     };
   }, [refreshLoginCacheState, rememberBootstrapState]);
 

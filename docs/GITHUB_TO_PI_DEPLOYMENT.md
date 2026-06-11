@@ -18,7 +18,7 @@ Bu bilgisayardaki tek aktif proje klasoru:
 C:\Users\hfk47\Documents\noderasoftware\github-sync
 ```
 
-`remote-src` klasoru artik kaynak proje olarak kullanilmaz. Eski kopya/arsiv olarak dusunulmeli; kalici degisiklik sadece `github-sync` icinde yapilir.
+`remote-src` kopyasi kaldirildi. Kalici degisiklik sadece `github-sync` icinde yapilir.
 
 Local proje ile GitHub durumunu kontrol etmek icin:
 

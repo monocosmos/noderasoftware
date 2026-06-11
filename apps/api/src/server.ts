@@ -586,7 +586,7 @@ function notificationTargetPath(notification: Pick<DbNotification, "title" | "bo
   if (normalizedTitle.includes("vardiya") || normalizedChannel === notificationChannelShiftStartReminder) return "/dashboard";
   if (normalizedChannel.includes("REMINDER")) return "/reminders";
 
-  return "/reminders";
+  return "/notifications";
 }
 
 function routeParam(req: express.Request, name: string) {

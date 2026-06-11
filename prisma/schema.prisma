@@ -348,6 +348,7 @@ model WorkOrderDepartmentPolicy {
   departmentId        String     @unique
   assignerUserIdsJson String     @default("[]")
   deleterUserIdsJson  String     @default("[]")
+  delayerUserIdsJson  String     @default("[]")
   hotel               Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   department          Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   createdAt           DateTime   @default(now())

@@ -21,6 +21,8 @@ const USE_SYSTEM_TITLEBAR_OVERLAY = false;
 const USE_CUSTOM_CONTROLS_WINDOW = false;
 const START_HIDDEN = process.argv.includes("--hidden") || process.argv.includes("--background");
 const WORK_ORDER_POLL_INTERVAL_MS = 15000;
+const CONNECTIVITY_CHECK_INTERVAL_MS = 15000;
+const CONNECTIVITY_TIMEOUT_MS = 5000;
 
 let mainWindow = null;
 let controlsWindow = null;
@@ -34,6 +36,10 @@ let desktopApiBaseUrl = resolveDefaultApiBaseUrl();
 let workOrderPollTimer = null;
 let workOrderPollInFlight = false;
 let workOrderWatcherBootstrapped = false;
+let connectivityTimer = null;
+let connectivityCheckInFlight = false;
+let isShowingOfflinePage = false;
+let lastLiveUrl = HOTEL_URL;
 let knownWorkOrderIds = new Set();
 const CONTROLS_WINDOW_WIDTH = 132;
 const CONTROLS_WINDOW_HEIGHT = 40;
@@ -492,6 +498,71 @@ function applyWindowsBackdrop(win) {
   }
 }
 
+function healthCheckUrl() {
+  try {
+    const url = new URL(HOTEL_URL);
+    return `${url.origin}/api/health`;
+  } catch {
+    return "https://noderasoftware.com/api/health";
+  }
+}
+
+function showOfflinePage(code = "NETWORK", reason = "Baglanti kurulamadi") {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (isShowingOfflinePage) return;
+  isShowingOfflinePage = true;
+
+  mainWindow.loadFile(OFFLINE_PATH, {
+    query: {
+      url: lastLiveUrl || HOTEL_URL,
+      code: String(code),
+      reason
+    }
+  });
+}
+
+async function checkDesktopConnectivity() {
+  if (!mainWindow || mainWindow.isDestroyed() || connectivityCheckInFlight) return;
+  if (typeof fetch !== "function") return;
+
+  connectivityCheckInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CONNECTIVITY_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(healthCheckUrl(), {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    if (isShowingOfflinePage) {
+      isShowingOfflinePage = false;
+      mainWindow.loadURL(lastLiveUrl || HOTEL_URL);
+    }
+  } catch (error) {
+    showOfflinePage("NETWORK", "Canli servis erisilemiyor");
+  } finally {
+    clearTimeout(timeout);
+    connectivityCheckInFlight = false;
+  }
+}
+
+function startConnectivityWatcher() {
+  if (connectivityTimer) clearInterval(connectivityTimer);
+  connectivityTimer = setInterval(checkDesktopConnectivity, CONNECTIVITY_CHECK_INTERVAL_MS);
+  if (typeof connectivityTimer.unref === "function") connectivityTimer.unref();
+  void checkDesktopConnectivity();
+}
+
+function stopConnectivityWatcher() {
+  if (!connectivityTimer) return;
+  clearInterval(connectivityTimer);
+  connectivityTimer = null;
+}
+
 function sendWindowState(win) {
   if (!win || win.isDestroyed()) return;
 
@@ -788,20 +859,21 @@ function createWindow() {
   mainWindow.webContents.on("dom-ready", () => injectDesktopChrome(mainWindow));
   mainWindow.webContents.on("did-navigate", () => injectDesktopChrome(mainWindow));
   mainWindow.webContents.on("did-navigate-in-page", () => injectDesktopChrome(mainWindow));
+  mainWindow.webContents.on("did-finish-load", () => {
+    const currentUrl = mainWindow.webContents.getURL();
+    if (!isAllowedUrl(currentUrl)) return;
+    isShowingOfflinePage = false;
+    lastLiveUrl = currentUrl;
+  });
 
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (!isMainFrame || validatedUrl.startsWith("file://")) return;
 
-    mainWindow.loadFile(OFFLINE_PATH, {
-      query: {
-        url: HOTEL_URL,
-        code: String(errorCode),
-        reason: errorDescription || "Baglanti kurulamadi"
-      }
-    });
+    showOfflinePage(String(errorCode), errorDescription || "Baglanti kurulamadi");
   });
 
   mainWindow.loadURL(HOTEL_URL);
+  startConnectivityWatcher();
 }
 
 function configureBackgroundStartup() {
@@ -852,6 +924,7 @@ if (gotSingleInstanceLock) {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  stopConnectivityWatcher();
 });
 
 app.on("window-all-closed", () => {

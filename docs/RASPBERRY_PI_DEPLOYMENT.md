@@ -297,3 +297,31 @@ APK/Windows indirme dosyalari ilk kez yuklenecekse veya degistiyse:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\deploy-built-to-pi.ps1" -PiHost noderapi -IncludeDownloads
 ```
+
+## 15. Google Drive Gunluk Yedek Duzeni
+
+`scripts/pi/daily-drive-backup.sh` artik Google Drive tarafinda daha ayrisabilir bir duzen kullanir. Yedekler tek klasore yigilmadan su yapida tutulur:
+
+```text
+HotelOpsBackups/
+  <otel-adi>/
+    2026/
+      06-Haziran/
+        2026-06-11/
+          hotelops-backup-<otel-adi>-2026-06-11.zip
+          hotelops-backup-<otel-adi>-2026-06-11.zip.sha256
+          manifest.env
+          manifest.json
+          checklist.txt
+          checklist.json
+          summary.txt
+```
+
+Bu sayede:
+
+- Tarihe gore klasor klasor gezinmek kolaylasir.
+- Zip acmadan once `summary.txt`, `manifest.json` ve `checklist.txt` okunabilir.
+- Hangi gun neyin yedeklendigini sonradan ayristirmak kolaylasir.
+- SHA256 ile arsiv dogrulama yapilabilir.
+
+Yedek kapsam checklist'i icin `docs/DRIVE_BACKUP_CHECKLIST.md` dosyasini kullanin.
