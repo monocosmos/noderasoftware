@@ -5813,7 +5813,7 @@ export function HotelOpsSystem() {
     );
   }
 
-  const pageTitle = getPageTitle(currentPath);
+  const pageTitle = getPageTitle(path);
   const unreadNotificationCount = notifications.filter((notification) => !notification.readAt).length;
 
   if (platformPanelRequest && !isPlatformAdminUser(session)) {
@@ -6728,23 +6728,26 @@ function NavItem({
 }
 
 function getPageTitle(path: string) {
-  if (path === "/jobs/new") return { title: "Yeni İş Oluştur", subtitle: "" };
-  if (path === "/jobs/detail") return { title: "İş Detayı", subtitle: "" };
-  if (path === "/jobs") return { title: "Gelen İşler", subtitle: "" };
-  if (path === "/maintenance") return { title: "Takvim", subtitle: "Departman Takvimi" };
-  if (path === "/housekeeping") return { title: "Planlı İşler", subtitle: "Housekeeping" };
-  if (path.startsWith("/calendar")) return { title: "Takvim", subtitle: "Operasyon Planı" };
-  if (path === "/users") return { title: "Kullanıcı Yönetimi", subtitle: "" };
-  if (path === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
-  if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
-  if (path === "/notifications") return { title: "Bildirimler", subtitle: "" };
-  if (path === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
-  if (path === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
-  if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
-  if (path === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
-  if (path === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
-  if (path === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
-  const operationalModule = operationalModules.find((module) => module.path === path);
+  const pathname = path.split("?")[0] || "/";
+  const queryParams = new URLSearchParams(path.split("?")[1] ?? "");
+  if (pathname === "/jobs" && queryParams.get("view") === "outgoing") return { title: "Giden İşler", subtitle: "" };
+  if (pathname === "/jobs/new") return { title: "Yeni İş Oluştur", subtitle: "" };
+  if (pathname === "/jobs/detail") return { title: "İş Detayı", subtitle: "" };
+  if (pathname === "/jobs") return { title: "Gelen İşler", subtitle: "" };
+  if (pathname === "/maintenance") return { title: "Takvim", subtitle: "Departman Takvimi" };
+  if (pathname === "/housekeeping") return { title: "Planlı İşler", subtitle: "Housekeeping" };
+  if (pathname.startsWith("/calendar")) return { title: "Takvim", subtitle: "Operasyon Planı" };
+  if (pathname === "/users") return { title: "Kullanıcı Yönetimi", subtitle: "" };
+  if (pathname === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
+  if (pathname === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
+  if (pathname === "/notifications") return { title: "Bildirimler", subtitle: "" };
+  if (pathname === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
+  if (pathname === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
+  if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
+  if (pathname === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
+  if (pathname === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
+  if (pathname === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
+  const operationalModule = operationalModules.find((module) => module.path === pathname);
   if (operationalModule) return { title: operationalModule.title, subtitle: operationalModule.subtitle };
   return { title: "Dashboard", subtitle: "Operasyon Özeti" };
 }
@@ -7897,13 +7900,12 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const quickView = queryParams.get("view");
+  const isOutgoingView = quickView === "outgoing";
   const poolView = quickView === "pool" && queryParams.get("pool") === "delayed" ? "delayed" : "priority";
   const incomingVisibleJobs = visibleJobs.filter((job) => isIncomingDepartmentJob(session, job));
-  const outgoingVisibleJobs = visibleJobs.filter((job) => isOutgoingDepartmentJob(session, job));
   const incomingFilteredJobs = filteredJobs.filter((job) => isIncomingDepartmentJob(session, job));
   const outgoingFilteredJobs = filteredJobs.filter((job) => isOutgoingDepartmentJob(session, job));
   const activeIncomingCount = incomingVisibleJobs.filter((job) => job.status !== "Completed").length;
-  const activeOutgoingCount = outgoingVisibleJobs.filter((job) => job.status !== "Completed").length;
   const departmentPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job)).length;
   const priorityPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status !== "Delayed").length;
   const delayedPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status === "Delayed").length;
@@ -7920,21 +7922,21 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
     slaRisk: ""
   };
   const applyQuickFilter = (nextFilters: Partial<typeof blankFilters>) => setFilters({ ...blankFilters, ...nextFilters });
-  const listSource = quickView === "outgoing"
+  const listSource = isOutgoingView
     ? outgoingFilteredJobs
     : quickView
       ? incomingVisibleJobs
       : incomingFilteredJobs;
   const showCompletedJobs = quickView === "completed" || (!quickView && filters.status === "Completed");
   const listJobs = listSource
-    .filter((job) => quickView === "outgoing" ? job.status !== "Completed" : showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
+    .filter((job) => isOutgoingView ? job.status !== "Completed" : showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
     .filter((job) => {
       if (quickView === "assigned") return job.assignee === session.fullName;
       if (quickView === "pool") return isDepartmentPoolJob(job) && (poolView === "delayed" ? job.status === "Delayed" : job.status !== "Delayed");
       if (quickView === "urgent") return isUrgentJobForUser(session, job);
       if (quickView === "delayed") return job.status === "Delayed" || Boolean(job.slaRisk);
       if (quickView === "periodic") return job.type === "PlannedMaintenance";
-      if (quickView === "outgoing") return true;
+      if (isOutgoingView) return true;
       if (quickView === "completed") return true;
       return true;
     });
@@ -7942,7 +7944,7 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
     ? "Bana Atanan"
     : quickView === "pool"
       ? poolView === "delayed" ? "Ertelenen Arıza" : "Öncelikli Arıza"
-    : quickView === "outgoing"
+    : isOutgoingView
       ? "Giden İşler"
     : quickView === "urgent"
       ? urgentJobsLabel()
@@ -7952,7 +7954,7 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           ? "Periyodik Bakım"
           : quickView === "completed"
             ? "Bitirilen İşler"
-            : "";
+            : "Bekleyen İşler";
 
   return (
     <>
@@ -8016,12 +8018,13 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
       </div>
       {filtersOpen && <button type="button" className="filter-backdrop" onClick={() => setFiltersOpen(false)} aria-label="Filtreleri kapat" />}
 
-      <div className="jobs-view-tabs" role="tablist" aria-label="İş listesi görünümü">
-        <button type="button" className={`jobs-view-tab ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Gelen İşler ({activeIncomingCount})</button>
-        <button type="button" className={`jobs-view-tab ${quickView === "outgoing" ? "active" : ""}`} onClick={() => navigate("/jobs?view=outgoing")}>Giden İşler ({activeOutgoingCount})</button>
-        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
-        <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
-      </div>
+      {!isOutgoingView && (
+        <div className="jobs-view-tabs" role="tablist" aria-label="Gelen işler görünümü">
+          <button type="button" className={`jobs-view-tab ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Bekleyen İşler ({activeIncomingCount})</button>
+          <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
+          <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
+        </div>
+      )}
 
       {quickView === "pool" && (
         <div className="jobs-pool-tabs" role="tablist" aria-label="İş havuzu alt görünümü">
@@ -8037,10 +8040,9 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => navigate("/jobs?view=outgoing")}>Giden İşler ({activeOutgoingCount})</button>
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>
+          {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>}
+          {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>}
+          {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>}
         </div>
       </div>
 
