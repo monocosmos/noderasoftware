@@ -24,6 +24,8 @@ if ! command -v git-lfs >/dev/null 2>&1; then
   apt-get install -y git-lfs
 fi
 
+git config --system --add safe.directory "${APP_DIR}" 2>/dev/null || true
+
 if [ ! -d "${APP_DIR}/.git" ]; then
   if [ -z "${REPO_URL}" ]; then
     echo "${APP_DIR} icinde Git deposu yok ve REPO_URL verilmedi."
