@@ -85,6 +85,14 @@ html.hotelops-desktop-shell .header-title {
   -webkit-app-region: drag !important;
 }
 
+html.hotelops-desktop-shell .floating-alert-layer,
+html.hotelops-desktop-shell .floating-alert,
+html.hotelops-desktop-shell .floating-alert *,
+html.hotelops-desktop-shell .alert-close,
+html.hotelops-desktop-shell .alert-close * {
+  -webkit-app-region: no-drag !important;
+}
+
 html.hotelops-desktop-shell .brand-icon,
 html.hotelops-desktop-shell .login-logo .logo-mark {
   overflow: hidden !important;

@@ -367,6 +367,7 @@ export const roleDemoUsers: Record<RoleId, string> = {
   generalManager: "Aylin Karaca",
   hrManager: "Mert Demir",
   technicalManager: "Selim Arslan",
+  technicalAssistant: "Okan Teknik",
   hkManager: "Derya Şahin",
   frontOfficeManager: "Ece Yılmaz",
   securityManager: "Kerem Aksoy",

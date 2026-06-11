@@ -1,7 +1,8 @@
 "use client";
 
-import { ChangeEvent, FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import { io, type Socket } from "socket.io-client";
 import {
   AlertTriangle,
   BarChart3,
@@ -21,9 +22,13 @@ import {
   LayoutDashboard,
   LockKeyhole,
   LogOut,
+  Maximize2,
   Menu,
   MessageSquareText,
+  Pause,
   PenLine,
+  Play,
+  PlayCircle,
   Plus,
   RefreshCcw,
   Save,
@@ -34,12 +39,17 @@ import {
   Tags,
   Timer,
   Trash2,
+  Upload,
   Users,
+  Video,
+  Volume2,
+  VolumeX,
   Wrench,
   X,
   XCircle,
   type LucideIcon
 } from "lucide-react";
+import { isKnownHotelAppPath, normalizeHotelAppPath } from "@/lib/hotel-routes";
 import { departments, getRole, type DepartmentId, type RoleId } from "@/lib/rbac";
 
 type JobType = "Job" | "Fault" | "PlannedMaintenance" | "PlannedHousekeeping";
@@ -64,6 +74,7 @@ type ModuleId =
   | "lostFound"
   | "guestRequests"
   | "operationDocuments"
+  | "departmentTables"
   | "managementRequests"
   | "trainingCertificates"
   | "minibar"
@@ -117,6 +128,7 @@ type HotelOpsAndroidBridge = {
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
   saveImageToGallery?: (dataUrl?: string, fileName?: string) => boolean;
+  saveMediaToGallery?: (dataUrl?: string, fileName?: string, mimeType?: string) => boolean;
   startShift?: (employeeName?: string, departmentName?: string) => boolean;
   endShift?: () => boolean;
   isShiftActive?: () => boolean;
@@ -203,6 +215,7 @@ type JobRecord = {
   priority: Priority;
   status: JobStatus;
   assignee: string;
+  assigneeId?: string;
   room: string;
   location: string;
   due: string;
@@ -222,6 +235,7 @@ type JobRecord = {
   comments?: JobComment[];
   timeline?: JobTimelineItem[];
   approvals?: JobApproval[];
+  participants?: DemoUser[];
 };
 
 type JobComment = {
@@ -248,12 +262,23 @@ type JobApproval = {
 };
 
 type PhotoQualityMode = "STANDARD" | "HD";
+type AttachmentMediaType = "PHOTO" | "VIDEO";
 
 type PhotoUploadVariant = {
   name: string;
   mimeType: string;
   size: number;
   dataUrl: string;
+  hasDataUrl?: boolean;
+  mediaType?: AttachmentMediaType;
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  compressed?: boolean;
+  videoPosterDataUrl?: string;
+  originalDataUrl?: string;
+  originalName?: string;
+  originalMimeType?: string;
 };
 
 type PhotoAttachment = PhotoUploadVariant & {
@@ -279,7 +304,9 @@ type CalendarRecord = {
   status?: JobStatus;
 };
 
-type JobDraft = Omit<JobRecord, "id" | "createdBy" | "status">;
+type JobDraft = Omit<JobRecord, "id" | "createdBy" | "status"> & {
+  initialStatus?: Extract<JobStatus, "Pending" | "Completed">;
+};
 
 type ReminderRecord = {
   id: string;
@@ -367,11 +394,50 @@ type OperationDocumentDraft = {
   document: OperationDocumentFile | null;
 };
 
+type DepartmentTableColumn = {
+  id: string;
+  label: string;
+  type: "text" | "number" | "date" | "time" | "status";
+};
+
+type DepartmentTableRow = {
+  id: string;
+  values: Record<string, string>;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type DepartmentTableRecord = {
+  id: string;
+  departmentId: string;
+  departmentName: string;
+  slug: string;
+  title: string;
+  description: string;
+  columns: DepartmentTableColumn[];
+  showInMenu: boolean;
+  enabled: boolean;
+  canConfigure: boolean;
+  canEditRows: boolean;
+  rows: DepartmentTableRow[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type DepartmentTableDraft = {
+  title: string;
+  description: string;
+  columns: DepartmentTableColumn[];
+  showInMenu: boolean;
+};
+
 type NotificationRecord = {
   id: string;
   title: string;
   body: string;
   channel: string;
+  path?: string;
   readAt: string;
   createdAt: string;
 };
@@ -414,6 +480,8 @@ type ShiftPanelRecord = {
   canEdit: boolean;
   editorUserIds: string[];
   editors: DemoUser[];
+  presets: ShiftRosterPreset[];
+  colorTemplates: ShiftRosterColorTemplate[];
   staff: DemoUser[];
   cells: ShiftPanelCellRecord[];
   entry: ShiftPanelEntryRecord | null;
@@ -452,6 +520,14 @@ type DepartmentRecord = {
   code: string;
   name: string;
   createdAt: string;
+};
+
+type WorkOrderPolicyRecord = {
+  departmentId: string;
+  assignmentAuthorityUserIds: string[];
+  deleteAuthorityUserIds: string[];
+  users: DemoUser[];
+  canConfigure: boolean;
 };
 
 type HotelDepartmentRecord = DepartmentRecord & {
@@ -544,8 +620,19 @@ type BootstrapResponse = {
   jobs: JobRecord[];
   reminders: ReminderRecord[];
   departments: DepartmentRecord[];
+  departmentTables?: DepartmentTableRecord[];
   notifications: NotificationRecord[];
   activeShift: ShiftRecord | null;
+  maintenance?: MaintenanceStatus;
+  sync?: SyncStateResponse;
+};
+
+type SyncStateResponse = {
+  etag: string;
+  changed: boolean;
+  serverTime: string;
+  maintenance: MaintenanceStatus;
+  state: Record<string, unknown>;
 };
 
 type MaintenanceStatus = {
@@ -557,6 +644,10 @@ type MaintenanceStatus = {
 };
 
 const DEFAULT_MAINTENANCE_MESSAGE = "Şu an bakım yapılıyor.";
+const CORRUPTED_DEFAULT_MAINTENANCE_MESSAGES = new Set([
+  "?u an bak?m yap?l?yor.",
+  "?u an bak?m yap?l?yor"
+]);
 const DEFAULT_MAINTENANCE_STATUS: MaintenanceStatus = {
   enabled: false,
   message: DEFAULT_MAINTENANCE_MESSAGE,
@@ -564,27 +655,37 @@ const DEFAULT_MAINTENANCE_STATUS: MaintenanceStatus = {
   updatedBy: null,
   source: "default"
 };
+const EVENT_REFRESH_DEBOUNCE_MS = 500;
+const API_RETRY_DELAY_MS = 650;
 
 function normalizeHotelPath(fullPath: string) {
-  const [pathname, query = ""] = fullPath.split("?");
-  let normalizedPath = pathname || "/";
-
-  if (normalizedPath === HOTEL_BASE_PATH || normalizedPath === `${HOTEL_BASE_PATH}/`) {
-    normalizedPath = "/";
-  } else if (normalizedPath.startsWith(`${HOTEL_BASE_PATH}/`)) {
-    normalizedPath = normalizedPath.slice(HOTEL_BASE_PATH.length) || "/";
-  }
-  if (normalizedPath.length > 1) {
-    normalizedPath = normalizedPath.replace(/\/+$/, "") || "/";
-  }
-
-  return `${normalizedPath}${query ? `?${query}` : ""}`;
+  return normalizeHotelAppPath(fullPath);
 }
 
 function hotelUrl(path: string) {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   if (normalized === "/") return HOTEL_BASE_PATH;
   return `${HOTEL_BASE_PATH}${normalized}`;
+}
+
+const workOrderCodePattern = /\b(?:WO|FLT|PM|HK|PLN)-\d+\b/i;
+
+function notificationTargetPath(notification: Pick<NotificationRecord, "title" | "body" | "channel" | "path">) {
+  if (notification.path?.trim()) return notification.path;
+
+  const text = `${notification.title} ${notification.body}`;
+  const workOrderCode = text.match(workOrderCodePattern)?.[0]?.toUpperCase();
+  if (workOrderCode) return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
+
+  const normalizedTitle = notification.title.trim().toLocaleLowerCase("tr-TR");
+  const normalizedChannel = notification.channel.trim().toUpperCase();
+  if (normalizedTitle.includes("hat\u0131rlatma")) return "/reminders";
+  if (normalizedTitle.includes("talep")) return "/modules/requests";
+  if (normalizedTitle.includes("operasyon belgesi")) return "/modules/operation-documents";
+  if (normalizedTitle.includes("vardiya") || normalizedChannel === "SHIFT_START_REMINDER") return "/dashboard";
+  if (normalizedChannel.includes("REMINDER")) return "/reminders";
+
+  return "/reminders";
 }
 
 function mobileTabIndexForPath(path: string) {
@@ -617,16 +718,55 @@ function apiBaseUrl() {
   return "/api";
 }
 
+function socketBaseUrl() {
+  if (typeof window === "undefined") return undefined;
+  const apiUrl = apiBaseUrl();
+  if (apiUrl === "/api") return window.location.origin;
+
+  try {
+    const url = new URL(apiUrl, window.location.origin);
+    if (url.pathname === "/api") {
+      url.pathname = "/";
+    } else if (url.pathname.endsWith("/api")) {
+      url.pathname = url.pathname.slice(0, -4) || "/";
+    }
+    url.search = "";
+    url.hash = "";
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return window.location.origin;
+  }
+}
+
+function createHotelOpsSocket(token?: string) {
+  const baseUrl = socketBaseUrl();
+  const options = {
+    path: "/socket.io",
+    transports: ["websocket"],
+    ...(token ? { auth: { token } } : {})
+  };
+
+  return baseUrl ? io(baseUrl, options) : io(options);
+}
+
 function normalizeMaintenanceStatus(value: unknown): MaintenanceStatus {
   if (!value || typeof value !== "object") return DEFAULT_MAINTENANCE_STATUS;
   const data = value as Partial<MaintenanceStatus>;
   return {
     enabled: Boolean(data.enabled),
-    message: typeof data.message === "string" && data.message.trim() ? data.message.trim() : DEFAULT_MAINTENANCE_MESSAGE,
+    message: normalizeMaintenanceMessage(data.message),
     updatedAt: typeof data.updatedAt === "string" && data.updatedAt.trim() ? data.updatedAt : DEFAULT_MAINTENANCE_STATUS.updatedAt,
     updatedBy: typeof data.updatedBy === "string" && data.updatedBy.trim() ? data.updatedBy.trim() : null,
     source: typeof data.source === "string" && data.source.trim() ? data.source.trim() : null
   };
+}
+
+function normalizeMaintenanceMessage(value: unknown) {
+  const message = typeof value === "string" ? value.trim() : "";
+  if (!message) return DEFAULT_MAINTENANCE_MESSAGE;
+  const compact = message.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+  if (CORRUPTED_DEFAULT_MAINTENANCE_MESSAGES.has(compact)) return DEFAULT_MAINTENANCE_MESSAGE;
+  return message;
 }
 
 async function fetchJsonWithTimeout(url: string, timeoutMs = 5000) {
@@ -1067,17 +1207,38 @@ function stopNativeShiftNotification() {
 class ApiRequestError extends Error {
   status: number;
   code: string;
+  details?: unknown;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, details?: unknown) {
     super(code);
     this.name = "ApiRequestError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
 function isApiRequestError(error: unknown): error is ApiRequestError {
   return error instanceof ApiRequestError;
+}
+
+function collectApiDetailMessages(value: unknown, messages: string[] = []) {
+  if (typeof value === "string") {
+    messages.push(value);
+    return messages;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectApiDetailMessages(item, messages));
+    return messages;
+  }
+  if (value && typeof value === "object") {
+    Object.values(value).forEach((item) => collectApiDetailMessages(item, messages));
+  }
+  return messages;
+}
+
+function apiDetailMessages(error: ApiRequestError) {
+  return Array.from(new Set(collectApiDetailMessages(error.details)));
 }
 
 function loginErrorMessage(error: unknown) {
@@ -1177,12 +1338,16 @@ function profileUpdateErrorMessage(error: unknown) {
     return "Bu kullanıcı adı veya giriş değeri başka bir hesapta kullanılıyor.";
   }
 
+  if (error.code === "DUPLICATE_EMAIL") {
+    return "Bu e-posta adresi başka bir hesapta kullanılıyor.";
+  }
+
   if (error.code === "PROFILE_USERNAME_DENIED") {
     return "Bu hesabın kullanıcı adı değiştirilemez.";
   }
 
   if (error.code === "VALIDATION_ERROR" || error.status === 422) {
-    return "Kullanıcı adı en az 2 karakter olmalı.";
+    return "Kullanıcı adı veya e-posta formatını kontrol edin.";
   }
 
   if (error.code === "NETWORK_ERROR" || error.status === 0) {
@@ -1196,18 +1361,80 @@ function profileUpdateErrorMessage(error: unknown) {
   return "Profil güncellenemedi. Lütfen tekrar deneyin.";
 }
 
-async function apiRequest<T>(path: string, options: RequestInit = {}) {
-  const headers = new Headers(options.headers);
-  headers.set("Content-Type", "application/json");
+function workOrderMediaErrorMessage(error: unknown) {
+  if (!isApiRequestError(error)) {
+    return "Medya eklenemedi. Lütfen tekrar deneyin.";
+  }
+
+  if (error.status === 413) {
+    return "Video yükleme limiti aşıldı. Lütfen daha kısa bir video çekin veya tekrar sıkıştırıp deneyin.";
+  }
+
+  const detailMessages = apiDetailMessages(error);
+  if (detailMessages.includes("VIDEO_TOO_LARGE") || detailMessages.includes("VIDEO_DATA_TOO_LARGE")) {
+    return "Video boyutu çok büyük. En fazla 25 MB video yüklenebilir.";
+  }
+  if (detailMessages.includes("VIDEO_DURATION_TOO_LONG")) {
+    return "Video en fazla 1 dakika olabilir.";
+  }
+  if (detailMessages.includes("VIDEO_MP4_REQUIRED")) {
+    return "Video MP4 formatında hazırlanamadı. Lütfen kameradan tekrar video çekin.";
+  }
+  if (detailMessages.includes("VIDEO_RESOLUTION_TOO_HIGH")) {
+    return "Video çözünürlüğü çok yüksek. Lütfen daha düşük çözünürlükte tekrar deneyin.";
+  }
+  if (detailMessages.includes("VIDEO_COMPRESSION_REQUIRED") || detailMessages.includes("VIDEO_DIMENSIONS_REQUIRED")) {
+    return "Video cihazda tam hazırlanamadı. Lütfen videoyu yeniden seçip tekrar deneyin.";
+  }
+
+  if (error.code === "VALIDATION_ERROR" || error.status === 422) {
+    return "Medya bilgisi eksik veya geçersiz. Lütfen videoyu yeniden seçip tekrar deneyin.";
+  }
+  if (error.code === "NETWORK_ERROR" || error.status === 0) {
+    return "API servisine ulaşılamıyor. Sunucu veya ağ bağlantısını kontrol edin.";
+  }
+  if (error.status >= 500) {
+    return "API servisinde geçici bir hata oluştu. Lütfen birkaç saniye sonra tekrar deneyin.";
+  }
+
+  return "Medya eklenemedi. Lütfen tekrar deneyin.";
+}
+
+function workOrderCreateErrorMessage(error: unknown) {
+  if (isApiRequestError(error)) {
+    if (error.status === 401) {
+      return "Oturum doğrulanamadı. Lütfen tekrar giriş yapın.";
+    }
+    if (error.status === 403) {
+      return "Bu departman için iş kaydı oluşturma yetkiniz yok.";
+    }
+  }
+
+  const mediaMessage = workOrderMediaErrorMessage(error);
+  if (mediaMessage !== "Medya eklenemedi. Lütfen tekrar deneyin.") {
+    return mediaMessage;
+  }
+
+  return "İş kaydı oluşturulamadı. Yetki veya API bağlantısını kontrol edin.";
+}
+
+type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number;
+};
+
+async function apiRequest<T>(path: string, options: ApiRequestOptions = {}) {
+  const { timeoutMs = 12_000, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers);
+  headers.set("Content-Type", "application/json; charset=utf-8");
   const token = storedApiToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 12_000);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl()}${path}`, {
-      ...options,
+      ...requestOptions,
       headers,
       credentials: "include",
       signal: controller.signal
@@ -1220,10 +1447,37 @@ async function apiRequest<T>(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new ApiRequestError(response.status, typeof body.error === "string" ? body.error : "API_ERROR");
+    throw new ApiRequestError(response.status, typeof body.error === "string" ? body.error : "API_ERROR", body.details);
   }
 
   return (await response.json()) as T;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRetryableApiRequestError(error: unknown) {
+  if (!isApiRequestError(error)) return false;
+  if (error.code === "INVALID_CREDENTIALS" || error.status === 401 || error.status === 403 || error.status === 422) return false;
+  return error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+async function apiRequestWithRetry<T>(path: string, options: ApiRequestOptions = {}, attempts = 2) {
+  let lastError: unknown;
+  const totalAttempts = Math.max(1, attempts);
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    try {
+      return await apiRequest<T>(path, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= totalAttempts || !isRetryableApiRequestError(error)) throw error;
+      await sleep(API_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  throw lastError;
 }
 
 const PHOTO_STANDARD_TARGET_BYTES = 900 * 1024;
@@ -1234,12 +1488,48 @@ const PHOTO_HD_MAX_SIDE = 2048;
 const PHOTO_HD_MIN_SIDE = 720;
 const PHOTO_STANDARD_QUALITY_STEPS = [0.72, 0.64, 0.56, 0.48, 0.4, 0.34];
 const PHOTO_HD_QUALITY_STEPS = [0.82, 0.76, 0.7, 0.64, 0.58, 0.52, 0.46, 0.4, 0.34, 0.28, 0.22, 0.18];
+const VIDEO_MAX_DURATION_SECONDS = 60;
+const VIDEO_MAX_BYTES = 25 * 1024 * 1024;
+const VIDEO_TARGET_BYTES = Math.floor(VIDEO_MAX_BYTES * 0.94);
+const VIDEO_MAX_LONG_SIDE = 1280;
+const VIDEO_MAX_SHORT_SIDE = 720;
+const VIDEO_PROCESSING_MESSAGE = "Video sıkıştırılıyor...";
+const VIDEO_MIME_CANDIDATES = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.4D401E,mp4a.40.2",
+  "video/mp4;codecs=avc1.64001F,mp4a.40.2",
+  "video/mp4"
+];
+const VIDEO_COMPRESSION_ATTEMPTS = [
+  { maxLongSide: 1280, maxShortSide: 720, fps: 30, bitrateFactor: 0.86 },
+  { maxLongSide: 960, maxShortSide: 540, fps: 24, bitrateFactor: 0.62 },
+  { maxLongSide: 854, maxShortSide: 480, fps: 24, bitrateFactor: 0.46 },
+  { maxLongSide: 640, maxShortSide: 360, fps: 20, bitrateFactor: 0.32 }
+];
 
 type PhotoCompressionProfile = {
   targetBytes: number;
   maxSide: number;
   minSide: number;
   qualitySteps: number[];
+};
+
+type VideoMetadata = {
+  durationSeconds: number;
+  width: number;
+  height: number;
+};
+
+type VideoCompressionAttempt = {
+  maxLongSide: number;
+  maxShortSide: number;
+  fps: number;
+  bitrateFactor: number;
+};
+
+type HTMLVideoElementWithCapture = HTMLVideoElement & {
+  captureStream?: () => MediaStream;
+  mozCaptureStream?: () => MediaStream;
 };
 
 const photoCompressionProfiles: Record<PhotoQualityMode, PhotoCompressionProfile> = {
@@ -1263,19 +1553,76 @@ function dataUrlByteSize(dataUrl: string) {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
+function isVideoAttachment(photo: PhotoAttachment | null | undefined) {
+  return photo?.mediaType === "VIDEO" || photo?.mimeType.startsWith("video/") === true;
+}
+
+function isVideoFile(file: File) {
+  return file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm)$/i.test(file.name);
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
+}
+
 function compressedPhotoName(name: string) {
   const fallback = name || `foto-${Date.now()}.jpg`;
   return fallback.includes(".") ? fallback.replace(/\.[^.]+$/, ".jpg") : `${fallback}.jpg`;
 }
 
+function compressedVideoName(name: string, mimeType: string) {
+  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+  const fallback = name || `video-${Date.now()}.${extension}`;
+  return fallback.includes(".") ? fallback.replace(/\.[^.]+$/, `.${extension}`) : `${fallback}.${extension}`;
+}
+
+function videoMimeTypeForFile(file: File) {
+  const mimeType = file.type.trim();
+  if (mimeType) return mimeType;
+  if (/\.(mp4|m4v)$/i.test(file.name)) return "video/mp4";
+  if (/\.webm$/i.test(file.name)) return "video/webm";
+  if (/\.mov$/i.test(file.name)) return "video/quicktime";
+  return "video/mp4";
+}
+
+function safeMediaMimeType(mimeType: string, fallback = "application/octet-stream") {
+  const value = mimeType.trim().toLowerCase();
+  if (!value) return fallback;
+  if (value.startsWith("video/mp4")) return "video/mp4";
+  if (value.startsWith("video/webm")) return "video/webm";
+  if (value.startsWith("video/quicktime")) return "video/quicktime";
+  if (value.startsWith("image/jpeg") || value.startsWith("image/jpg")) return "image/jpeg";
+  if (value.startsWith("image/png")) return "image/png";
+  if (value.startsWith("image/webp")) return "image/webp";
+  return value.split(";")[0] || fallback;
+}
+
+function dataUrlBase64Payload(dataUrl: string) {
+  const value = dataUrl.trim();
+  const marker = ";base64,";
+  const markerIndex = value.toLowerCase().lastIndexOf(marker);
+  if (markerIndex >= 0) return value.slice(markerIndex + marker.length);
+  const commaIndex = value.indexOf(",");
+  return commaIndex >= 0 ? value.slice(commaIndex + 1) : "";
+}
+
+function normalizeDataUrl(dataUrl: string, mimeType: string) {
+  if (!dataUrl.startsWith("data:")) return dataUrl;
+  const payload = dataUrlBase64Payload(dataUrl);
+  if (!payload) return dataUrl;
+  return `data:${safeMediaMimeType(mimeType)};base64,${payload}`;
+}
+
 function fileToPhotoVariant(file: File): Promise<PhotoUploadVariant> {
   return new Promise((resolve, reject) => {
+    const mimeType = safeMediaMimeType(file.type || "image/jpeg", "image/jpeg");
     const reader = new FileReader();
     reader.onload = () => resolve({
       name: file.name || `foto-${Date.now()}.jpg`,
-      mimeType: file.type || "image/jpeg",
+      mimeType,
       size: file.size,
-      dataUrl: String(reader.result ?? "")
+      dataUrl: normalizeDataUrl(String(reader.result ?? ""), mimeType),
+      mediaType: "PHOTO"
     });
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
@@ -1339,7 +1686,8 @@ async function compressImage(file: File, mode: PhotoQualityMode = "STANDARD"): P
             name: compressedPhotoName(file.name),
             mimeType: "image/jpeg",
             size,
-            dataUrl
+            dataUrl,
+            mediaType: "PHOTO"
           };
         }
       }
@@ -1354,7 +1702,8 @@ async function compressImage(file: File, mode: PhotoQualityMode = "STANDARD"): P
         name: compressedPhotoName(file.name),
         mimeType: "image/jpeg",
         size: best.size,
-        dataUrl: best.dataUrl
+        dataUrl: best.dataUrl,
+        mediaType: "PHOTO"
       };
     }
   } catch {
@@ -1362,6 +1711,336 @@ async function compressImage(file: File, mode: PhotoQualityMode = "STANDARD"): P
   }
 
   return fileToPhotoVariant(file);
+}
+
+function supportedVideoMimeType() {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+  const video = document.createElement("video");
+  return VIDEO_MIME_CANDIDATES.find((mimeType) => (
+    MediaRecorder.isTypeSupported(mimeType) && video.canPlayType(mimeType) !== ""
+  )) ?? "";
+}
+
+function loadVideoMetadata(file: File): Promise<VideoMetadata> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(objectUrl);
+      const durationSeconds = video.duration;
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || !width || !height) {
+        reject(new Error("VIDEO_METADATA_FAILED"));
+        return;
+      }
+      resolve({ durationSeconds, width, height });
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("VIDEO_METADATA_FAILED"));
+    };
+    video.src = objectUrl;
+  });
+}
+
+function outputVideoDimensions(metadata: VideoMetadata, attempt: VideoCompressionAttempt) {
+  const sourceLongSide = Math.max(metadata.width, metadata.height);
+  const sourceShortSide = Math.min(metadata.width, metadata.height);
+  const ratio = Math.min(
+    1,
+    attempt.maxLongSide / sourceLongSide,
+    attempt.maxShortSide / sourceShortSide,
+    VIDEO_MAX_LONG_SIDE / sourceLongSide,
+    VIDEO_MAX_SHORT_SIDE / sourceShortSide
+  );
+  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+  return {
+    width: even(metadata.width * ratio),
+    height: even(metadata.height * ratio)
+  };
+}
+
+function videoPosterFromFile(file: File, metadata: VideoMetadata): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const posterDimensions = outputVideoDimensions(metadata, {
+      maxLongSide: 640,
+      maxShortSide: 360,
+      fps: 1,
+      bitrateFactor: 1
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = posterDimensions.width;
+    canvas.height = posterDimensions.height;
+    const context = canvas.getContext("2d", { alpha: false });
+    let settled = false;
+    let timeout = 0;
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      URL.revokeObjectURL(objectUrl);
+      callback();
+    };
+
+    const capture = () => {
+      if (!context) {
+        finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
+        return;
+      }
+      try {
+        context.fillStyle = "#020617";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+        finish(() => resolve(dataUrl));
+      } catch {
+        finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
+      }
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onloadedmetadata = () => {
+      const targetTime = Math.min(1, Math.max(0, metadata.durationSeconds - 0.1));
+      if (targetTime > 0.05) {
+        video.currentTime = targetTime;
+      } else {
+        capture();
+      }
+    };
+    video.onseeked = capture;
+    video.onloadeddata = () => {
+      if (video.currentTime <= 0.05 && metadata.durationSeconds <= 0.2) capture();
+    };
+    video.onerror = () => finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
+    timeout = window.setTimeout(() => finish(() => reject(new Error("VIDEO_POSTER_FAILED"))), 5000);
+    video.src = objectUrl;
+    video.load();
+  });
+}
+
+function blobToDataUrl(blob: Blob, mimeType = blob.type): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(normalizeDataUrl(String(reader.result ?? ""), mimeType || blob.type));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function captureStreamFromVideo(video: HTMLVideoElement) {
+  const captureVideo = video as HTMLVideoElementWithCapture;
+  return captureVideo.captureStream?.() ?? captureVideo.mozCaptureStream?.() ?? null;
+}
+
+async function playVideoForCompression(video: HTMLVideoElement) {
+  try {
+    await video.play();
+  } catch {
+    video.muted = true;
+    await video.play();
+  }
+}
+
+async function recordCompressedVideo(file: File, metadata: VideoMetadata, attempt: VideoCompressionAttempt, mimeType: string) {
+  const objectUrl = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  const dimensions = outputVideoDimensions(metadata, attempt);
+  const canvas = document.createElement("canvas");
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) {
+    URL.revokeObjectURL(objectUrl);
+    throw new Error("VIDEO_COMPRESSION_UNSUPPORTED");
+  }
+
+  const canvasStream = canvas.captureStream?.(attempt.fps);
+  if (!canvasStream) {
+    URL.revokeObjectURL(objectUrl);
+    throw new Error("VIDEO_COMPRESSION_UNSUPPORTED");
+  }
+
+  video.preload = "auto";
+  video.playsInline = true;
+  video.volume = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error("VIDEO_METADATA_FAILED"));
+    video.src = objectUrl;
+    video.load();
+  });
+
+  const sourceStream = captureStreamFromVideo(video);
+  const outputStream = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...(sourceStream?.getAudioTracks() ?? [])
+  ]);
+  const durationSeconds = Math.max(1, metadata.durationSeconds);
+  const videoBitsPerSecond = Math.max(
+    280_000,
+    Math.min(4_000_000, Math.floor(((VIDEO_TARGET_BYTES * 8) / durationSeconds) * attempt.bitrateFactor))
+  );
+  const chunks: Blob[] = [];
+  let animationFrame = 0;
+
+  const drawFrame = () => {
+    if (!video.paused && !video.ended) {
+      context.fillStyle = "#000000";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+    animationFrame = window.requestAnimationFrame(drawFrame);
+  };
+
+  try {
+    const recorderOptions: MediaRecorderOptions = {
+      videoBitsPerSecond
+    };
+    if (mimeType) recorderOptions.mimeType = mimeType;
+    const recorder = new MediaRecorder(outputStream, recorderOptions);
+    const recorded = new Promise<Blob>((resolve, reject) => {
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      recorder.onerror = () => reject(new Error("VIDEO_COMPRESSION_FAILED"));
+      recorder.onstop = () => {
+        const outputType = recorder.mimeType || mimeType || chunks[0]?.type || "video/webm";
+        resolve(new Blob(chunks, { type: outputType }));
+      };
+      video.onended = () => {
+        if (recorder.state !== "inactive") recorder.stop();
+      };
+    });
+
+    recorder.start(1000);
+    await playVideoForCompression(video);
+    drawFrame();
+    const timeout = window.setTimeout(() => {
+      if (recorder.state !== "inactive") recorder.stop();
+    }, Math.ceil((metadata.durationSeconds + 4) * 1000));
+    const blob = await recorded;
+    window.clearTimeout(timeout);
+    return { blob, width: dimensions.width, height: dimensions.height };
+  } finally {
+    window.cancelAnimationFrame(animationFrame);
+    outputStream.getTracks().forEach((track) => track.stop());
+    sourceStream?.getTracks().forEach((track) => track.stop());
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function videoFileToVariant(file: File, metadata?: VideoMetadata, posterDataUrl?: string): Promise<PhotoUploadVariant> {
+  const videoMetadata = metadata ?? await loadVideoMetadata(file);
+  if (videoMetadata.durationSeconds > VIDEO_MAX_DURATION_SECONDS) {
+    throw new Error("VIDEO_DURATION_TOO_LONG");
+  }
+  if (file.size > VIDEO_MAX_BYTES) {
+    throw new Error("VIDEO_TOO_LARGE");
+  }
+
+  const mimeType = safeMediaMimeType(videoMimeTypeForFile(file), "video/mp4");
+  if (!mimeType.toLowerCase().startsWith("video/mp4")) {
+    throw new Error("VIDEO_MP4_REQUIRED");
+  }
+
+  const dataUrl = await blobToDataUrl(file, mimeType);
+  const name = file.name?.trim() || `hotelops-video-${Date.now()}.mp4`;
+  const videoPosterDataUrl = posterDataUrl ?? await videoPosterFromFile(file, videoMetadata).catch(() => "");
+
+  return {
+    name: compressedVideoName(name, mimeType),
+    mimeType,
+    size: file.size,
+    dataUrl,
+    mediaType: "VIDEO",
+    durationSeconds: videoMetadata.durationSeconds,
+    width: videoMetadata.width,
+    height: videoMetadata.height,
+    compressed: false,
+    videoPosterDataUrl: videoPosterDataUrl || undefined,
+    originalDataUrl: dataUrl,
+    originalName: name,
+    originalMimeType: mimeType
+  };
+}
+
+async function compressVideo(file: File): Promise<PhotoUploadVariant> {
+  const metadata = await loadVideoMetadata(file);
+  if (metadata.durationSeconds > VIDEO_MAX_DURATION_SECONDS) {
+    throw new Error("VIDEO_DURATION_TOO_LONG");
+  }
+  const videoPosterDataUrl = await videoPosterFromFile(file, metadata).catch(() => "");
+  const originalMimeType = safeMediaMimeType(videoMimeTypeForFile(file), "video/mp4");
+  const originalDataUrlPromise = blobToDataUrl(file, originalMimeType);
+
+  if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
+    return videoFileToVariant(file, metadata, videoPosterDataUrl);
+  }
+
+  const mimeType = supportedVideoMimeType();
+  if (!mimeType) {
+    return videoFileToVariant(file, metadata, videoPosterDataUrl);
+  }
+
+  let lastError: unknown = null;
+  for (const attempt of VIDEO_COMPRESSION_ATTEMPTS) {
+    try {
+      const output = await recordCompressedVideo(file, metadata, attempt, mimeType);
+      if (output.blob.size > 0 && output.blob.size <= VIDEO_MAX_BYTES) {
+        const outputType = safeMediaMimeType(output.blob.type || mimeType, "video/mp4");
+        const outputName = compressedVideoName(file.name, outputType);
+        const outputFile = new File([output.blob], outputName, { type: outputType });
+        await loadVideoMetadata(outputFile);
+        const dataUrl = await blobToDataUrl(output.blob, outputType);
+        const originalDataUrl = await originalDataUrlPromise;
+        return {
+          name: outputName,
+          mimeType: outputType,
+          size: output.blob.size,
+          dataUrl,
+          mediaType: "VIDEO",
+          durationSeconds: metadata.durationSeconds,
+          width: output.width,
+          height: output.height,
+          compressed: true,
+          videoPosterDataUrl: videoPosterDataUrl || undefined,
+          originalDataUrl,
+          originalName: file.name?.trim() || outputName,
+          originalMimeType
+        };
+      }
+      lastError = new Error("VIDEO_TOO_LARGE");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  try {
+    return await videoFileToVariant(file, metadata, videoPosterDataUrl);
+  } catch {
+    // Keep the compression-specific failure when original upload is not usable.
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("VIDEO_COMPRESSION_FAILED");
+}
+
+function mediaUploadErrorMessage(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "VIDEO_DURATION_TOO_LONG") return "Video en fazla 1 dakika olabilir.";
+  if (code === "VIDEO_TOO_LARGE") return "Video 25 MB altına sıkıştırılamadı.";
+  if (code === "VIDEO_METADATA_FAILED") return "Video okunamadı.";
+  if (code === "VIDEO_MP4_REQUIRED") return "Video MP4 formatında olmalıdır.";
+  if (code === "VIDEO_COMPRESSION_UNSUPPORTED") return "Bu cihazda uyumlu MP4 video sıkıştırma desteklenmiyor.";
+  return "Medya hazırlanamadı.";
 }
 
 type PhotoSelection = {
@@ -1399,17 +2078,33 @@ function currentPhotoVariant(photo: PhotoAttachment): PhotoUploadVariant {
     name: photo.name,
     mimeType: photo.mimeType,
     size: photo.size,
-    dataUrl: photo.dataUrl
+    dataUrl: photo.dataUrl,
+    mediaType: photo.mediaType,
+    durationSeconds: photo.durationSeconds,
+    width: photo.width,
+    height: photo.height,
+    compressed: photo.compressed,
+    videoPosterDataUrl: photo.videoPosterDataUrl,
+    originalDataUrl: photo.originalDataUrl,
+    originalName: photo.originalName,
+    originalMimeType: photo.originalMimeType
   };
 }
 
 async function filesToPhotoSelections(files: FileList | null) {
-  const selected = Array.from(files ?? []).filter((file) => file.type.startsWith("image/")).slice(0, 6);
+  const selected = Array.from(files ?? [])
+    .filter((file) => isImageFile(file) || isVideoFile(file))
+    .slice(0, 6);
   const selections: PhotoSelection[] = [];
 
   for (const file of selected) {
-    const standardVariant = await compressImage(file, "STANDARD");
-    selections.push({ photo: photoFromVariant(standardVariant, "STANDARD"), sourceFile: file });
+    if (isVideoFile(file)) {
+      const videoVariant = await compressVideo(file);
+      selections.push({ photo: photoFromVariant(videoVariant, "STANDARD"), sourceFile: file });
+    } else {
+      const standardVariant = await compressImage(file, "STANDARD");
+      selections.push({ photo: photoFromVariant(standardVariant, "STANDARD"), sourceFile: file });
+    }
   }
 
   return selections;
@@ -1421,7 +2116,12 @@ function photoUploadPayload(photo: PhotoAttachment): PhotoAttachment {
     mimeType: photo.mimeType,
     size: photo.size,
     dataUrl: photo.dataUrl,
-    phase: photo.phase ?? "GENERAL"
+    phase: photo.phase ?? "GENERAL",
+    mediaType: isVideoAttachment(photo) ? "VIDEO" : "PHOTO",
+    durationSeconds: photo.durationSeconds,
+    width: photo.width,
+    height: photo.height,
+    compressed: photo.compressed
   };
 }
 
@@ -1448,6 +2148,15 @@ function fileSizeLabel(size: number) {
 }
 
 function photoDownloadName(photo: PhotoAttachment) {
+  if (isVideoAttachment(photo)) {
+    const fallback = `hotelops-video-${Date.now()}.webm`;
+    const name = (photo.originalName || photo.name || fallback).trim();
+    if (/\.(mp4|webm|mov|m4v)$/i.test(name)) return name;
+    const mimeType = photo.originalMimeType || photo.mimeType;
+    const extension = mimeType.includes("mp4") ? "mp4" : mimeType.includes("quicktime") ? "mov" : "webm";
+    return `${name || "hotelops-video"}.${extension}`;
+  }
+
   const fallback = `hotelops-foto-${Date.now()}.jpg`;
   const name = (photo.name || fallback).trim();
   if (/\.(jpe?g|png|webp|heic|heif)$/i.test(name)) return name;
@@ -1455,8 +2164,218 @@ function photoDownloadName(photo: PhotoAttachment) {
   return `${name || "hotelops-foto"}.${extension}`;
 }
 
+function videoPlaybackSrc(photo: PhotoAttachment) {
+  const source = photo.originalDataUrl || photo.dataUrl;
+  return source ? normalizeDataUrl(source, photo.originalMimeType || photo.mimeType || "video/mp4") : "";
+}
+
+function mediaSaveDataUrl(photo: PhotoAttachment) {
+  if (isVideoAttachment(photo)) return videoPlaybackSrc(photo);
+  return photo.dataUrl ? normalizeDataUrl(photo.dataUrl, photo.mimeType || "image/jpeg") : "";
+}
+
+function mediaSaveMimeType(photo: PhotoAttachment) {
+  return safeMediaMimeType(
+    isVideoAttachment(photo) ? (photo.originalMimeType || photo.mimeType || "video/mp4") : (photo.mimeType || "image/jpeg"),
+    isVideoAttachment(photo) ? "video/mp4" : "image/jpeg"
+  );
+}
+
+function mediaNeedsPayload(photo: PhotoAttachment) {
+  return Boolean(photo.hasDataUrl && !mediaSaveDataUrl(photo));
+}
+
+function jobNeedsMediaPayload(job: JobRecord | undefined) {
+  return Boolean(job?.photos?.some(mediaNeedsPayload));
+}
+
+function stripPhotoStoragePayload(photo: PhotoAttachment): PhotoAttachment {
+  if (!photo.dataUrl && !photo.originalDataUrl && !photo.standardVariant && !photo.hdVariant) return photo;
+  return {
+    ...photo,
+    dataUrl: "",
+    originalDataUrl: undefined,
+    standardVariant: undefined,
+    hdVariant: undefined
+  };
+}
+
+function stripJobStoragePayload(job: JobRecord): JobRecord {
+  return job.photos?.length
+    ? { ...job, photos: job.photos.map(stripPhotoStoragePayload) }
+    : job;
+}
+
+function MediaPreview({ photo, width, height, className }: { photo: PhotoAttachment; width: number; height: number; className?: string }) {
+  if (isVideoAttachment(photo)) {
+    const src = videoPlaybackSrc(photo);
+    return (
+      <span className={["video-preview-frame", className].filter(Boolean).join(" ")}>
+        {src ? (
+          <video
+            className="video-preview-media"
+            src={src}
+            poster={photo.videoPosterDataUrl}
+            width={width}
+            height={height}
+            muted
+            playsInline
+            preload="metadata"
+          />
+        ) : (
+          <span className="media-preview-placeholder"><Video size={30} /> Video</span>
+        )}
+        <span className="video-preview-play" aria-hidden="true">
+          <PlayCircle size={38} />
+        </span>
+      </span>
+    );
+  }
+
+  if (!photo.dataUrl) {
+    return (
+      <span className={["video-preview-frame", className].filter(Boolean).join(" ")}>
+        <span className="media-preview-placeholder"><ImageIcon size={30} /> Fotoğraf</span>
+      </span>
+    );
+  }
+
+  return <Image className={className} src={photo.dataUrl} alt={photo.name} width={width} height={height} unoptimized />;
+}
+
+function formatVideoTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+type FullscreenTarget = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+};
+
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+
+function LightboxVideoPlayer({ src, poster, title }: { src: string; poster?: string; title: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    setIsPlaying(false);
+    setDuration(0);
+    setCurrentTime(0);
+  }, [src]);
+
+  const updateMetadata = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    setCurrentTime(Number.isFinite(video.currentTime) ? video.currentTime : 0);
+    setIsMuted(video.muted);
+  };
+
+  const togglePlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused || video.ended) {
+      void video.play().catch(() => setIsPlaying(false));
+      return;
+    }
+    video.pause();
+  };
+
+  const handleSeek = (event: ChangeEvent<HTMLInputElement>) => {
+    const video = videoRef.current;
+    const nextTime = Number(event.currentTarget.value);
+    setCurrentTime(nextTime);
+    if (video && Number.isFinite(nextTime)) video.currentTime = nextTime;
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setIsMuted(video.muted);
+  };
+
+  const toggleFullscreen = () => {
+    const element = frameRef.current as FullscreenTarget | null;
+    if (!element) return;
+    const fullscreenDocument = document as FullscreenDocument;
+    const fullscreenElement = document.fullscreenElement || fullscreenDocument.webkitFullscreenElement;
+    if (fullscreenElement) {
+      void (document.exitFullscreen?.() || fullscreenDocument.webkitExitFullscreen?.());
+      return;
+    }
+    void (element.requestFullscreen?.() || element.webkitRequestFullscreen?.());
+  };
+
+  const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const progressStyle = { "--video-progress": `${progress}%` } as CSSProperties;
+
+  return (
+    <div className="lightbox-video-player" ref={frameRef}>
+      <video
+        ref={videoRef}
+        className="photo-lightbox-video"
+        src={src}
+        poster={poster}
+        playsInline
+        preload="metadata"
+        onClick={togglePlayback}
+        onLoadedMetadata={updateMetadata}
+        onDurationChange={updateMetadata}
+        onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+      />
+      <button
+        type="button"
+        className={`lightbox-video-center ${isPlaying ? "is-playing" : ""}`}
+        onClick={togglePlayback}
+        aria-label={isPlaying ? "Duraklat" : "Oynat"}
+      >
+        {isPlaying ? <Pause size={30} /> : <Play size={32} fill="currentColor" />}
+      </button>
+      <div className="lightbox-video-controls" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="lightbox-video-control" onClick={togglePlayback} aria-label={isPlaying ? "Duraklat" : "Oynat"}>
+          {isPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}
+        </button>
+        <div className="lightbox-video-timeline">
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step="0.05"
+            value={Math.min(currentTime, duration || currentTime)}
+            onChange={handleSeek}
+            style={progressStyle}
+            aria-label={`${title} video süresi`}
+          />
+          <span>{formatVideoTime(currentTime)} / {formatVideoTime(duration)}</span>
+        </div>
+        <button type="button" className="lightbox-video-control" onClick={toggleMute} aria-label={isMuted ? "Sesi aç" : "Sesi kapat"}>
+          {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+        </button>
+        <button type="button" className="lightbox-video-control" onClick={toggleFullscreen} aria-label="Tam ekran">
+          <Maximize2 size={18} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PhotoLightbox({ photo, onClose }: { photo: PhotoAttachment | null; onClose: () => void }) {
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed">("idle");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed" | "unsupported">("idle");
 
   useEffect(() => {
     if (!photo) return;
@@ -1474,22 +2393,41 @@ function PhotoLightbox({ photo, onClose }: { photo: PhotoAttachment | null; onCl
 
   useEffect(() => {
     setSaveStatus("idle");
-  }, [photo?.dataUrl]);
+  }, [photo?.dataUrl, photo?.originalDataUrl]);
 
   const handleSave = () => {
     if (!photo) return;
     const fileName = photoDownloadName(photo);
     const shell = (window as HotelOpsShellWindow).HotelOpsAndroidShell;
+    const dataUrl = mediaSaveDataUrl(photo);
+    const mimeType = mediaSaveMimeType(photo);
+    const isAndroidShell = shell?.runtime?.() === "android";
 
-    if (shell?.saveImageToGallery) {
-      const saved = shell.saveImageToGallery(photo.dataUrl, fileName);
+    if (!dataUrl) {
+      setSaveStatus("failed");
+      return;
+    }
+
+    if (isVideoAttachment(photo) && isAndroidShell && !shell?.saveMediaToGallery) {
+      setSaveStatus("unsupported");
+      return;
+    }
+
+    if (shell?.saveMediaToGallery) {
+      const saved = shell.saveMediaToGallery(dataUrl, fileName, mimeType);
+      setSaveStatus(saved ? "saved" : "failed");
+      return;
+    }
+
+    if (!isVideoAttachment(photo) && shell?.saveImageToGallery) {
+      const saved = shell.saveImageToGallery(dataUrl, fileName);
       setSaveStatus(saved ? "saved" : "failed");
       return;
     }
 
     try {
       const link = document.createElement("a");
-      link.href = photo.dataUrl;
+      link.href = dataUrl;
       link.download = fileName;
       document.body.appendChild(link);
       link.click();
@@ -1501,21 +2439,37 @@ function PhotoLightbox({ photo, onClose }: { photo: PhotoAttachment | null; onCl
   };
 
   if (!photo) return null;
+  const lightboxSrc = mediaSaveDataUrl(photo);
+  const isVideo = isVideoAttachment(photo);
+  const fallbackTitle = isVideo ? "Video" : "Fotoğraf";
+  const mediaTitle = photo.name || fallbackTitle;
 
   return (
-    <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="Fotoğraf önizleme" onClick={onClose}>
-      <button type="button" className="photo-lightbox-close" onClick={onClose} aria-label="Fotoğrafı kapat">
+    <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label={isVideo ? "Video önizleme" : "Fotoğraf önizleme"} onClick={onClose}>
+      <button type="button" className="photo-lightbox-close" onClick={onClose} aria-label={isVideo ? "Videoyu kapat" : "Fotoğrafı kapat"}>
         <X size={20} />
       </button>
-      <div className="photo-lightbox-frame" onClick={(event) => event.stopPropagation()}>
-        <Image src={photo.dataUrl} alt={photo.name || "Fotoğraf"} width={1280} height={960} unoptimized />
+      <div className={`photo-lightbox-frame ${isVideo ? "is-video" : ""}`} onClick={(event) => event.stopPropagation()}>
+        {isVideo && lightboxSrc ? (
+          <LightboxVideoPlayer src={lightboxSrc} poster={photo.videoPosterDataUrl} title={mediaTitle} />
+        ) : isVideo ? (
+          <div className="photo-lightbox-placeholder"><Video size={34} /> Video yükleniyor...</div>
+        ) : lightboxSrc ? (
+          <Image src={lightboxSrc} alt={mediaTitle} width={1280} height={960} unoptimized />
+        ) : (
+          <div className="photo-lightbox-placeholder"><ImageIcon size={34} /> Medya yükleniyor...</div>
+        )}
         <div className="photo-lightbox-footer">
           <div className="photo-lightbox-caption">
-            <span>{photo.name || "Fotoğraf"}</span>
+            <span>{mediaTitle}</span>
             <span>{fileSizeLabel(photo.size)}</span>
           </div>
           <div className="photo-lightbox-actions">
-            {saveStatus !== "idle" ? <span className={`photo-save-status ${saveStatus}`}>{saveStatus === "saved" ? "Kaydedildi" : "Kaydedilemedi"}</span> : null}
+            {saveStatus !== "idle" ? (
+              <span className={`photo-save-status ${saveStatus}`}>
+                {saveStatus === "saved" ? "Kaydedildi" : saveStatus === "unsupported" ? "Uygulamayı güncelleyin" : "Kaydedilemedi"}
+              </span>
+            ) : null}
             <button type="button" className="photo-lightbox-save" onClick={handleSave}>
               <Save size={16} /> Kaydet
             </button>
@@ -1575,6 +2529,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
   { id: "operationDocuments", label: "Operasyon Belgeleri", group: "Yönetim" },
+  { id: "departmentTables", label: "Departman Tabloları", group: "Yönetim" },
   { id: "trainingCertificates", label: "Eğitim ve Sertifika", group: "Yönetim" },
   { id: "minibar", label: "Mini Bar", group: "Yönetim" },
   { id: "equipmentAssignments", label: "Zimmet / Ekipman", group: "Yönetim" },
@@ -1603,7 +2558,7 @@ const dashboardPartOptions: Array<{ id: DashboardPartId; label: string }> = [
 const featureAccessOptions: Array<{ id: FeatureAccessId; label: string }> = [
   { id: "featureSlaEscalation", label: "SLA riski ve eskalasyon" },
   { id: "featureRoomHistory", label: "Oda geçmişi" },
-  { id: "featureBeforeAfterPhotos", label: "Önce / sonra fotoğraf" },
+  { id: "featureBeforeAfterPhotos", label: "Önce / sonra medya" },
   { id: "featureAdvancedFilters", label: "Gelişmiş filtreler" },
   { id: "featureGuestImpact", label: "Misafir etkisi işareti" },
   { id: "featureAuditLogs", label: "Denetim kayıtları" },
@@ -1671,13 +2626,6 @@ const operationalModules: OperationalModuleConfig[] = [
   { id: "announcements", path: "/modules/announcements", title: "Duyuru ve İç İletişim", subtitle: "Departman duyuruları, okundu bilgisi ve acil mesajlar", primaryAction: "Duyuru Yayınla", fields: ["Başlık", "Departman", "Mesaj"], metrics: [{ label: "Aktif Duyuru", value: "4", tone: "inprogress" }, { label: "Okunmadı", value: "12", tone: "pending" }], records: [{ title: "Yangın tatbikatı", meta: "Tüm departmanlar", status: "Okundu %74" }, { title: "VIP giriş notu", meta: "HK + F&B", status: "Acil" }] },
   { id: "vipRequests", path: "/modules/vip", title: "VIP / Özel İstek", subtitle: "VIP hazırlık checklist, alerji, ikram ve transfer notları", primaryAction: "VIP Planı Aç", fields: ["Oda / Misafir", "İstek", "Sorumlu"], metrics: [{ label: "Aktif VIP", value: "6", tone: "high" }, { label: "Eksik Hazırlık", value: "1", tone: "urgent" }], records: [{ title: "1501 balayı setup", meta: "HK + F&B", status: "Hazırlanıyor" }, { title: "Alerji notu", meta: "Fındık hassasiyeti", status: "F&B bildirildi" }] }
 ];
-
-function isUnknownModulePath(path: string) {
-  if (!path.startsWith("/modules/")) return false;
-  if (path === "/modules/requests") return false;
-  if (path === "/modules/operation-documents") return false;
-  return !operationalModules.some((module) => module.path === path);
-}
 
 const initialUsers: DemoUser[] = [
   {
@@ -1927,10 +2875,11 @@ function roleLabel(roleId: RoleId) {
   return getRole(roleId).labelTR;
 }
 
-type PersonnelRoleLevel = "manager" | "chief" | "staff";
+type PersonnelRoleLevel = "manager" | "assistant" | "chief" | "staff";
 
 const personnelRoleLevelOptions: Array<{ id: PersonnelRoleLevel; label: string }> = [
   { id: "manager", label: "M\u00fcd\u00fcr" },
+  { id: "assistant", label: "M\u00fcd\u00fcr Yard\u0131mc\u0131s\u0131" },
   { id: "chief", label: "\u015eef" },
   { id: "staff", label: "Personel" }
 ];
@@ -1947,12 +2896,17 @@ const departmentManagerRoleMap: Partial<Record<string, RoleId>> = {
   fnb: "fnbManager"
 };
 
+const departmentAssistantRoleMap: Partial<Record<string, RoleId>> = {
+  technical: "technicalAssistant"
+};
+
 const departmentChiefRoleMap: Partial<Record<string, RoleId>> = {
   technical: "technicalChief",
   housekeeping: "floorChief"
 };
 
 function roleLevelForRole(roleId: RoleId): PersonnelRoleLevel {
+  if (roleId === "technicalAssistant") return "assistant";
   if (roleId === "technicalChief" || roleId === "floorChief") return "chief";
   if (roleId === "staff") return "staff";
   return "manager";
@@ -1961,14 +2915,17 @@ function roleLevelForRole(roleId: RoleId): PersonnelRoleLevel {
 function roleIdForPersonnelLevel(level: PersonnelRoleLevel, departmentId: string): RoleId {
   if (level === "staff") return "staff";
   if (level === "chief") return departmentChiefRoleMap[departmentId] ?? "staff";
+  if (level === "assistant") return departmentAssistantRoleMap[departmentId] ?? "staff";
   return departmentManagerRoleMap[departmentId] ?? "staff";
 }
 
 function personnelRoleOptionsForDepartment(departmentId: string) {
   const hasManager = Boolean(departmentManagerRoleMap[departmentId]);
+  const hasAssistant = Boolean(departmentAssistantRoleMap[departmentId]);
   const hasChief = Boolean(departmentChiefRoleMap[departmentId]);
   return personnelRoleLevelOptions.filter((option) => {
     if (option.id === "manager") return hasManager;
+    if (option.id === "assistant") return hasAssistant;
     if (option.id === "chief") return hasChief;
     return true;
   });
@@ -2363,7 +3320,7 @@ function statusLabel(status: JobStatus) {
     Pending: "Bekliyor",
     InProgress: "Devam Ediyor",
     Completed: "Tamamlandı",
-    Delayed: "Gecikti",
+    Delayed: "Ertelendi",
     Cancelled: "İptal"
   };
   return labels[status];
@@ -2450,7 +3407,7 @@ function workflowStatusLabel(status: string) {
     Pending: "Bekliyor",
     InProgress: "Devam Ediyor",
     Completed: "Tamamlandı",
-    Delayed: "Gecikti",
+    Delayed: "Ertelendi",
     Cancelled: "İptal"
   };
   return labels[status] ?? status;
@@ -2554,6 +3511,7 @@ function downloadShiftRosterExcel(
         .night { background: #1f4e79; color: #ffffff; }
         .off, .leave { background: #ffff00; font-size: 18px; }
         .sick { background: #b04040; color: #ffffff; font-size: 14px; }
+        .custom { background: #dbeafe; color: #111827; }
         .empty { background: #000000; color: #ffffff; }
       </style>
     </head>
@@ -2579,21 +3537,16 @@ function downloadShiftRosterExcel(
   URL.revokeObjectURL(url);
 }
 
-function isTechnicalDepartmentUser(user: Pick<DemoUser, "departmentId">) {
-  return user.departmentId === "technical";
-}
-
-function jobTypeLabelForUser(user: Pick<DemoUser, "departmentId">, type: JobType) {
-  if (type === "Job" && isTechnicalDepartmentUser(user)) return "HK'ya İş Aç";
+function jobTypeLabelForUser(_user: Pick<DemoUser, "departmentId">, type: JobType) {
   return typeLabel(type);
 }
 
-function newJobActionLabelForUser(user: Pick<DemoUser, "departmentId">) {
-  return isTechnicalDepartmentUser(user) ? "HK İş Oluştur" : "Yeni İş Oluştur";
+function newJobActionLabel() {
+  return "Yeni İş Oluştur";
 }
 
-function submitJobLabelForUser(user: Pick<DemoUser, "departmentId">, type: JobType) {
-  if (type === "Job" && isTechnicalDepartmentUser(user)) return "HK'ya İş Aç";
+function submitJobLabel(initialStatus?: JobDraft["initialStatus"]) {
+  if (initialStatus === "Completed") return "Biten İş Olarak Kaydet";
   return "İş Oluştur";
 }
 
@@ -2683,6 +3636,120 @@ function canManageJobStatus(user: DemoUser, job: Pick<JobRecord, "departmentId">
   return statusManagerRoles.has(user.roleId) && user.departmentId === job.departmentId;
 }
 
+const departmentTableColumnTypeOptions: Array<{ id: DepartmentTableColumn["type"]; label: string }> = [
+  { id: "text", label: "Metin" },
+  { id: "number", label: "Sayı" },
+  { id: "date", label: "Tarih" },
+  { id: "time", label: "Saat" },
+  { id: "status", label: "Durum" }
+];
+
+function departmentTableColumnTypeLabel(type: DepartmentTableColumn["type"]) {
+  return departmentTableColumnTypeOptions.find((option) => option.id === type)?.label ?? "Metin";
+}
+
+function emptyDepartmentTableColumn(): DepartmentTableColumn {
+  return { id: "", label: "", type: "text" };
+}
+
+function departmentTableDefaultColumns(departmentId: string): DepartmentTableColumn[] {
+  if (departmentId === "technical") {
+    return [
+      { id: "", label: "Tarih", type: "date" },
+      { id: "", label: "Sayaç", type: "text" },
+      { id: "", label: "Değer", type: "number" },
+      { id: "", label: "Not", type: "text" }
+    ];
+  }
+  if (departmentId === "housekeeping") {
+    return [
+      { id: "", label: "Oda", type: "text" },
+      { id: "", label: "Kat", type: "text" },
+      { id: "", label: "Durum", type: "status" },
+      { id: "", label: "Personel", type: "text" }
+    ];
+  }
+  if (departmentId === "fnb") {
+    return [
+      { id: "", label: "Oda", type: "text" },
+      { id: "", label: "Ürün", type: "text" },
+      { id: "", label: "Adet", type: "number" },
+      { id: "", label: "Durum", type: "status" }
+    ];
+  }
+  return [
+    { id: "", label: "Tarih", type: "date" },
+    { id: "", label: "Başlık", type: "text" },
+    { id: "", label: "Durum", type: "status" }
+  ];
+}
+
+function departmentTableDefaultTitle(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
+  if (departmentId === "technical") return "Enerji Veri Tablosu";
+  if (departmentId === "housekeeping") return "Oda Temizlik Listesi";
+  if (departmentId === "fnb") return "Minibar Tablosu";
+  return `${departmentLabelFor(departmentId)} Listesi`;
+}
+
+function departmentTableDraftFromRecord(table: DepartmentTableRecord | null, session: DemoUser, departmentLabelFor: (departmentId: string) => string): DepartmentTableDraft {
+  return {
+    title: table?.title ?? departmentTableDefaultTitle(session.departmentId, departmentLabelFor),
+    description: table?.description ?? "",
+    columns: table?.columns.length ? table.columns : departmentTableDefaultColumns(session.departmentId),
+    showInMenu: table?.showInMenu ?? true
+  };
+}
+
+function sanitizedDepartmentTableColumns(columns: DepartmentTableColumn[]) {
+  return columns
+    .map((column) => ({ id: column.id, label: column.label.trim(), type: column.type || "text" }))
+    .filter((column) => column.label)
+    .slice(0, 24);
+}
+
+function departmentTableInputType(type: DepartmentTableColumn["type"]) {
+  if (type === "number") return "number";
+  if (type === "date") return "date";
+  if (type === "time") return "time";
+  return "text";
+}
+
+function isOpenJob(job: Pick<JobRecord, "status">) {
+  return job.status !== "Completed" && job.status !== "Cancelled";
+}
+
+function isWorkIncidentPoolType(job: Pick<JobRecord, "type">) {
+  return job.type === "Job" || job.type === "Fault";
+}
+
+function isDepartmentPoolJob(job: Pick<JobRecord, "assignee" | "status" | "type">) {
+  return isWorkIncidentPoolType(job) && !job.assignee && isOpenJob(job);
+}
+
+function departmentPoolLabel(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
+  return `${departmentLabelFor(departmentId)} İş-Arıza Havuzu`;
+}
+
+function canClaimDepartmentJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "departmentId" | "status" | "type">) {
+  return user.departmentId === job.departmentId && isDepartmentPoolJob(job);
+}
+
+function canAssignJob(user: DemoUser, job: Pick<JobRecord, "departmentId">, policy: WorkOrderPolicyRecord | null) {
+  if (user.departmentId === job.departmentId && policy?.assignmentAuthorityUserIds.includes(user.id)) return true;
+  return canManageJobStatus(user, job);
+}
+
+function canCompleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "departmentId">) {
+  return canManageJobStatus(user, job) || job.assigneeId === user.id || (!job.assigneeId && job.assignee === user.fullName);
+}
+
+function canDeleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "departmentId" | "type">, policy: WorkOrderPolicyRecord | null) {
+  if (!isWorkIncidentPoolType(job) || user.departmentId !== job.departmentId) return false;
+  if (canManageJobStatus(user, job)) return true;
+  const isAssignedToUser = job.assigneeId === user.id || (!job.assigneeId && job.assignee === user.fullName);
+  return isAssignedToUser && Boolean(policy?.deleteAuthorityUserIds.includes(user.id));
+}
+
 function isHousekeepingStaff(user: Pick<DemoUser, "roleId" | "departmentId">) {
   return user.departmentId === "housekeeping" && user.roleId === "staff";
 }
@@ -2699,17 +3766,17 @@ function isHousekeepingDepartmentUser(user: Pick<DemoUser, "departmentId">) {
   return user.departmentId === "housekeeping";
 }
 
-function urgentJobsLabelFor(user: Pick<DemoUser, "departmentId">) {
-  return isHousekeepingDepartmentUser(user) ? "Acil İşler" : "Acil Arızalar";
+function urgentJobsLabel() {
+  return "Acil İşler";
 }
 
-function urgentJobsKeywordsFor(user: Pick<DemoUser, "departmentId">) {
-  return isHousekeepingDepartmentUser(user) ? "acil kritik iş" : "acil arıza kritik iş";
+function urgentJobsKeywords() {
+  return "acil kritik iş arıza";
 }
 
-function isUrgentJobForUser(user: Pick<DemoUser, "departmentId">, job: Pick<JobRecord, "priority" | "type">) {
+function isUrgentJobForUser(_user: Pick<DemoUser, "departmentId">, job: Pick<JobRecord, "priority" | "type">) {
   if (job.priority !== "Urgent") return false;
-  return isHousekeepingDepartmentUser(user) ? true : job.type === "Fault";
+  return true;
 }
 
 function activeUrgentJobsForUser(user: Pick<DemoUser, "departmentId">, jobs: JobRecord[]) {
@@ -2740,6 +3807,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       lostFound: false,
       guestRequests: false,
       operationDocuments: false,
+      departmentTables: false,
       managementRequests: false,
       trainingCertificates: false,
       minibar: false,
@@ -2780,11 +3848,12 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     departmentCalendar: true,
     reminders: true,
     shiftPanels: true,
-    inventory: isManager || ["technicalManager", "technicalChief", "hkManager", "fnbManager"].includes(user.roleId),
+    inventory: isManager || ["technicalManager", "technicalAssistant", "technicalChief", "hkManager", "fnbManager"].includes(user.roleId),
     roomStatus: isManager || user.departmentId === "housekeeping" || ["hkManager", "floorChief", "frontOfficeManager"].includes(user.roleId),
     lostFound: isManager || ["frontOfficeManager", "securityManager", "hkManager", "floorChief"].includes(user.roleId),
     guestRequests: isManager || ["frontOfficeManager", "hkManager", "technicalManager", "fnbManager"].includes(user.roleId),
     operationDocuments: true,
+    departmentTables: true,
     managementRequests: true,
     trainingCertificates: isManager || user.roleId === "hrManager",
     minibar: isManager || ["frontOfficeManager", "hkManager", "floorChief", "fnbManager"].includes(user.roleId),
@@ -2804,7 +3873,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     dashboardDepartmentDistribution: true,
     dashboardQuickActions: true,
     dashboardRecentJobs: true,
-    featureSlaEscalation: isManager || ["technicalManager", "technicalChief", "hkManager", "floorChief"].includes(user.roleId),
+    featureSlaEscalation: isManager || ["technicalManager", "technicalAssistant", "technicalChief", "hkManager", "floorChief"].includes(user.roleId),
     featureRoomHistory: true,
     featureBeforeAfterPhotos: true,
     featureAdvancedFilters: true,
@@ -2831,16 +3900,269 @@ function canConfigureShiftPanels(user: Pick<DemoUser, "roleId">) {
   return user.roleId === "hrManager";
 }
 
-const shiftRosterPresets: Array<{ id: string; label: string; code: string; startTime: string; endTime: string; color: string }> = [
+type ShiftRosterPreset = { id: string; label: string; code: string; startTime: string; endTime: string; color: string };
+type ShiftRosterColorTemplate = { id: string; label: string; background: string; textColor: string };
+
+const defaultShiftRosterPresets: ShiftRosterPreset[] = [
   { id: "day", label: "08:00-16:30", code: "", startTime: "08:00", endTime: "16:30", color: "day" },
   { id: "mid", label: "13:00-21:30", code: "", startTime: "13:00", endTime: "21:30", color: "evening" },
   { id: "evening", label: "14:30-23:00", code: "", startTime: "14:30", endTime: "23:00", color: "evening" },
   { id: "night", label: "23:00-07:30", code: "", startTime: "23:00", endTime: "07:30", color: "night" },
   { id: "off", label: "O", code: "O", startTime: "", endTime: "", color: "off" },
   { id: "leave", label: "V", code: "V", startTime: "", endTime: "", color: "leave" },
-  { id: "sick", label: "B", code: "B", startTime: "", endTime: "", color: "sick" },
-  { id: "empty", label: "Boş", code: "", startTime: "", endTime: "", color: "empty" }
+  { id: "sick", label: "B", code: "B", startTime: "", endTime: "", color: "sick" }
 ];
+
+const emptyShiftRosterPreset: ShiftRosterPreset = { id: "empty", label: "Boş", code: "", startTime: "", endTime: "", color: "empty" };
+
+const defaultShiftRosterColorTemplates: ShiftRosterColorTemplate[] = [
+  { id: "day", label: "Gündüz", background: "#ffffff", textColor: "#111827" },
+  { id: "evening", label: "Akşam", background: "#f7b718", textColor: "#111827" },
+  { id: "night", label: "Gece", background: "#1f4e79", textColor: "#ffffff" },
+  { id: "off", label: "Off", background: "#ffff00", textColor: "#111827" },
+  { id: "leave", label: "İzin", background: "#ffff00", textColor: "#111827" },
+  { id: "sick", label: "Rapor", background: "#b04040", textColor: "#ffffff" },
+  { id: "custom", label: "Özel", background: "#dbeafe", textColor: "#111827" }
+];
+
+function editableRosterPresets(panel?: Pick<ShiftPanelRecord, "presets"> | null) {
+  return (panel?.presets?.length ? panel.presets : defaultShiftRosterPresets).map((preset) => ({ ...preset }));
+}
+
+function editableRosterColorTemplates(panel?: Pick<ShiftPanelRecord, "colorTemplates"> | null) {
+  return (panel?.colorTemplates?.length ? panel.colorTemplates : defaultShiftRosterColorTemplates).map((template) => ({ ...template }));
+}
+
+function rosterPresetsWithEmpty(presets: ShiftRosterPreset[]) {
+  return [...(presets.length ? presets : defaultShiftRosterPresets), emptyShiftRosterPreset];
+}
+
+function createShiftRosterPreset(index: number): ShiftRosterPreset {
+  return {
+    id: `custom-${Date.now()}-${index}`,
+    label: "Yeni Kart",
+    code: "",
+    startTime: "",
+    endTime: "",
+    color: "custom"
+  };
+}
+
+function createShiftRosterColorTemplate(index: number): ShiftRosterColorTemplate {
+  return {
+    id: `color-${Date.now()}-${index}`,
+    label: `Şablon ${index + 1}`,
+    background: "#dbeafe",
+    textColor: "#111827"
+  };
+}
+
+function sanitizeShiftRosterPreset(preset: ShiftRosterPreset, index: number): ShiftRosterPreset {
+  const code = preset.code.trim();
+  const startTime = preset.startTime.trim();
+  const endTime = preset.endTime.trim();
+  const label = preset.label.trim() || code || [startTime, endTime].filter(Boolean).join("-") || `Kart ${index + 1}`;
+  return {
+    id: preset.id || `preset-${index + 1}`,
+    label,
+    code,
+    startTime,
+    endTime,
+    color: preset.color || "custom"
+  };
+}
+
+function sanitizeShiftRosterColorTemplate(template: ShiftRosterColorTemplate, index: number): ShiftRosterColorTemplate {
+  const label = template.label.trim() || `Şablon ${index + 1}`;
+  return {
+    id: template.id || `color-${index + 1}`,
+    label,
+    background: normalizeRosterCssColor(template.background, "#dbeafe"),
+    textColor: normalizeRosterCssColor(template.textColor, "#111827")
+  };
+}
+
+function normalizeRosterCssColor(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  const rgbMatch = trimmed.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i);
+  if (rgbMatch) {
+    const channels = rgbMatch.slice(1).map((channel) => Math.max(0, Math.min(255, Number(channel))));
+    return `rgb(${channels[0]}, ${channels[1]}, ${channels[2]})`;
+  }
+  return fallback;
+}
+
+function colorPickerValue(value: string, fallback: string) {
+  const normalized = normalizeRosterCssColor(value, fallback);
+  if (normalized.startsWith("#")) return normalized;
+  const rgbMatch = normalized.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i);
+  if (!rgbMatch) return fallback;
+  return `#${rgbMatch.slice(1).map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function rosterColorTemplateFor(color: string, templates: ShiftRosterColorTemplate[]) {
+  return templates.find((template) => template.id === color) ?? defaultShiftRosterColorTemplates.find((template) => template.id === color) ?? null;
+}
+
+function rosterColorStyle(color: string, templates: ShiftRosterColorTemplate[]): CSSProperties | undefined {
+  const template = rosterColorTemplateFor(color, templates);
+  if (!template) return undefined;
+  return {
+    "--shift-roster-bg": template.background,
+    "--shift-roster-fg": template.textColor
+  } as CSSProperties;
+}
+
+function rosterCsvCell(value: unknown) {
+  const raw = String(value ?? "");
+  return /[;"\r\n]/.test(raw) ? `"${raw.replace(/"/g, "\"\"")}"` : raw;
+}
+
+function downloadShiftRosterTemplateCsv(filename: string, presets: ShiftRosterPreset[], colorTemplates: ShiftRosterColorTemplate[]) {
+  const headers = ["type", "id", "label", "code", "startTime", "endTime", "color", "background", "textColor"];
+  const templateRows = colorTemplates.map((template) => [
+    "colorTemplate",
+    template.id,
+    template.label,
+    "",
+    "",
+    "",
+    "",
+    template.background,
+    template.textColor
+  ]);
+  const presetRows = presets.map((preset) => [
+    "preset",
+    preset.id,
+    preset.label,
+    preset.code,
+    preset.startTime,
+    preset.endTime,
+    preset.color,
+    "",
+    ""
+  ]);
+  const csv = [headers, ...templateRows, ...presetRows]
+    .map((row) => row.map(rosterCsvCell).join(";"))
+    .join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseRosterDelimitedRows(text: string, delimiter: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === "\"" && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      quoted = true;
+    } else if (char === delimiter) {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows.filter((item) => item.some((value) => value.trim()));
+}
+
+function parseRosterCsvRows(text: string) {
+  const normalized = text.replace(/^\uFEFF/, "");
+  const candidates = [";", ",", "\t"].map((delimiter) => {
+    const rows = parseRosterDelimitedRows(normalized, delimiter);
+    const width = rows[0]?.length ?? 0;
+    return { delimiter, rows, width };
+  });
+  return candidates.sort((left, right) => right.width - left.width)[0]?.rows ?? [];
+}
+
+function uniqueRosterTemplateIds<T extends { id: string }>(items: T[], prefix: string) {
+  const seen = new Set<string>();
+  return items.map((item, index) => {
+    const base = item.id.trim() || `${prefix}-${index + 1}`;
+    let id = base;
+    let suffix = 2;
+    while (seen.has(id)) {
+      id = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    seen.add(id);
+    return { ...item, id };
+  });
+}
+
+function parseShiftRosterTemplateCsv(text: string) {
+  const rows = parseRosterCsvRows(text);
+  if (rows.length < 2) throw new Error("EMPTY_TEMPLATE_CSV");
+  const header = rows[0].map((value) => value.trim().toLocaleLowerCase("tr-TR"));
+  const columnIndex = (name: string) => header.indexOf(name.toLocaleLowerCase("tr-TR"));
+  const valueFor = (row: string[], name: string) => {
+    const index = columnIndex(name);
+    return index >= 0 ? row[index]?.trim() ?? "" : "";
+  };
+  if (columnIndex("type") < 0 || columnIndex("id") < 0 || columnIndex("label") < 0) {
+    throw new Error("INVALID_TEMPLATE_CSV_HEADER");
+  }
+
+  const colorTemplates = rows.slice(1)
+    .filter((row) => valueFor(row, "type").toLocaleLowerCase("tr-TR").replace(/[\s_-]+/g, "") === "colortemplate")
+    .map((row, index) => sanitizeShiftRosterColorTemplate({
+      id: valueFor(row, "id"),
+      label: valueFor(row, "label"),
+      background: valueFor(row, "background"),
+      textColor: valueFor(row, "textColor")
+    }, index))
+    .slice(0, 16);
+  const effectiveColorTemplates = uniqueRosterTemplateIds(
+    colorTemplates.length ? colorTemplates : editableRosterColorTemplates(),
+    "color"
+  );
+  const colorIds = new Set(effectiveColorTemplates.map((template) => template.id));
+  const fallbackColor = effectiveColorTemplates[0]?.id ?? "custom";
+  const presets = uniqueRosterTemplateIds(rows.slice(1)
+    .filter((row) => valueFor(row, "type").toLocaleLowerCase("tr-TR") === "preset")
+    .map((row, index) => sanitizeShiftRosterPreset({
+      id: valueFor(row, "id"),
+      label: valueFor(row, "label"),
+      code: valueFor(row, "code"),
+      startTime: valueFor(row, "startTime"),
+      endTime: valueFor(row, "endTime"),
+      color: colorIds.has(valueFor(row, "color")) ? valueFor(row, "color") : fallbackColor
+    }, index))
+    .slice(0, 16), "preset");
+
+  if (!presets.length) throw new Error("NO_TEMPLATE_PRESETS");
+  return { presets, colorTemplates: effectiveColorTemplates };
+}
 
 function emptyShiftPanelCellDraft(): ShiftPanelCellDraft {
   return { code: "", startTime: "", endTime: "", note: "", color: "empty" };
@@ -2869,16 +4191,18 @@ function rosterDraftDisplay(draft: ShiftPanelCellDraft) {
 
 function rosterDraftColor(draft: ShiftPanelCellDraft) {
   if (draft.color && draft.color !== "auto") return draft.color;
-  if (draft.code === "O") return "off";
-  if (draft.code === "V") return "leave";
-  if (draft.code === "B") return "sick";
+  const code = draft.code.trim().toLocaleUpperCase("tr-TR");
+  if (code === "O") return "off";
+  if (code === "V") return "leave";
+  if (code === "B") return "sick";
   if (draft.startTime.startsWith("23")) return "night";
   if (draft.startTime.startsWith("13") || draft.startTime.startsWith("14")) return "evening";
   if (draft.startTime || draft.endTime) return "day";
+  if (draft.code.trim()) return "custom";
   return "empty";
 }
 
-function rosterPresetMatchesDraft(preset: (typeof shiftRosterPresets)[number], draft: ShiftPanelCellDraft) {
+function rosterPresetMatchesDraft(preset: ShiftRosterPreset, draft: ShiftPanelCellDraft) {
   return (
     preset.code === draft.code &&
     preset.startTime === draft.startTime &&
@@ -2887,7 +4211,7 @@ function rosterPresetMatchesDraft(preset: (typeof shiftRosterPresets)[number], d
   );
 }
 
-function rosterPresetToDraft(preset: (typeof shiftRosterPresets)[number]): ShiftPanelCellDraft {
+function rosterPresetToDraft(preset: ShiftRosterPreset): ShiftPanelCellDraft {
   return { code: preset.code, startTime: preset.startTime, endTime: preset.endTime, note: "", color: preset.color };
 }
 
@@ -2903,8 +4227,8 @@ function canUseModule(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAc
   return canUseAccess(user, moduleId);
 }
 
-function jobDepartmentsFor(user: DemoUser): string[] {
-  const options = departmentOptions.map((department) => department.id);
+function jobDepartmentsFor(user: DemoUser, availableDepartmentIds: string[] = departmentOptions.map((department) => department.id)): string[] {
+  const options = availableDepartmentIds.length ? availableDepartmentIds : departmentOptions.map((department) => department.id);
   return [user.departmentId, ...options.filter((departmentId) => departmentId !== user.departmentId)];
 }
 
@@ -2920,10 +4244,11 @@ function isCalendarPlannedJob(job: Pick<JobRecord, "type" | "tags">) {
     .includes("planli-is");
 }
 
-function jobDepartmentsForType(user: DemoUser, type: JobType): string[] {
-  if (type === "Fault" || type === "PlannedMaintenance") return ["technical"];
-  if (type === "Job" || type === "PlannedHousekeeping") return ["housekeeping"];
-  return jobDepartmentsFor(user);
+function jobDepartmentsForType(user: DemoUser, type: JobType, availableDepartmentIds?: string[]): string[] {
+  if (type === "PlannedMaintenance") return ["technical"];
+  if (type === "PlannedHousekeeping") return ["housekeeping"];
+  if (type === "Job" || type === "Fault") return jobDepartmentsFor(user, availableDepartmentIds);
+  return jobDepartmentsFor(user, availableDepartmentIds);
 }
 
 function newJobDraft(user?: DemoUser): JobDraft {
@@ -2932,6 +4257,7 @@ function newJobDraft(user?: DemoUser): JobDraft {
     type: "Job",
     departmentId: user ? jobDepartmentsFor(user)[0] : "technical",
     priority: "Normal",
+    initialStatus: "Pending",
     assignee: "",
     room: "",
     location: "",
@@ -3027,11 +4353,13 @@ export function HotelOpsSystem() {
   const [reminders, setReminders] = useState<ReminderRecord[]>([]);
   const [managementRequests, setManagementRequests] = useState<ManagementRequestRecord[]>([]);
   const [operationDocuments, setOperationDocuments] = useState<OperationDocumentRecord[]>([]);
+  const [departmentTables, setDepartmentTables] = useState<DepartmentTableRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [activeShift, setActiveShift] = useState<ShiftRecord | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<DemoUser[]>([]);
   const [managementRequestRecipients, setManagementRequestRecipients] = useState<DemoUser[]>([]);
   const [departmentAssignees, setDepartmentAssignees] = useState<DemoUser[]>([]);
+  const [departmentWorkPolicy, setDepartmentWorkPolicy] = useState<WorkOrderPolicyRecord | null>(null);
   const [departmentsList, setDepartmentsList] = useState<DepartmentRecord[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
@@ -3066,10 +4394,12 @@ export function HotelOpsSystem() {
   const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
   const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus>(DEFAULT_MAINTENANCE_STATUS);
+  const [routeNotFound, setRouteNotFound] = useState(false);
   const pathRef = useRef("/");
   const didSyncInitialPathRef = useRef(false);
   const appUpdateNotifiedRef = useRef("");
   const lastAuthenticatedPasswordRef = useRef("");
+  const syncEtagRef = useRef("");
 
   const setAlert = useCallback((value: string) => {
     setAlertMessage(value);
@@ -3087,6 +4417,19 @@ export function HotelOpsSystem() {
     setMaintenanceStatus(status);
     return status;
   }, []);
+
+  const rememberSyncState = useCallback((sync: SyncStateResponse | null | undefined) => {
+    if (!sync) return;
+    syncEtagRef.current = sync.etag;
+    setMaintenanceStatus(sync.maintenance);
+  }, []);
+
+  const rememberBootstrapState = useCallback((bootstrap: BootstrapResponse) => {
+    rememberSyncState(bootstrap.sync);
+    if (bootstrap.maintenance) {
+      setMaintenanceStatus(normalizeMaintenanceStatus(bootstrap.maintenance));
+    }
+  }, [rememberSyncState]);
 
   const showCredentialNotice = useCallback((notice: Omit<CredentialNotice, "id">) => {
     setCredentialNotice({ ...notice, id: `${Date.now()}-${Math.random().toString(16).slice(2)}` });
@@ -3112,6 +4455,7 @@ export function HotelOpsSystem() {
 
   function applyPath(nextPath: string) {
     const normalizedPath = normalizeHotelPath(nextPath);
+    const nextRouteNotFound = !isKnownHotelAppPath(normalizedPath);
     const previousPath = pathRef.current;
     const previousTabIndex = mobileTabIndexForPath(previousPath);
     const nextTabIndex = mobileTabIndexForPath(normalizedPath);
@@ -3126,6 +4470,7 @@ export function HotelOpsSystem() {
     didSyncInitialPathRef.current = true;
     pathRef.current = normalizedPath;
     setPageTransitionDirection(nextDirection);
+    setRouteNotFound(nextRouteNotFound);
     setPath(normalizedPath);
   }
 
@@ -3147,20 +4492,27 @@ export function HotelOpsSystem() {
   }, [alert, alertResetKey]);
 
   useEffect(() => {
+    if (session) return;
     let cancelled = false;
+    const socket: Socket = createHotelOpsSocket();
     const load = async () => {
       const status = await fetchMaintenanceStatus();
       if (!cancelled) setMaintenanceStatus(status);
     };
+    const onMaintenanceChanged = (status: unknown) => {
+      if (!cancelled) setMaintenanceStatus(normalizeMaintenanceStatus(status));
+    };
+
     void load();
-    const intervalId = window.setInterval(load, 30_000);
+    socket.on("maintenance.changed", onMaintenanceChanged);
+    socket.on("connect_error", () => void load());
     window.addEventListener("focus", load);
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      socket.disconnect();
       window.removeEventListener("focus", load);
     };
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     const syncPath = () => applyPath(`${window.location.pathname}${window.location.search}`);
@@ -3176,11 +4528,13 @@ export function HotelOpsSystem() {
     const loadSession = async () => {
       const token = storedApiToken();
       if (!token) {
+        syncEtagRef.current = "";
         setUsers([]);
         setJobs([]);
         setReminders([]);
         setManagementRequests([]);
         setOperationDocuments([]);
+        setDepartmentTables([]);
         setNotifications([]);
         setActiveShift(null);
         setReminderRecipients([]);
@@ -3192,13 +4546,23 @@ export function HotelOpsSystem() {
       }
 
       try {
-        const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
-        const platformPanelRequest = isPlatformPanelPath(pathRef.current);
+        const bootstrap = await apiRequestWithRetry<BootstrapResponse>("/bootstrap", { timeoutMs: 18_000 }, 3);
+        const requestedPath = pathRef.current;
+        const routeKnown = isKnownHotelAppPath(requestedPath);
+        const platformPanelRequest = routeKnown && isPlatformPanelPath(requestedPath);
         const platformAdmin = isPlatformAdminUser(bootstrap.user);
         if (platformPanelRequest && !platformAdmin) {
+          syncEtagRef.current = "";
           clearApiToken();
           setLoginUsername("");
           setLoginError("Bu panel yalnızca yetkili platform hesabı ile açılır.");
+          setSession(null);
+          setHydrated(true);
+          return;
+        }
+        if (platformAdmin && routeKnown && !platformPanelRequest) {
+          syncEtagRef.current = "";
+          clearApiToken();
           setSession(null);
           setHydrated(true);
           return;
@@ -3213,15 +4577,14 @@ export function HotelOpsSystem() {
         setReminders(bootstrap.reminders ?? []);
         setManagementRequests([]);
         setOperationDocuments([]);
+        setDepartmentTables(bootstrap.departmentTables ?? []);
         setNotifications(bootstrap.notifications ?? []);
         setActiveShift(bootstrap.activeShift ?? null);
         setDepartmentsList(bootstrap.departments ?? []);
+        rememberBootstrapState(bootstrap);
         setJobDraft(newJobDraft(bootstrap.user));
-        if (platformAdmin && !platformPanelRequest) {
-          applyPath("/hotelpanel");
-          window.history.replaceState(null, "", hotelUrl("/hotelpanel"));
-        }
       } catch {
+        syncEtagRef.current = "";
         clearApiToken();
         setSession(null);
         setUsers([]);
@@ -3229,6 +4592,7 @@ export function HotelOpsSystem() {
         setReminders([]);
         setManagementRequests([]);
         setOperationDocuments([]);
+        setDepartmentTables([]);
         setNotifications([]);
         setActiveShift(null);
         setReminderRecipients([]);
@@ -3246,7 +4610,7 @@ export function HotelOpsSystem() {
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
     };
-  }, [refreshLoginCacheState]);
+  }, [refreshLoginCacheState, rememberBootstrapState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3338,7 +4702,6 @@ export function HotelOpsSystem() {
     [250, 1000, 2500].forEach((delay) => {
       retryIds.push(window.setTimeout(() => void checkAppVersion(), delay));
     });
-    const intervalId = window.setInterval(checkAppVersion, 30 * 60 * 1000);
 
     return () => {
       cancelled = true;
@@ -3347,50 +4710,8 @@ export function HotelOpsSystem() {
       window.removeEventListener("pageshow", onAppEntry);
       document.removeEventListener("visibilitychange", onAppEntry);
       retryIds.forEach((id) => window.clearTimeout(id));
-      window.clearInterval(intervalId);
     };
   }, [refreshLoginCacheState]);
-
-  useEffect(() => {
-    if (!session) return;
-
-    let cancelled = false;
-    let inFlight = false;
-
-    const sendHeartbeat = async () => {
-      if (cancelled || inFlight) return;
-      if (!navigator.onLine || document.visibilityState !== "visible") return;
-
-      inFlight = true;
-      try {
-        await apiRequest<{ ok: boolean }>("/station/heartbeat", { method: "POST" });
-      } catch {
-        // Station telemetry should never interrupt the operator workflow.
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const onAppEntry = () => {
-      if (document.visibilityState === "visible") {
-        void sendHeartbeat();
-      }
-    };
-
-    void sendHeartbeat();
-    const intervalId = window.setInterval(() => void sendHeartbeat(), 20_000);
-    window.addEventListener("focus", onAppEntry);
-    window.addEventListener("pageshow", onAppEntry);
-    document.addEventListener("visibilitychange", onAppEntry);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", onAppEntry);
-      window.removeEventListener("pageshow", onAppEntry);
-      document.removeEventListener("visibilitychange", onAppEntry);
-    };
-  }, [session]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -3399,19 +4720,23 @@ export function HotelOpsSystem() {
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE_JOBS, JSON.stringify(jobs));
+    try {
+      localStorage.setItem(STORAGE_JOBS, JSON.stringify(jobs.map(stripJobStoragePayload)));
+    } catch {
+      // Large inline media is intentionally not allowed to break the app shell.
+    }
   }, [hydrated, jobs]);
 
   useEffect(() => {
     if (!session) return;
-    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type);
+    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, departmentOptionsFromRecords(departmentsList).map((department) => department.id));
     setJobDraft((draft) => ({
       ...draft,
       departmentId: allowedDepartments.includes(draft.departmentId)
         ? draft.departmentId
         : allowedDepartments[0]
     }));
-  }, [jobDraft.type, session]);
+  }, [departmentsList, jobDraft.type, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -3474,6 +4799,26 @@ export function HotelOpsSystem() {
     void loadDepartmentAssignees();
   }, [jobDraft.departmentId, session]);
 
+  useEffect(() => {
+    if (!session || !canUseModule(session, "settings")) {
+      setDepartmentWorkPolicy(null);
+      return;
+    }
+    let cancelled = false;
+    const loadDepartmentWorkPolicy = async () => {
+      try {
+        const response = await apiRequest<WorkOrderPolicyRecord>(`/work-order-policies/${encodeURIComponent(session.departmentId)}`);
+        if (!cancelled) setDepartmentWorkPolicy(response);
+      } catch {
+        if (!cancelled) setDepartmentWorkPolicy(null);
+      }
+    };
+    void loadDepartmentWorkPolicy();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   const currentPath = path.split("?")[0] || "/";
   const queryParams = useMemo(() => new URLSearchParams(path.split("?")[1] ?? ""), [path]);
   const activeDepartmentOptions = useMemo(() => departmentOptionsFromRecords(departmentsList), [departmentsList]);
@@ -3493,16 +4838,10 @@ export function HotelOpsSystem() {
     }
   }, [activeDepartmentLabel, activeShift, hydrated, session]);
 
-  useEffect(() => {
-    if (!hydrated || !isUnknownModulePath(currentPath)) return;
-    window.history.replaceState(null, "", hotelUrl("/dashboard"));
-    applyPath("/dashboard");
-  }, [currentPath, hydrated]);
-
-  async function refreshAppData() {
+  const refreshAppData = useCallback(async () => {
     const token = storedApiToken();
     if (!token) return;
-    const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
+    const bootstrap = await apiRequestWithRetry<BootstrapResponse>("/bootstrap", { timeoutMs: 18_000 }, 3);
     setSession(bootstrap.user);
     setUsers(bootstrap.users);
     setJobs(bootstrap.jobs);
@@ -3510,6 +4849,8 @@ export function HotelOpsSystem() {
     setNotifications(bootstrap.notifications ?? []);
     setActiveShift(bootstrap.activeShift ?? null);
     setDepartmentsList(bootstrap.departments ?? []);
+    setDepartmentTables(bootstrap.departmentTables ?? []);
+    rememberBootstrapState(bootstrap);
 
     if (canUseModule(bootstrap.user, "managementRequests")) {
       const [recipientsResponse, requestsResponse] = await Promise.all([
@@ -3530,15 +4871,100 @@ export function HotelOpsSystem() {
       setOperationDocuments([]);
     }
 
-  }
+  }, [rememberBootstrapState]);
 
-  async function refreshAppDataQuietly() {
+  const refreshAppDataQuietly = useCallback(async () => {
     try {
       await refreshAppData();
     } catch {
       // Mutation succeeded; keep the success message and let the next navigation/bootstrap refresh recover.
     }
-  }
+  }, [refreshAppData]);
+
+  useEffect(() => {
+    if (!session) {
+      syncEtagRef.current = "";
+      return;
+    }
+
+    const token = storedApiToken();
+    if (!token) return;
+
+    let cancelled = false;
+    let connectedOnce = false;
+    let inFlight = false;
+    let pendingRefresh = false;
+    let timerId = 0;
+    const socket: Socket = createHotelOpsSocket(token);
+
+    const runRefresh = async () => {
+      if (cancelled) return;
+      if (!navigator.onLine || document.visibilityState !== "visible") {
+        pendingRefresh = true;
+        return;
+      }
+      if (inFlight) {
+        pendingRefresh = true;
+        return;
+      }
+
+      inFlight = true;
+      pendingRefresh = false;
+      try {
+        await refreshAppDataQuietly();
+      } finally {
+        inFlight = false;
+        if (!cancelled && pendingRefresh) {
+          window.clearTimeout(timerId);
+          timerId = window.setTimeout(runRefresh, EVENT_REFRESH_DEBOUNCE_MS);
+        }
+      }
+    };
+
+    const scheduleRefresh = (delayMs = EVENT_REFRESH_DEBOUNCE_MS) => {
+      if (cancelled) return;
+      window.clearTimeout(timerId);
+      timerId = window.setTimeout(runRefresh, delayMs);
+    };
+
+    const onMaintenanceChanged = (status: unknown) => {
+      setMaintenanceStatus(normalizeMaintenanceStatus(status));
+    };
+
+    const onAppEntry = () => {
+      if (document.visibilityState !== "visible") return;
+      if (socket.disconnected) {
+        socket.connect();
+        return;
+      }
+      if (pendingRefresh) scheduleRefresh(0);
+    };
+
+    socket.on("connect", () => {
+      if (connectedOnce) scheduleRefresh(0);
+      connectedOnce = true;
+    });
+    socket.on("app-data.changed", () => scheduleRefresh());
+    socket.on("work-order.created", () => scheduleRefresh());
+    socket.on("work-order.updated", () => scheduleRefresh());
+    socket.on("work-order.comment.created", () => scheduleRefresh());
+    socket.on("calendar-event.created", () => scheduleRefresh());
+    socket.on("operation-document.created", () => scheduleRefresh());
+    socket.on("maintenance.changed", onMaintenanceChanged);
+
+    window.addEventListener("focus", onAppEntry);
+    window.addEventListener("pageshow", onAppEntry);
+    document.addEventListener("visibilitychange", onAppEntry);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+      window.removeEventListener("focus", onAppEntry);
+      window.removeEventListener("pageshow", onAppEntry);
+      document.removeEventListener("visibilitychange", onAppEntry);
+      socket.disconnect();
+    };
+  }, [refreshAppDataQuietly, session]);
 
   async function startShiftApi() {
     if (!session) return;
@@ -3652,6 +5078,7 @@ export function HotelOpsSystem() {
     }
     setLogoutRememberPrompt(null);
     localStorage.removeItem(STORAGE_SESSION);
+    syncEtagRef.current = "";
     setSession(null);
     setLoginUsername("");
     setLoginPassword("");
@@ -3666,12 +5093,12 @@ export function HotelOpsSystem() {
       setAlert("Başlık alanı zorunludur.");
       return;
     }
-    if (isPlannedJobType(jobDraft.type) && !jobDraft.due) {
+    if (jobDraft.initialStatus !== "Completed" && isPlannedJobType(jobDraft.type) && !jobDraft.due) {
       setAlert("Planlı işin takvimde görünmesi için Plan Tarihi / Saat zorunludur.");
       return;
     }
 
-    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type);
+    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
@@ -3680,18 +5107,18 @@ export function HotelOpsSystem() {
       ...jobDraft,
       departmentId,
       id: `${idPrefix}-${Math.floor(10000 + Math.random() * 89999)}`,
-      status: "Pending",
+      status: jobDraft.initialStatus === "Completed" ? "Completed" : "Pending",
       createdBy: session.username,
       createdByUserId: session.id,
       createdByAccountId: session.accountId
     };
 
     setJobs((current) => [record, ...current]);
-    emitWorkOrderNotification(record);
-    setAlert("İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
+    if (record.status !== "Completed") emitWorkOrderNotification(record);
+    setAlert(record.status === "Completed" ? "Biten iş kaydı oluşturuldu." : "İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
     setJobDraft(newJobDraft(session));
     setChecklistText("");
-    navigate("/jobs");
+    navigate(record.status === "Completed" ? "/jobs?view=completed" : "/jobs");
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -3787,9 +5214,10 @@ export function HotelOpsSystem() {
         body: JSON.stringify({ username: usernameForLogin, password: loginPassword })
       });
       storeApiToken(login.token);
-      const bootstrap = await apiRequest<BootstrapResponse>("/bootstrap");
+      const bootstrap = await apiRequestWithRetry<BootstrapResponse>("/bootstrap", { timeoutMs: 18_000 }, 3);
       const platformAdmin = isPlatformAdminUser(bootstrap.user);
       if (platformLogin && !platformAdmin) {
+        syncEtagRef.current = "";
         clearApiToken();
         setSession(null);
         setLoginPassword("");
@@ -3802,6 +5230,7 @@ export function HotelOpsSystem() {
       setNotifications(bootstrap.notifications ?? []);
       setActiveShift(bootstrap.activeShift ?? null);
       setDepartmentsList(bootstrap.departments ?? []);
+      rememberBootstrapState(bootstrap);
       setSession(bootstrap.user);
       setJobDraft(newJobDraft(bootstrap.user));
       if (!platformLogin) {
@@ -3811,7 +5240,7 @@ export function HotelOpsSystem() {
           refreshLoginCacheState();
         }
       }
-      navigate(platformAdmin ? "/hotelpanel" : "/dashboard");
+      navigate(platformLogin && platformAdmin ? "/hotelpanel" : "/dashboard");
     } catch (error) {
       clearApiToken();
       setLoginError(loginErrorMessage(error));
@@ -3850,16 +5279,19 @@ export function HotelOpsSystem() {
       // Browser token cleanup still happens below.
     }
     stopNativeShiftNotification();
+    syncEtagRef.current = "";
     clearApiToken();
     setSession(null);
     setReminders([]);
     setManagementRequests([]);
     setOperationDocuments([]);
+    setDepartmentTables([]);
     setNotifications([]);
     setActiveShift(null);
     setReminderRecipients([]);
     setManagementRequestRecipients([]);
     setDepartmentAssignees([]);
+    setDepartmentWorkPolicy(null);
     setDepartmentsList([]);
     refreshLoginCacheState();
     setLogoutRememberPrompt(null);
@@ -3885,36 +5317,36 @@ export function HotelOpsSystem() {
       setAlert("Başlık alanı zorunludur.");
       return;
     }
-    if (isPlannedJobType(jobDraft.type) && !jobDraft.due) {
+    if (jobDraft.initialStatus !== "Completed" && isPlannedJobType(jobDraft.type) && !jobDraft.due) {
       setAlert("Planlı işin takvimde görünmesi için Plan Tarihi / Saat zorunludur.");
       return;
     }
 
     if (hasPendingPhotoProcessing(jobDraft.photos ?? [])) {
-      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      setAlert("Medya hazırlanıyor. Lütfen birkaç saniye bekleyin.");
       return;
     }
 
-    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type);
+    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
 
     try {
-      const endpoint = isPlannedJobType(jobDraft.type) ? "/calendar/work-orders" : "/work-orders";
+      const endpoint = jobDraft.initialStatus === "Completed" ? "/work-orders" : isPlannedJobType(jobDraft.type) ? "/calendar/work-orders" : "/work-orders";
       const created = await apiRequest<JobRecord>(endpoint, {
         method: "POST",
-        body: JSON.stringify({ ...jobDraft, photos: photosUploadPayload(jobDraft.photos ?? []), departmentId, assigneeId: jobDraft.assignee })
+        body: JSON.stringify({ ...jobDraft, status: jobDraft.initialStatus ?? "Pending", photos: photosUploadPayload(jobDraft.photos ?? []), departmentId, assigneeId: jobDraft.assignee })
       });
       setJobs((current) => [created, ...current]);
-      emitWorkOrderNotification(created);
-      setAlert("İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
+      if (created.status !== "Completed") emitWorkOrderNotification(created);
+      setAlert(created.status === "Completed" ? "Biten iş kaydı oluşturuldu." : "İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
       setJobDraft(newJobDraft(session));
       setChecklistText("");
       await refreshAppDataQuietly();
-      navigate("/jobs");
-    } catch {
-      setAlert("İş kaydı oluşturulamadı. Yetki veya API bağlantısını kontrol edin.");
+      navigate(created.status === "Completed" ? "/jobs?view=completed" : "/jobs");
+    } catch (error) {
+      setAlert(workOrderCreateErrorMessage(error));
     }
   }
 
@@ -3931,7 +5363,7 @@ export function HotelOpsSystem() {
     }
 
     if (hasPendingPhotoProcessing(reminderDraft.photos)) {
-      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      setAlert("Medya hazırlanıyor. Lütfen birkaç saniye bekleyin.");
       return;
     }
 
@@ -4210,6 +5642,10 @@ export function HotelOpsSystem() {
 
   const platformPanelRequest = isPlatformPanelPath(currentPath);
 
+  if (routeNotFound) {
+    return <HotelRouteNotFound path={currentPath} />;
+  }
+
   if (maintenanceStatus.enabled && !platformPanelRequest) {
     return <MaintenanceModeScreen status={maintenanceStatus} />;
   }
@@ -4295,6 +5731,11 @@ export function HotelOpsSystem() {
 
   return (
     <main className="classic-app">
+      <FloatingAlert
+        alert={alert}
+        alertSecondsRemaining={alertSecondsRemaining}
+        dismissAlert={dismissAlert}
+      />
       <div className="layout-wrapper">
         <button className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`} onClick={() => setSidebarOpen(false)} aria-label="Menüyü kapat" />
         <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
@@ -4316,6 +5757,7 @@ export function HotelOpsSystem() {
             managementRequests={managementRequests}
             notifications={notifications}
             operationDocuments={operationDocuments}
+            departmentTables={departmentTables}
             visibleJobs={visibleJobs}
           />
           <div className="sidebar-footer">
@@ -4358,20 +5800,6 @@ export function HotelOpsSystem() {
                 Bağlantı yok. Form taslakları cihazda kalır; internet gelince kaydı tekrar gönderin.
               </div>
             )}
-            {alert && (
-              <div
-                className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}
-                role={alert.includes("zorunlu") || alert.includes("zaten") ? "alert" : "status"}
-              >
-                <span className="alert-message">{alert}</span>
-                <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
-                  {alertSecondsRemaining} sn
-                </span>
-                <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
-                  <X size={14} />
-                </button>
-              </div>
-            )}
             <CredentialNoticeCard notice={credentialNotice} onClose={() => setCredentialNotice(null)} />
             <div key={path} className={`page-transition page-transition-${pageTransitionDirection}`}>
               {renderPage({
@@ -4384,6 +5812,7 @@ export function HotelOpsSystem() {
                 departmentOptions: activeDepartmentOptions,
                 departmentAssignees,
                 departmentsList,
+                departmentTables,
                 departmentLabelFor: activeDepartmentLabel,
                 jobDraft,
                 jobs,
@@ -4399,10 +5828,12 @@ export function HotelOpsSystem() {
                 reminderRecipients,
                 reminders,
                 session,
+                departmentWorkPolicy,
                 setAlert,
                 showCredentialNotice,
                 setChecklistText,
                 setDepartmentsList,
+                setDepartmentTables,
                 setFilters,
                 setJobDraft,
                 setManagementRequestDraft,
@@ -4410,6 +5841,7 @@ export function HotelOpsSystem() {
                 setJobs,
                 setNotifications,
                 setReminderDraft,
+                setDepartmentWorkPolicy,
                 setUserDraft,
                 users,
                 userDraft,
@@ -4553,17 +5985,65 @@ function LoginScreen({
   );
 }
 
+function HotelRouteNotFound({ path }: { path: string }) {
+  const displayPath = `${HOTEL_BASE_PATH}${path === "/" ? "" : path.split("?")[0]}`;
+
+  return (
+    <main className="classic-app login-page">
+      <div className="login-box">
+        <div className="login-logo">
+          <span className="logo-mark logo-mark-image"><BrandLogo /></span>
+          <h1>Sayfa bulunamadi</h1>
+          <p>{displayPath} adresi HotelOps icinde tanimli degil.</p>
+        </div>
+        <div className="login-actions">
+          <a className="btn btn-primary btn-lg btn-full" href={hotelUrl("/")}>HotelOps girisine git</a>
+          <button type="button" className="btn btn-ghost btn-full" onClick={() => window.history.back()}>
+            Geri don
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 function MaintenanceModeScreen({ status }: { status: MaintenanceStatus }) {
+  const message = (status.message || "").trim();
+  const normalizedMessage = message.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+  const usefulMessage = message && !normalizedMessage.includes("yayında") && !normalizedMessage.includes("yayinda")
+    ? message
+    : "Nodera sistemi kısa süre içinde tekrar açılacak.";
+
   return (
     <main className="classic-app maintenance-mode-page">
       <section className="maintenance-mode-panel" role="status" aria-live="polite">
-        <span className="logo-mark logo-mark-image maintenance-mode-logo"><BrandLogo /></span>
-        <div className="maintenance-mode-icon">
-          <Wrench size={28} />
+        <div className="maintenance-mode-topbar">
+          <div className="maintenance-mode-brand">
+            <span className="logo-mark logo-mark-image maintenance-mode-logo"><BrandLogo /></span>
+            <div>
+              <strong>Nodera Sistem</strong>
+              <small>Canlı yayın kontrolü</small>
+            </div>
+          </div>
+          <div className="maintenance-mode-badge">
+            <Wrench size={16} />
+            <span>Bakım modu</span>
+          </div>
         </div>
-        <p className="maintenance-mode-eyebrow">Bakım Modu</p>
-        <h1>{status.message || DEFAULT_MAINTENANCE_MESSAGE}</h1>
-        <p className="maintenance-mode-copy">Nodera sistemi kısa süre içinde tekrar açılacak.</p>
+        <div className="maintenance-mode-body">
+          <div className="maintenance-mode-icon">
+            <Wrench size={26} />
+          </div>
+          <div>
+            <p className="maintenance-mode-eyebrow">Yayın Bakımı</p>
+            <h1>Kısa süreli bakımdayız</h1>
+            <p className="maintenance-mode-copy">{usefulMessage}</p>
+          </div>
+        </div>
+        <div className="maintenance-mode-status">
+          <Clock size={16} />
+          <span>Yayın güvenli şekilde güncelleniyor.</span>
+        </div>
       </section>
     </main>
   );
@@ -4775,6 +6255,11 @@ function PlatformAdminShell({
 }) {
   return (
     <main className="classic-app platform-admin-shell">
+      <FloatingAlert
+        alert={alert}
+        alertSecondsRemaining={alertSecondsRemaining}
+        dismissAlert={dismissAlert}
+      />
       <header className="platform-admin-topbar">
         <div className="platform-admin-title">
           <span className="logo-mark logo-mark-image"><BrandLogo /></span>
@@ -4803,26 +6288,42 @@ function PlatformAdminShell({
 
         <MaintenanceModeInlineNotice status={maintenanceStatus} />
 
-        {alert && (
-          <div
-            className={`alert ${alert.includes("zorunlu") || alert.includes("zaten") ? "alert-error" : "alert-success"}`}
-            role={alert.includes("zorunlu") || alert.includes("zaten") ? "alert" : "status"}
-          >
-            <span className="alert-message">{alert}</span>
-            <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
-              {alertSecondsRemaining} sn
-            </span>
-            <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
         <CredentialNoticeCard notice={credentialNotice} onClose={dismissCredentialNotice} />
 
         {children}
       </section>
     </main>
+  );
+}
+
+function FloatingAlert({
+  alert,
+  alertSecondsRemaining,
+  dismissAlert
+}: {
+  alert: string;
+  alertSecondsRemaining: number;
+  dismissAlert: () => void;
+}) {
+  if (!alert) return null;
+
+  const isError = alert.includes("zorunlu") || alert.includes("zaten");
+
+  return (
+    <div className="floating-alert-layer" aria-live={isError ? "assertive" : "polite"}>
+      <div
+        className={`alert floating-alert ${isError ? "alert-error" : "alert-success"}`}
+        role={isError ? "alert" : "status"}
+      >
+        <span className="alert-message">{alert}</span>
+        <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
+          {alertSecondsRemaining} sn
+        </span>
+        <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
+          <X size={14} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -4858,6 +6359,7 @@ function CredentialNoticeCard({ notice, onClose }: { notice: CredentialNotice | 
 function SidebarNav({
   currentPath,
   departmentLabelFor,
+  departmentTables,
   managementRequests,
   navigate,
   notifications,
@@ -4867,6 +6369,7 @@ function SidebarNav({
 }: {
   currentPath: string;
   departmentLabelFor: (departmentId: string) => string;
+  departmentTables: DepartmentTableRecord[];
   managementRequests: ManagementRequestRecord[];
   navigate: (path: string) => void;
   notifications: NotificationRecord[];
@@ -4885,6 +6388,7 @@ function SidebarNav({
   const requestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status)).length;
   const unreadRequestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status) && !request.readAt).length;
   const unreadDocumentCount = operationDocuments.filter((document) => !document.readAt).length;
+  const visibleDepartmentTables = departmentTables.filter((table) => table.enabled && table.showInMenu);
   const today = new Date().toDateString();
   const todayPlannedJobCount = activeJobs.filter((job) => {
     if (!isPlannedJobType(job.type) || !job.due) return false;
@@ -4902,14 +6406,14 @@ function SidebarNav({
     keywords: `${label} ${keywords}`.toLocaleLowerCase("tr-TR")
   });
   const prioritizeRoomStatus = isHousekeepingStaff(session) || isHousekeepingChief(session) || isHousekeepingManager(session);
-  const urgentJobsLabel = urgentJobsLabelFor(session);
+  const urgentJobsNavLabel = urgentJobsLabel();
   const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Oda Durumu", Home, undefined, "oda housekeeping önbüro");
   const priorityItems = [
     entry("dashboard", "dashboard", "/dashboard", "Ana Sayfa", LayoutDashboard, undefined, "dashboard ana ekran ozet"),
     ...(prioritizeRoomStatus ? [roomStatusEntry] : []),
     ...(session.roleId === "staff" ? [entry("assigned", "jobs", "/jobs?view=assigned", "Bana Atanan", Wrench, assignedJobs.length, "benim işlerim görev")] : []),
     ...(can("managementRequests") ? [entry("requests-priority", "managementRequests", "/modules/requests", unreadRequestCount ? "Okunmamış Talepler" : "Talepler", MessageSquareText, unreadRequestCount || requestCount, "onay yönetici talep")] : []),
-    ...(session.roleId === "hrManager" ? [] : [entry("urgent", "jobs", "/jobs?view=urgent", urgentJobsLabel, AlertTriangle, urgentJobs.length, urgentJobsKeywordsFor(session))]),
+    ...(session.roleId === "hrManager" ? [] : [entry("urgent", "jobs", "/jobs?view=urgent", urgentJobsNavLabel, AlertTriangle, urgentJobs.length, urgentJobsKeywords())]),
     entry("delayed", "jobs", "/jobs?view=delayed", "Geciken İşler", Clock, delayedJobs.length, "sla geç kalan"),
     entry("notifications", "reminders", "/reminders", "Bildirimler", Bell, unreadCount, "hatırlatma uyarı")
   ];
@@ -4934,6 +6438,10 @@ function SidebarNav({
       items: [
         entry("requests", "managementRequests", "/modules/requests", "Talepler", MessageSquareText, requestCount, "müdür şef genel müdür"),
         entry("operation-documents", "operationDocuments", "/modules/operation-documents", "Operasyon Belgeleri", FileText, unreadDocumentCount, "satış fnb pdf excel office operasyon okundu"),
+        entry("department-tables-home", "departmentTables", "/department-tables", "Departman Tabloları", ClipboardCheck, visibleDepartmentTables.length, "excel tablo liste"),
+        ...visibleDepartmentTables.map((table) => (
+          entry(`department-table-${table.id}`, "departmentTables", `/department-tables?table=${encodeURIComponent(table.id)}`, table.title, ClipboardList, table.rows.length, `${table.departmentName} excel tablo liste`)
+        )),
         entry("guest", "guestRequests", "/modules/guest-requests", "Misafir Talebi", MessageSquareText, undefined, "şikayet istek"),
         ...(!prioritizeRoomStatus ? [roomStatusEntry] : []),
         entry("lost", "lostFound", "/modules/lost-found", "Kayıp Eşya", Search, undefined, "eşya"),
@@ -5104,6 +6612,7 @@ function getPageTitle(path: string) {
   if (path === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (path === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (path === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
+  if (path === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
   if (path === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (path === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
   if (path === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
@@ -5133,6 +6642,7 @@ type RenderContext = {
   departmentOptions: Array<{ id: string; label: string }>;
   departmentAssignees: DemoUser[];
   departmentsList: DepartmentRecord[];
+  departmentTables: DepartmentTableRecord[];
   departmentLabelFor: (departmentId: string) => string;
   jobDraft: JobDraft;
   jobs: JobRecord[];
@@ -5148,17 +6658,20 @@ type RenderContext = {
   reminderRecipients: DemoUser[];
   reminders: ReminderRecord[];
   session: DemoUser;
+  departmentWorkPolicy: WorkOrderPolicyRecord | null;
   setAlert: (value: string) => void;
   showCredentialNotice: (notice: Omit<CredentialNotice, "id">) => void;
   setChecklistText: (value: string) => void;
   setFilters: (value: RenderContext["filters"] | ((value: RenderContext["filters"]) => RenderContext["filters"])) => void;
   setDepartmentsList: (value: DepartmentRecord[] | ((value: DepartmentRecord[]) => DepartmentRecord[])) => void;
+  setDepartmentTables: (value: DepartmentTableRecord[] | ((value: DepartmentTableRecord[]) => DepartmentTableRecord[])) => void;
   setJobDraft: (value: JobDraft | ((value: JobDraft) => JobDraft)) => void;
   setManagementRequestDraft: (value: ManagementRequestDraft | ((value: ManagementRequestDraft) => ManagementRequestDraft)) => void;
   setOperationDocumentDraft: (value: OperationDocumentDraft | ((value: OperationDocumentDraft) => OperationDocumentDraft)) => void;
   setJobs: (value: JobRecord[] | ((value: JobRecord[]) => JobRecord[])) => void;
   setNotifications: (value: NotificationRecord[] | ((value: NotificationRecord[]) => NotificationRecord[])) => void;
   setReminderDraft: (value: ReminderDraft | ((value: ReminderDraft) => ReminderDraft)) => void;
+  setDepartmentWorkPolicy: (value: WorkOrderPolicyRecord | null | ((value: WorkOrderPolicyRecord | null) => WorkOrderPolicyRecord | null)) => void;
   setUserDraft: (value: UserDraft | ((value: UserDraft) => UserDraft)) => void;
   users: DemoUser[];
   userDraft: UserDraft;
@@ -5193,6 +6706,7 @@ function moduleForPath(path: string): ModuleId {
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders") return "reminders";
   if (path === "/shift-panels") return "shiftPanels";
+  if (path === "/department-tables") return "departmentTables";
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
   if (path === "/settings") return "settings";
@@ -5218,6 +6732,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
   if (currentPath.startsWith("/calendar")) return <CalendarPage {...context} />;
   if (currentPath === "/shift-panels") return <ShiftPanelsPage {...context} />;
+  if (currentPath === "/department-tables") return <DepartmentTablesPage {...context} />;
   if (currentPath === "/users") return <UsersPage {...context} />;
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
@@ -5249,7 +6764,7 @@ function ShiftControlCard({ activeShift, onEndShift, onStartShift }: { activeShi
 
 function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, departmentsList, endShift, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, startShift, users, visibleJobs }: RenderContext) {
   const isHotelWideRole = session.roleId === "generalManager" || session.roleId === "hrManager";
-  const isDepartmentManager = ["technicalManager", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "salesManager", "fnbManager"].includes(session.roleId);
+  const isDepartmentManager = ["technicalManager", "technicalAssistant", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "salesManager", "fnbManager"].includes(session.roleId);
   const isChief = ["technicalChief", "floorChief"].includes(session.roleId);
   const isHousekeepingUser = isHousekeepingDepartmentUser(session);
   const focusJobs = isHotelWideRole ? visibleJobs : visibleJobs.filter((job) => job.departmentId === session.departmentId || job.assignee === session.fullName);
@@ -5271,7 +6786,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
     : [{ id: "dashboardFaultRecords" as DashboardPartId, label: unreadRequests ? "Okunmamış Talepler" : "Benden İstenen Talepler", value: unreadRequests || requestedFromMe.length, type: "high", icon: MessageSquareText, path: "/modules/requests" }];
   const operationKpis = [
     ...personalTopKpi,
-    { id: "dashboardUrgentJobs" as DashboardPartId, label: urgentJobsLabelFor(session), value: urgentJobs.length, type: "urgent", icon: AlertTriangle, path: "/jobs?view=urgent" },
+    { id: "dashboardUrgentJobs" as DashboardPartId, label: urgentJobsLabel(), value: urgentJobs.length, type: "urgent", icon: AlertTriangle, path: "/jobs?view=urgent" },
     { id: "dashboardDelayedJobs" as DashboardPartId, label: "Geciken", value: focusJobs.filter((job) => job.status === "Delayed" || job.slaRisk).length, type: "delayed", icon: Clock, path: "/jobs" },
     ...(!isDepartmentManager && session.roleId !== "generalManager" && session.roleId !== "staff"
       ? [{ id: "dashboardInProgressJobs" as DashboardPartId, label: "Bana Atanan", value: assignedJobs.length, type: "inprogress", icon: Wrench, path: "/jobs" }]
@@ -5378,7 +6893,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
           <div className="card-body ui-body-actions">
             {canCreateJob(session) ? (
               <>
-                {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate(isTechnicalDepartmentUser(session) ? "/jobs/new?type=Job&departmentId=housekeeping" : "/jobs/new")}>{newJobActionLabelForUser(session)}</button>}
+                {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate("/jobs/new")}>{newJobActionLabel()}</button>}
                 {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Fault&departmentId=technical" : "/jobs/new?type=Fault")}>{isHousekeepingUser ? "Tekniğe Arıza Aç" : "Acil Arıza Bildir"}</button>}
                 {session.departmentId === "technical" && canUseModule(session, "periodicMaintenance") && <button className="btn btn-warning btn-full" onClick={() => navigate("/jobs/new?type=PlannedMaintenance")}>Planlı Bakım Ekle</button>}
                 {session.departmentId === "housekeeping" && canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?type=PlannedHousekeeping")}>HK Planlı İş Ekle</button>}
@@ -6253,6 +7768,8 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const quickView = queryParams.get("view");
+  const departmentPoolCount = visibleJobs.filter((job) => job.departmentId === session.departmentId && isDepartmentPoolJob(job)).length;
+  const completedCount = visibleJobs.filter((job) => job.status === "Completed").length;
   const blankFilters = {
     search: "",
     status: "",
@@ -6266,24 +7783,31 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   };
   const applyQuickFilter = (nextFilters: Partial<typeof blankFilters>) => setFilters({ ...blankFilters, ...nextFilters });
   const listSource = quickView ? visibleJobs : filteredJobs;
-  const activeListJobs = listSource
-    .filter((job) => job.status !== "Completed")
+  const showCompletedJobs = quickView === "completed" || (!quickView && filters.status === "Completed");
+  const listJobs = listSource
+    .filter((job) => showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
     .filter((job) => {
       if (quickView === "assigned") return job.assignee === session.fullName;
+      if (quickView === "pool") return job.departmentId === session.departmentId && isDepartmentPoolJob(job);
       if (quickView === "urgent") return isUrgentJobForUser(session, job);
       if (quickView === "delayed") return job.status === "Delayed" || Boolean(job.slaRisk);
       if (quickView === "periodic") return job.type === "PlannedMaintenance";
+      if (quickView === "completed") return true;
       return true;
     });
   const quickViewLabel = quickView === "assigned"
     ? "Bana Atanan"
+    : quickView === "pool"
+      ? departmentPoolLabel(session.departmentId, departmentLabelFor)
     : quickView === "urgent"
-      ? urgentJobsLabelFor(session)
-      : quickView === "delayed"
-        ? "Geciken İşler"
+      ? urgentJobsLabel()
+    : quickView === "delayed"
+        ? "Ertelenen İşler"
         : quickView === "periodic"
           ? "Periyodik Bakım"
-          : "";
+          : quickView === "completed"
+            ? "Bitirilen İşler"
+            : "";
 
   return (
     <>
@@ -6311,7 +7835,8 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
             <option value="">Tüm Durumlar</option>
             <option value="Pending">Bekliyor</option>
             <option value="InProgress">Devam Ediyor</option>
-            <option value="Delayed">Gecikti</option>
+            <option value="Delayed">Ertelendi</option>
+            <option value="Completed">Tamamlandı</option>
             <option value="Cancelled">İptal</option>
           </select>
           <select className="form-control" value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}>
@@ -6343,22 +7868,30 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           </select>
           <button type="button" className="btn btn-primary filter-apply" onClick={() => setFiltersOpen(false)}>Uygula</button>
         </div>
-        {canCreateJob(session) && <button className="btn btn-primary" onClick={() => navigate(isTechnicalDepartmentUser(session) ? "/jobs/new?type=Job&departmentId=housekeeping" : "/jobs/new")}><Plus size={15} /> {isTechnicalDepartmentUser(session) ? "HK İş" : "Yeni İş"}</button>}
+        {canCreateJob(session) && <button className="btn btn-primary" onClick={() => navigate("/jobs/new")}><Plus size={15} /> Yeni İş</button>}
       </div>
       {filtersOpen && <button type="button" className="filter-backdrop" onClick={() => setFiltersOpen(false)} aria-label="Filtreleri kapat" />}
 
+      <div className="jobs-view-tabs" role="tablist" aria-label="İş listesi görünümü">
+        <button type="button" className={`jobs-view-tab ${quickView !== "completed" && quickView !== "pool" ? "active" : ""}`} onClick={() => navigate("/jobs")}>Aktif İşler</button>
+        <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool")}>İş-Arıza Havuzu ({departmentPoolCount})</button>
+        <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
+      </div>
+
       <div className="list-toolbar">
-        <span className="ui-muted">{quickViewLabel ? `${quickViewLabel}: ` : ""}{activeListJobs.length} aktif kayıt listeleniyor</span>
+        <span className="ui-muted">{quickViewLabel ? `${quickViewLabel}: ` : ""}{listJobs.length} kayıt listeleniyor</span>
         <div className="quick-filter-group">
-          {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-delayed" onClick={() => applyQuickFilter({ status: "Delayed" })}>Geciken</button>}
+          {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-delayed" onClick={() => applyQuickFilter({ status: "Delayed" })}>Ertelenen</button>}
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
-          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => applyQuickFilter({})}>Tüm İşler</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool")}>İş-Arıza Havuzu ({departmentPoolCount})</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>
+          <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>
         </div>
       </div>
 
-      {activeListJobs.length ? <JobCardList jobs={activeListJobs} navigate={navigate} departmentLabelFor={departmentLabelFor} /> : <EmptyState title="Aktif iş bulunamadı" description="Tamamlanan işler iş listesinde gösterilmez. Arama kriterlerinizi değiştirin veya yeni iş ekleyin." />}
+      {listJobs.length ? <JobCardList jobs={listJobs} navigate={navigate} departmentLabelFor={departmentLabelFor} /> : <EmptyState title={showCompletedJobs ? "Bitirilen iş bulunamadı" : "Aktif iş bulunamadı"} description={showCompletedJobs ? "Uygulama dışından tamamlanan işleri Biten İş Ekle ile kaydedebilirsiniz." : "Arama kriterlerinizi değiştirin veya yeni iş ekleyin."} />}
     </>
   );
 }
@@ -6378,6 +7911,7 @@ function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel }: {
               <span className={`badge badge-${typeClass(job.type)}`}>{typeLabel(job.type)}</span>
               <span className={`badge badge-${priorityClass(job.priority)}`}>{priorityLabel(job.priority)}</span>
               <span className={`badge badge-${statusClass(job.status)}`}>{statusLabel(job.status)}</span>
+              {isDepartmentPoolJob(job) && <span className="badge badge-inprogress">{departmentPoolLabel(job.departmentId, departmentLabelFor)}</span>}
               {job.guestImpact && <span className="badge badge-urgent">Misafir Etkisi</span>}
               {job.slaRisk && <span className="badge badge-delayed">SLA Riski</span>}
             </span>
@@ -6398,6 +7932,7 @@ function PhotoPicker({
   setPhotos: (updater: (photos: PhotoAttachment[]) => PhotoAttachment[]) => void;
 }) {
   const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
+  const [processingMessage, setProcessingMessage] = useState("");
   const sourceFilesRef = useRef<Map<string, File>>(new Map());
 
   useEffect(() => {
@@ -6412,29 +7947,57 @@ function PhotoPicker({
   const photoKey = (photo: PhotoAttachment, index: number) => photo.clientId ?? photo.id ?? `${photo.name}-${index}`;
 
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const nextPhotos = (await filesToPhotoSelections(event.target.files)).map(({ photo, sourceFile }) => {
-      const nextPhoto = { ...photo, phase };
-      if (nextPhoto.clientId) sourceFilesRef.current.set(nextPhoto.clientId, sourceFile);
-      return nextPhoto;
-    });
-    if (nextPhotos.length) {
-      setPhotos((current) => [...current, ...nextPhotos].slice(0, 6));
+    setProcessingMessage("");
+    const hasVideo = Array.from(event.target.files ?? []).some(isVideoFile);
+    if (hasVideo) setProcessingMessage(VIDEO_PROCESSING_MESSAGE);
+    try {
+      const nextPhotos = (await filesToPhotoSelections(event.target.files)).map(({ photo, sourceFile }) => {
+        const nextPhoto = { ...photo, phase };
+        if (nextPhoto.clientId && !isVideoAttachment(nextPhoto)) {
+          sourceFilesRef.current.set(nextPhoto.clientId, sourceFile);
+        }
+        return nextPhoto;
+      });
+      if (nextPhotos.length) {
+        setPhotos((current) => [...current, ...nextPhotos].slice(0, 6));
+      }
+    } catch (error) {
+      setProcessingMessage(mediaUploadErrorMessage(error));
+      return;
+    } finally {
+      event.target.value = "";
+      if (hasVideo) {
+        window.setTimeout(() => setProcessingMessage((current) => current === VIDEO_PROCESSING_MESSAGE ? "" : current), 1500);
+      }
     }
-    event.target.value = "";
   };
 
   const handleReplaceFile = async (index: number, event: ChangeEvent<HTMLInputElement>) => {
-    const [selection] = await filesToPhotoSelections(event.target.files);
-    if (selection) {
-      const nextPhoto = { ...selection.photo, phase };
-      if (nextPhoto.clientId) sourceFilesRef.current.set(nextPhoto.clientId, selection.sourceFile);
-      setPhotos((current) => {
-        const previousPhoto = current[index];
-        if (previousPhoto?.clientId) sourceFilesRef.current.delete(previousPhoto.clientId);
-        return current.map((photo, itemIndex) => (itemIndex === index ? nextPhoto : photo));
-      });
+    setProcessingMessage("");
+    const hasVideo = Array.from(event.target.files ?? []).some(isVideoFile);
+    if (hasVideo) setProcessingMessage(VIDEO_PROCESSING_MESSAGE);
+    try {
+      const [selection] = await filesToPhotoSelections(event.target.files);
+      if (selection) {
+        const nextPhoto = { ...selection.photo, phase };
+        if (nextPhoto.clientId && !isVideoAttachment(nextPhoto)) {
+          sourceFilesRef.current.set(nextPhoto.clientId, selection.sourceFile);
+        }
+        setPhotos((current) => {
+          const previousPhoto = current[index];
+          if (previousPhoto?.clientId) sourceFilesRef.current.delete(previousPhoto.clientId);
+          return current.map((photo, itemIndex) => (itemIndex === index ? nextPhoto : photo));
+        });
+      }
+    } catch (error) {
+      setProcessingMessage(mediaUploadErrorMessage(error));
+      return;
+    } finally {
+      event.target.value = "";
+      if (hasVideo) {
+        window.setTimeout(() => setProcessingMessage((current) => current === VIDEO_PROCESSING_MESSAGE ? "" : current), 1500);
+      }
     }
-    event.target.value = "";
   };
 
   const handleHdToggle = async (photo: PhotoAttachment, checked: boolean) => {
@@ -6482,33 +8045,43 @@ function PhotoPicker({
   return (
     <div className="photo-uploader">
       <div className="photo-actions">
-        <label className="btn btn-secondary btn-sm photo-input-trigger">
+        <label className="btn btn-secondary btn-sm photo-input-trigger" data-hotelops-media-picker="camera">
           <Camera size={14} /> Kamera
-          <input className="native-photo-input" type="file" accept="image/*" capture="environment" onChange={handleFiles} />
+          <input className="native-photo-input" type="file" accept="image/*" capture="environment" data-hotelops-media-picker="camera" onChange={handleFiles} />
         </label>
-        <label className="btn btn-ghost btn-sm photo-input-trigger">
+        <label className="btn btn-secondary btn-sm photo-input-trigger" data-hotelops-media-picker="video">
+          <Video size={14} /> Video
+          <input className="native-photo-input" type="file" accept="video/*" capture="environment" data-hotelops-media-picker="video" onChange={handleFiles} />
+        </label>
+        <label className="btn btn-ghost btn-sm photo-input-trigger" data-hotelops-media-picker="gallery">
           <ImageIcon size={14} /> Galeri / Dosya
-          <input className="native-photo-input" type="file" accept="image/*" multiple onChange={handleFiles} />
+          <input className="native-photo-input" type="file" accept="image/*,video/*" multiple data-hotelops-media-picker="gallery" onChange={handleFiles} />
         </label>
       </div>
+      {processingMessage ? <div className="media-processing-status">{processingMessage}</div> : null}
       {photos.length > 0 && (
         <div className="photo-preview-grid">
           {photos.map((photo, index) => (
             <div className="photo-preview-item" key={photoKey(photo, index)}>
               <div className="photo-preview">
-                <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
-              <button type="button" className="photo-open" onClick={() => setPreviewPhoto(photo)} aria-label="Fotoğrafı büyüt">
+                <MediaPreview photo={photo} width={180} height={120} />
+              <button type="button" className="photo-open" onClick={() => setPreviewPhoto(photo)} aria-label={isVideoAttachment(photo) ? "Videoyu buyut" : "Fotoğrafı büyüt"}>
                 <Search size={12} />
               </button>
               <label className="photo-change">
-                <ImageIcon size={12} />
-                <input className="native-photo-input" type="file" accept="image/*" onChange={(event) => handleReplaceFile(index, event)} />
+                {isVideoAttachment(photo) ? <Video size={12} /> : <ImageIcon size={12} />}
+                <input className="native-photo-input" type="file" accept="image/*,video/*" onChange={(event) => handleReplaceFile(index, event)} />
               </label>
                 <button type="button" className="photo-remove" onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
                   <X size={12} />
                 </button>
               </div>
-              <label className="photo-hd-toggle">
+              {isVideoAttachment(photo) ? (
+                <div className="photo-hd-toggle media-upload-meta">
+                  <span>Video</span>
+                  <span className="photo-quality-size">{fileSizeLabel(photo.size)}</span>
+                </div>
+              ) : <label className="photo-hd-toggle">
                 <input
                   type="checkbox"
                   checked={photo.qualityMode === "HD"}
@@ -6517,7 +8090,7 @@ function PhotoPicker({
                 />
                 <span>HD kalitede gönder</span>
                 <span className="photo-quality-size">{photo.hdPreparing ? "HD hazırlanıyor" : fileSizeLabel(photo.size)}</span>
-              </label>
+              </label>}
             </div>
           ))}
         </div>
@@ -6530,6 +8103,7 @@ function PhotoPicker({
 function JobFormPage({
   departmentAssignees,
   departmentLabelFor,
+  departmentOptions,
   checklistText,
   handleCreateJob,
   jobDraft,
@@ -6540,7 +8114,8 @@ function JobFormPage({
   setJobDraft
 }: RenderContext) {
   const isPlannedJob = jobDraft.type === "PlannedMaintenance" || jobDraft.type === "PlannedHousekeeping";
-  const allowedDepartments = jobDepartmentsForType(session, jobDraft.type);
+  const availableDepartmentIds = useMemo(() => departmentOptions.map((department) => department.id), [departmentOptions]);
+  const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
   const assigneeOptions = departmentAssignees.filter((user) => user.departmentId === jobDraft.departmentId);
 
   useEffect(() => {
@@ -6551,15 +8126,23 @@ function JobFormPage({
     const location = queryParams.get("location");
     const description = queryParams.get("description");
     const priority = queryParams.get("priority") as Priority | null;
+    const status = queryParams.get("status") as JobDraft["initialStatus"] | null;
     if (type && ["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"].includes(type)) {
+      const nextDepartmentId = jobDepartmentsForType(session, type, availableDepartmentIds).includes(departmentId ?? "")
+        ? departmentId!
+        : jobDepartmentsForType(session, type, availableDepartmentIds)[0];
+      const nextInitialStatus = status === "Completed" ? "Completed" : "Pending";
       setJobDraft((draft) => ({
         ...draft,
         type,
         title: title ?? draft.title,
-        departmentId: jobDepartmentsForType(session, type).includes(departmentId ?? "")
-          ? departmentId!
-          : jobDepartmentsForType(session, type)[0],
-        priority: priority && ["Urgent", "High", "Normal", "Low"].includes(priority) ? priority : type === "Fault" ? "Urgent" : draft.priority,
+        departmentId: nextDepartmentId,
+        initialStatus: nextInitialStatus,
+        priority: priority && ["Urgent", "High", "Normal", "Low"].includes(priority)
+          ? priority
+          : nextInitialStatus !== "Completed" && (type === "Job" || type === "Fault")
+            ? "Urgent"
+            : draft.priority,
         room: room ?? draft.room,
         location: location ?? draft.location,
         description: description ?? draft.description
@@ -6567,7 +8150,7 @@ function JobFormPage({
     } else if (title) {
       setJobDraft((draft) => ({ ...draft, title }));
     }
-  }, [queryParams, session, setJobDraft]);
+  }, [availableDepartmentIds, queryParams, session, setJobDraft]);
 
   if (!canCreateJobType(session, jobDraft.type)) {
     return <AccessDenied message="Bu rol iş emri oluşturamaz; sadece yetkili olduğu kayıtları görüntüler." />;
@@ -6589,14 +8172,17 @@ function JobFormPage({
                     key={type}
                     type="button"
                     className={`type-btn ${jobDraft.type === type ? "selected" : ""}`}
-                    onClick={() => setJobDraft((draft) => ({
-                      ...draft,
-                      type,
-                      departmentId: jobDepartmentsForType(session, type).includes(draft.departmentId)
+                    onClick={() => setJobDraft((draft) => {
+                      const departmentId = jobDepartmentsForType(session, type, availableDepartmentIds).includes(draft.departmentId)
                         ? draft.departmentId
-                        : jobDepartmentsForType(session, type)[0],
-                      priority: type === "Fault" ? "Urgent" : draft.priority
-                    }))}
+                        : jobDepartmentsForType(session, type, availableDepartmentIds)[0];
+                      return {
+                        ...draft,
+                        type,
+                        departmentId,
+                        priority: draft.initialStatus !== "Completed" && (type === "Job" || type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                      };
+                    })}
                   >
                     {jobTypeLabelForUser(session, type)}
                   </button>
@@ -6622,7 +8208,20 @@ function JobFormPage({
             <div className="form-row">
               <div className="form-group ui-form-compact">
                 <label className="form-label">Departman <span className="required">*</span></label>
-                <select className="form-control" value={jobDraft.departmentId} onChange={(event) => setJobDraft((draft) => ({ ...draft, departmentId: event.target.value, assignee: "" }))} disabled={allowedDepartments.length === 1}>
+                <select
+                  className="form-control"
+                  value={jobDraft.departmentId}
+                  onChange={(event) => {
+                    const departmentId = event.target.value;
+                    setJobDraft((draft) => ({
+                      ...draft,
+                      departmentId,
+                      assignee: "",
+                      priority: draft.initialStatus !== "Completed" && (draft.type === "Job" || draft.type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                    }));
+                  }}
+                  disabled={allowedDepartments.length === 1}
+                >
                   {allowedDepartments.map((departmentId) => (
                     <option key={departmentId} value={departmentId}>{departmentLabelFor(departmentId)}</option>
                   ))}
@@ -6653,7 +8252,15 @@ function JobFormPage({
             <div className="form-row ui-section-sm">
               <div className="form-group ui-form-compact">
                 <label className="form-label">Atanan Kişi</label>
-                <select className="form-control" value={jobDraft.assignee} onChange={(event) => setJobDraft((draft) => ({ ...draft, assignee: event.target.value }))}>
+                <select
+                  className="form-control"
+                  value={jobDraft.assignee}
+                  onChange={(event) => setJobDraft((draft) => ({
+                    ...draft,
+                    assignee: event.target.value,
+                    priority: !event.target.value && draft.initialStatus !== "Completed" && (draft.type === "Job" || draft.type === "Fault") ? "Urgent" : draft.priority
+                  }))}
+                >
                   <option value="">Seçilmedi</option>
                   {assigneeOptions.map((user) => (
                     <option key={user.id} value={user.id}>{user.fullName} - {roleLabel(user.roleId)}</option>
@@ -6668,6 +8275,22 @@ function JobFormPage({
               )}
             </div>
 
+            <label className="job-completed-toggle ui-section-sm">
+              <input
+                type="checkbox"
+                checked={jobDraft.initialStatus === "Completed"}
+                onChange={(event) => setJobDraft((draft) => ({
+                  ...draft,
+                  initialStatus: event.target.checked ? "Completed" : "Pending",
+                  priority: !event.target.checked && (draft.type === "Job" || draft.type === "Fault") && !draft.assignee ? "Urgent" : draft.priority
+                }))}
+              />
+              <span>
+                <strong>Biten iş olarak kaydet</strong>
+                <small>Uygulama dışından gelen ve tamamlanmış işler bitirilen işler sekmesine eklenir.</small>
+              </span>
+            </label>
+
             <div className="form-group ui-section-sm">
               <label className="form-label">Açıklama</label>
               <textarea className="form-control" rows={4} value={jobDraft.description} onChange={(event) => setJobDraft((draft) => ({ ...draft, description: event.target.value }))} placeholder="İş hakkında detaylı bilgi girin..." />
@@ -6679,7 +8302,7 @@ function JobFormPage({
             </div>
 
             <div className="form-group">
-              <label className="form-label">Fotoğraflar</label>
+              <label className="form-label">Fotoğraf / Video</label>
               <PhotoPicker photos={jobDraft.photos ?? []} setPhotos={(updater) => setJobDraft((draft) => ({ ...draft, photos: updater(draft.photos ?? []) }))} />
             </div>
           </div>
@@ -6721,22 +8344,46 @@ function JobFormPage({
 
         <div className="action-row ui-actions">
           <button type="button" className="btn btn-ghost btn-lg" onClick={() => navigate("/jobs")}>İptal</button>
-          <button type="submit" className="btn btn-primary btn-lg"><CheckCircle2 size={17} /> {submitJobLabelForUser(session, jobDraft.type)}</button>
+          <button type="submit" className="btn btn-primary btn-lg"><CheckCircle2 size={17} /> {submitJobLabel(jobDraft.initialStatus)}</button>
         </div>
       </form>
     </div>
   );
 }
 
-function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate, queryParams, refreshData, session, setAlert, setJobs }: RenderContext) {
+function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWorkPolicy, jobs, navigate, queryParams, refreshData, session, setAlert, setJobs }: RenderContext) {
   const id = queryParams.get("id") ?? "";
   const job = jobs.find((item) => item.id === id);
   const [activeTab, setActiveTab] = useState<"notes" | "photos" | "checklist" | "log">("notes");
   const [transferTo, setTransferTo] = useState("");
+  const [detailAssignees, setDetailAssignees] = useState<DemoUser[]>([]);
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [beforePhotos, setBeforePhotos] = useState<PhotoAttachment[]>([]);
   const [afterPhotos, setAfterPhotos] = useState<PhotoAttachment[]>([]);
   const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
   const [roomHistory, setRoomHistory] = useState<Array<{ code: string; title: string; status: JobStatus; priority: Priority; createdAt: string; assignee: string }>>([]);
+  const needsMediaPayload = jobNeedsMediaPayload(job);
+
+  useEffect(() => {
+    if (!job?.id || !needsMediaPayload) return;
+    let cancelled = false;
+    const loadJobMedia = async () => {
+      try {
+        const detailed = await apiRequest<JobRecord>(`/work-orders/${encodeURIComponent(job.id)}`, { timeoutMs: 30_000 });
+        if (cancelled) return;
+        setJobs((current) => current.map((item) => (item.id === detailed.id ? detailed : item)));
+        setPreviewPhoto((current) => current?.id
+          ? detailed.photos?.find((photo) => photo.id === current.id) ?? current
+          : current);
+      } catch {
+        // Metadata-only media still lets the job detail render; retry on the next visit/refresh.
+      }
+    };
+    void loadJobMedia();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.id, needsMediaPayload, setJobs]);
 
   useEffect(() => {
     if (!job?.room || !canUseAccess(session, "featureRoomHistory")) {
@@ -6758,6 +8405,31 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
     };
   }, [job?.room, session]);
 
+  useEffect(() => {
+    if (!job?.departmentId) {
+      setDetailAssignees([]);
+      return;
+    }
+    let cancelled = false;
+    const loadAssignees = async () => {
+      try {
+        const response = await apiRequest<{ items: DemoUser[] }>(`/department-assignees?departmentId=${encodeURIComponent(job.departmentId)}`);
+        if (!cancelled) setDetailAssignees(response.items);
+      } catch {
+        if (!cancelled) setDetailAssignees(departmentAssignees.filter((user) => user.departmentId === job.departmentId));
+      }
+    };
+    void loadAssignees();
+    return () => {
+      cancelled = true;
+    };
+  }, [departmentAssignees, job?.departmentId]);
+
+  useEffect(() => {
+    setTransferTo(job?.assigneeId ?? "");
+    setParticipantIds([]);
+  }, [job?.id, job?.assigneeId]);
+
   if (!job) return <EmptyState title="Kayıt bulunamadı" description="Seçilen iş kaydı bulunamadı." />;
   const checklistTotal = job.checklist.length;
   const checklistDone = job.status === "Completed" ? checklistTotal : Math.min(checklistTotal, Math.floor(checklistTotal / 2));
@@ -6765,6 +8437,13 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
   const comments = job.comments ?? [];
   const timeline = job.timeline ?? [];
   const canEditJobStatus = canManageJobStatus(session, job);
+  const canClaimJob = canClaimDepartmentJob(session, job);
+  const canAssignCurrentJob = canAssignJob(session, job, departmentWorkPolicy);
+  const canCompleteCurrentJob = canCompleteJob(session, job);
+  const canDeleteCurrentJob = canDeleteJob(session, job, departmentWorkPolicy);
+  const assigneeOptions = detailAssignees.length ? detailAssignees : departmentAssignees.filter((user) => user.departmentId === job.departmentId);
+  const participantOptions = assigneeOptions.filter((user) => user.id !== session.id && user.id !== job.assigneeId);
+  const participantNames = (job.participants ?? []).map((user) => user.fullName).join(", ");
   const canOpenHousekeepingJob = session.departmentId === "technical" && job.departmentId === "technical" && canCreateJobType(session, "Job") && canUseModule(session, "jobs");
 
   const openHousekeepingJob = () => {
@@ -6780,7 +8459,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
     navigate(`/jobs/new?${params.toString()}`);
   };
 
-  const updateJob = async (payload: Partial<JobRecord> & { assigneeId?: string }) => {
+  const updateJob = async (payload: Partial<JobRecord> & { assigneeId?: string; participantIds?: string[] }) => {
     try {
       const updated = await apiRequest<JobRecord>(`/work-orders/${job.id}`, {
         method: "PATCH",
@@ -6792,6 +8471,38 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
     } catch {
       setAlert("İş kaydı güncellenemedi.");
     }
+  };
+
+  const claimJob = async () => {
+    try {
+      const updated = await apiRequest<JobRecord>(`/work-orders/${job.id}/claim`, { method: "POST" });
+      setJobs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setAlert("İş üzerinize alındı.");
+      await refreshData();
+    } catch {
+      setAlert("İş havuzdan alınamadı.");
+    }
+  };
+
+  const completeJob = () => updateJob({ status: "Completed", participantIds });
+
+  const deleteJob = async () => {
+    if (!window.confirm("Bu iş kaydı silinsin mi?")) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/work-orders/${job.id}`, { method: "DELETE" });
+      setJobs((current) => current.filter((item) => item.id !== job.id));
+      setAlert("İş kaydı silindi.");
+      await refreshData();
+      navigate("/jobs");
+    } catch {
+      setAlert("İş kaydı silinemedi.");
+    }
+  };
+
+  const toggleParticipant = (userId: string) => {
+    setParticipantIds((current) => (
+      current.includes(userId) ? current.filter((item) => item !== userId) : [...current, userId]
+    ));
   };
 
   const addComment = async () => {
@@ -6817,7 +8528,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
     const photos = phase === "BEFORE" ? beforePhotos : afterPhotos;
     if (!photos.length) return;
     if (hasPendingPhotoProcessing(photos)) {
-      setAlert("HD fotoğraf hazırlanıyor. Lütfen birkaç saniye bekleyin.");
+      setAlert("Medya hazırlanıyor. Lütfen birkaç saniye bekleyin.");
       return;
     }
     try {
@@ -6829,10 +8540,10 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
       if (phase === "BEFORE") setBeforePhotos([]);
       if (phase === "AFTER") setAfterPhotos([]);
       setActiveTab("photos");
-      setAlert("Fotoğraflar eklendi.");
+      setAlert("Medya eklendi.");
       await refreshData();
-    } catch {
-      setAlert("Fotoğraflar eklenemedi.");
+    } catch (error) {
+      setAlert(workOrderMediaErrorMessage(error));
     }
   };
 
@@ -6840,12 +8551,14 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
     <>
       <div className="page-header action-bar ui-section-bottom-sm">
         <div className="action-group">
-          {canEditJobStatus && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
-          {canEditJobStatus && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={() => updateJob({ status: "Completed" })}>Tamamla</button>}
-          {canEditJobStatus && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed" })}>Gecikti Olarak İşaretle</button>}
+          {canClaimJob && <button type="button" className="btn btn-start" onClick={claimJob}><Wrench size={15} /> İşi Al</button>}
+          {canCompleteCurrentJob && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
+          {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
+          {canEditJobStatus && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
           <button type="button" className="btn btn-secondary" onClick={addComment}><MessageSquareText size={15} /> Not Ekle</button>
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
-          <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("photos")}><Camera size={15} /> Fotoğrafları Gör</button>
+          <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("photos")}><Camera size={15} /> Medyayı Gör</button>
+          {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={deleteJob}><Trash2 size={15} /> Sil</button>}
           {canEditJobStatus && job.status !== "Cancelled" && <button type="button" className="btn btn-danger" onClick={() => updateJob({ status: "Cancelled" })}>İptal Et</button>}
         </div>
         <button className="btn btn-ghost" onClick={() => navigate("/jobs")}>Listeye Dön</button>
@@ -6870,7 +8583,8 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
 
             <div className="info-grid">
               <Info label="Departman" value={departmentLabelFor(job.departmentId)} />
-              <Info label="Atanan" value={job.assignee || "-"} />
+              <Info label="Atanan" value={job.assignee || (isDepartmentPoolJob(job) ? departmentPoolLabel(job.departmentId, departmentLabelFor) : "-")} />
+                {isWorkIncidentPoolType(job) && <Info label="Ekip" value={participantNames || "-"} />}
                 <Info label="Oda / Konum" value={job.room ? `Oda ${job.room} / ${job.location}` : job.location || "-"} />
                 {canUseAccess(session, "featureGuestImpact") && <Info label="Misafir Etkisi" value={job.guestImpact ? "Evet" : "Hayır"} />}
                 {canUseAccess(session, "featureSlaEscalation") && <Info label="SLA Durumu" value={job.slaRisk ? "Riskli / eskalasyon adayı" : "Normal"} />}
@@ -6895,7 +8609,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
               <div className="tabs-container">
                 <div className="tabs">
                   <button type="button" className={`tab-btn ${activeTab === "notes" ? "active" : ""}`} onClick={() => setActiveTab("notes")}>Notlar ({comments.length})</button>
-                  <button type="button" className={`tab-btn ${activeTab === "photos" ? "active" : ""}`} onClick={() => setActiveTab("photos")}>Fotoğraflar ({job.photos?.length ?? 0})</button>
+                  <button type="button" className={`tab-btn ${activeTab === "photos" ? "active" : ""}`} onClick={() => setActiveTab("photos")}>Medya ({job.photos?.length ?? 0})</button>
                   <button type="button" className={`tab-btn ${activeTab === "checklist" ? "active" : ""}`} onClick={() => setActiveTab("checklist")}>Kontrol Listesi</button>
                   <button type="button" className={`tab-btn ${activeTab === "log" ? "active" : ""}`} onClick={() => setActiveTab("log")}>Aktivite</button>
                 </div>
@@ -6922,23 +8636,24 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
                   <div className="tab-panel active">
                     {canUseAccess(session, "featureBeforeAfterPhotos") && <div className="two-column-grid ui-section-bottom-xs">
                       <div>
-                        <div className="info-label ui-section-bottom-xs">Önce Fotoğrafı</div>
+                        <div className="info-label ui-section-bottom-xs">Önce Medyası</div>
                         <PhotoPicker phase="BEFORE" photos={beforePhotos} setPhotos={setBeforePhotos} />
-                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("BEFORE")}>Önce Fotoğrafını Ekle</button>
+                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("BEFORE")}>Önce Medyasını Ekle</button>
                       </div>
                       <div>
-                        <div className="info-label ui-section-bottom-xs">Sonra Fotoğrafı</div>
+                        <div className="info-label ui-section-bottom-xs">Sonra Medyası</div>
                         <PhotoPicker phase="AFTER" photos={afterPhotos} setPhotos={setAfterPhotos} />
-                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("AFTER")}>Sonra Fotoğrafını Ekle</button>
+                        <button type="button" className="btn btn-secondary btn-sm btn-full" onClick={() => uploadPhotos("AFTER")}>Sonra Medyasını Ekle</button>
                       </div>
                     </div>}
                     <div className="photo-grid">
                       {job.photos?.length ? job.photos.map((photo, index) => (
-                        <button type="button" className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || "Fotoğraf"} büyüt`}>
-                          <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
+                        <button type="button" className="photo-thumb" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || (isVideoAttachment(photo) ? "Video" : "Fotoğraf")} büyüt`}>
+                          <MediaPreview photo={photo} width={180} height={120} />
                           <span className="badge badge-pending">{photo.phase === "BEFORE" ? "Önce" : photo.phase === "AFTER" ? "Sonra" : "Genel"}</span>
+                          {isVideoAttachment(photo) ? <span className="photo-video-badge"><Video size={12} /> Video</span> : null}
                         </button>
-                      )) : <EmptyState title="Fotoğraf yok" description="Bu kayıt için fotoğraf eklenmemiş." />}
+                      )) : <EmptyState title="Medya yok" description="Bu kayıt için fotoğraf veya video eklenmemiş." />}
                     </div>
                   </div>
                 )}
@@ -6990,20 +8705,41 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, jobs, navigate
               </div>
               <div className="stat-row">
                 <span className="stat-label">Gecikme Durumu</span>
-                <span className="stat-value">{job.status === "Delayed" ? "Gecikti" : "Zamanında"}</span>
+                <span className="stat-value">{job.status === "Delayed" ? "Ertelendi" : "Zamanında"}</span>
               </div>
             </div>
           </div>
 
-          {canEditJobStatus && (
+          {canCompleteCurrentJob && isWorkIncidentPoolType(job) && job.status !== "Completed" && (
+            <div className="card ui-section-bottom-sm">
+              <div className="card-header"><span className="card-title"><Users size={15} /> Çalışan Ekip</span></div>
+              <div className="card-body ui-list-stack">
+                {participantOptions.length ? participantOptions.map((user) => (
+                  <label className="policy-user-row" key={user.id}>
+                    <span>
+                      <strong>{user.fullName}</strong>
+                      <small>{roleLabel(user.roleId)}</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={participantIds.includes(user.id)}
+                      onChange={() => toggleParticipant(user.id)}
+                    />
+                  </label>
+                )) : <div className="ui-muted">Etiketlenebilecek teknik personel yok.</div>}
+              </div>
+            </div>
+          )}
+
+          {canAssignCurrentJob && (
             <div className="card ui-section-bottom-sm">
               <div className="card-header"><span className="card-title">Devret</span></div>
               <div className="card-body">
                 <div className="form-group">
                   <label className="form-label">Yeni Atanan</label>
                   <select className="form-control" value={transferTo} onChange={(event) => setTransferTo(event.target.value)}>
-                    <option value="">Seçilmedi</option>
-                    {departmentAssignees.map((user) => (
+                    <option value="">İş-Arıza havuzuna bırak</option>
+                    {assigneeOptions.map((user) => (
                       <option key={user.id} value={user.id}>{user.fullName} - {roleLabel(user.roleId)}</option>
                     ))}
                   </select>
@@ -7090,7 +8826,7 @@ function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }
           {transferredTechnicalRecords.length ? (
             <JobCardList jobs={transferredTechnicalRecords} navigate={navigate} departmentLabelFor={departmentLabelFor} />
           ) : (
-            <EmptyState title="Tekniğe paslanan iş yok" description="HK tarafından teknik servise açılan arızalar burada takip edilir." />
+            <EmptyState title="Tekniğe paslanan iş yok" description="HK tarafından teknik servise açılan iş ve arızalar burada takip edilir." />
           )}
         </div>
       </div>
@@ -7308,7 +9044,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
                     <>
                       <button type="button" className="btn btn-primary btn-sm" onClick={() => updateCalendarJobStatus(job, "Completed")}>Yapıldı</button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => updateCalendarJobStatus(job, "InProgress")}>Devam Ediyor</button>
-                      <button type="button" className="btn btn-warning btn-sm" onClick={() => updateCalendarJobStatus(job, "Delayed")}>Beklemeye Alındı</button>
+                      <button type="button" className="btn btn-warning btn-sm" onClick={() => updateCalendarJobStatus(job, "Delayed")}>Ertelendi</button>
                     </>
                   )}
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/jobs/detail?id=${job.id}`)}>Detay</button>
@@ -7359,7 +9095,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
         <span><span className="legend-swatch high" />Yüksek</span>
         <span><span className="legend-swatch normal" />Normal</span>
         <span><span className="legend-swatch low" />Düşük</span>
-        <span><span className="legend-swatch delayed" />Gecikti</span>
+        <span><span className="legend-swatch delayed" />Ertelendi</span>
       </div>
     </>
   );
@@ -7674,23 +9410,39 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
   const [monthDays, setMonthDays] = useState<string[]>([]);
   const [panels, setPanels] = useState<ShiftPanelRecord[]>([]);
   const [configDrafts, setConfigDrafts] = useState<Record<string, ShiftPanelConfigDraft>>({});
+  const [presetDrafts, setPresetDrafts] = useState<Record<string, ShiftRosterPreset[]>>({});
+  const [colorTemplateDrafts, setColorTemplateDrafts] = useState<Record<string, ShiftRosterColorTemplate[]>>({});
   const [cellDrafts, setCellDrafts] = useState<Record<string, ShiftPanelCellDraft>>({});
   const [dirtyCells, setDirtyCells] = useState<Record<string, boolean>>({});
   const [activeRosterCell, setActiveRosterCell] = useState<ActiveRosterCell | null>(null);
+  const [editingPresetPanelId, setEditingPresetPanelId] = useState("");
   const [loading, setLoading] = useState(false);
   const [savingPanelId, setSavingPanelId] = useState("");
+  const [savingPresetPanelId, setSavingPresetPanelId] = useState("");
   const canConfigure = canConfigureShiftPanels(session);
   const activeRosterCellKey = activeRosterCell ? rosterCellKey(activeRosterCell.departmentId, activeRosterCell.userId, activeRosterCell.date) : "";
 
   const loadPanels = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await apiRequest<{ month: string; days: string[]; items: ShiftPanelRecord[] }>(`/shift-panels?month=${encodeURIComponent(selectedMonth)}`);
+      const response = await apiRequestWithRetry<{ month: string; days: string[]; items: ShiftPanelRecord[] }>(
+        `/shift-panels?month=${encodeURIComponent(selectedMonth)}`,
+        { timeoutMs: 20_000 },
+        3
+      );
       setPanels(response.items);
       setMonthDays(response.days);
       setConfigDrafts(Object.fromEntries(response.items.map((panel) => [
         panel.departmentId,
         { enabled: panel.enabled, editorUserIds: panel.editorUserIds }
+      ])));
+      setPresetDrafts(Object.fromEntries(response.items.map((panel) => [
+        panel.departmentId,
+        editableRosterPresets(panel)
+      ])));
+      setColorTemplateDrafts(Object.fromEntries(response.items.map((panel) => [
+        panel.departmentId,
+        editableRosterColorTemplates(panel)
       ])));
       setCellDrafts(Object.fromEntries(response.items.flatMap((panel) => (
         panel.cells.map((cell) => [rosterCellKey(panel.departmentId, cell.userId, cell.date), cellRecordToDraft(cell)] as const)
@@ -7701,6 +9453,8 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
       setAlert("Vardiya çizelgesi yüklenemedi.");
       setPanels([]);
       setMonthDays([]);
+      setPresetDrafts({});
+      setColorTemplateDrafts({});
       setActiveRosterCell(null);
     } finally {
       setLoading(false);
@@ -7743,6 +9497,157 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
     });
   };
 
+  const presetsForPanel = useCallback((panel: ShiftPanelRecord) => (
+    presetDrafts[panel.departmentId] ?? editableRosterPresets(panel)
+  ), [presetDrafts]);
+
+  const colorTemplatesForPanel = useCallback((panel: ShiftPanelRecord) => (
+    colorTemplateDrafts[panel.departmentId] ?? editableRosterColorTemplates(panel)
+  ), [colorTemplateDrafts]);
+
+  const updatePresetDraft = (departmentId: string, presetId: string, patch: Partial<ShiftRosterPreset>) => {
+    setPresetDrafts((current) => {
+      const panel = panels.find((item) => item.departmentId === departmentId);
+      const existing = current[departmentId] ?? editableRosterPresets(panel);
+      return {
+        ...current,
+        [departmentId]: existing.map((preset) => (preset.id === presetId ? { ...preset, ...patch } : preset))
+      };
+    });
+  };
+
+  const updateColorTemplateDraft = (departmentId: string, templateId: string, patch: Partial<ShiftRosterColorTemplate>) => {
+    setColorTemplateDrafts((current) => {
+      const panel = panels.find((item) => item.departmentId === departmentId);
+      const existing = current[departmentId] ?? editableRosterColorTemplates(panel);
+      return {
+        ...current,
+        [departmentId]: existing.map((template) => (template.id === templateId ? { ...template, ...patch } : template))
+      };
+    });
+  };
+
+  const addColorTemplateDraft = (panel: ShiftPanelRecord) => {
+    setColorTemplateDrafts((current) => {
+      const existing = current[panel.departmentId] ?? editableRosterColorTemplates(panel);
+      if (existing.length >= 16) return current;
+      return {
+        ...current,
+        [panel.departmentId]: [...existing, createShiftRosterColorTemplate(existing.length)]
+      };
+    });
+  };
+
+  const removeColorTemplateDraft = (panel: ShiftPanelRecord, templateId: string) => {
+    const panelPresets = presetsForPanel(panel);
+    if (panelPresets.some((preset) => preset.color === templateId)) {
+      setAlert("Bu renk şablonu bir kartta kullanılıyor. Önce kartın rengini değiştirin.");
+      return;
+    }
+    setColorTemplateDrafts((current) => {
+      const existing = current[panel.departmentId] ?? editableRosterColorTemplates(panel);
+      if (existing.length <= 1) return current;
+      return {
+        ...current,
+        [panel.departmentId]: existing.filter((template) => template.id !== templateId)
+      };
+    });
+  };
+
+  const addPresetDraft = (panel: ShiftPanelRecord) => {
+    setPresetDrafts((current) => {
+      const existing = current[panel.departmentId] ?? editableRosterPresets(panel);
+      if (existing.length >= 16) return current;
+      return {
+        ...current,
+        [panel.departmentId]: [...existing, createShiftRosterPreset(existing.length)]
+      };
+    });
+  };
+
+  const removePresetDraft = (panel: ShiftPanelRecord, presetId: string) => {
+    setPresetDrafts((current) => {
+      const existing = current[panel.departmentId] ?? editableRosterPresets(panel);
+      if (existing.length <= 1) return current;
+      return {
+        ...current,
+        [panel.departmentId]: existing.filter((preset) => preset.id !== presetId)
+      };
+    });
+  };
+
+  const resetPresetDrafts = (panel: ShiftPanelRecord) => {
+    setPresetDrafts((current) => ({ ...current, [panel.departmentId]: editableRosterPresets(panel) }));
+    setColorTemplateDrafts((current) => ({ ...current, [panel.departmentId]: editableRosterColorTemplates(panel) }));
+  };
+
+  const savePanelPresets = async (panel: ShiftPanelRecord) => {
+    const colorTemplates = (colorTemplateDrafts[panel.departmentId] ?? editableRosterColorTemplates(panel))
+      .map(sanitizeShiftRosterColorTemplate)
+      .filter((template) => template.label);
+    const templateIds = new Set(colorTemplates.map((template) => template.id));
+    const presets = (presetDrafts[panel.departmentId] ?? editableRosterPresets(panel))
+      .map(sanitizeShiftRosterPreset)
+      .filter((preset) => preset.label || preset.code || preset.startTime || preset.endTime)
+      .map((preset) => ({ ...preset, color: templateIds.has(preset.color) ? preset.color : colorTemplates[0]?.id ?? "custom" }));
+
+    if (!presets.length) {
+      setAlert("En az bir vardiya kartı kalmalı.");
+      return;
+    }
+    if (!colorTemplates.length) {
+      setAlert("En az bir renk şablonu kalmalı.");
+      return;
+    }
+
+    setSavingPresetPanelId(panel.departmentId);
+    try {
+      const response = await apiRequest<{ presets: ShiftRosterPreset[]; colorTemplates: ShiftRosterColorTemplate[] }>(`/shift-panels/${encodeURIComponent(panel.departmentId)}/presets`, {
+        method: "PATCH",
+        body: JSON.stringify({ presets, colorTemplates })
+      });
+      setPanels((current) => current.map((item) => (
+        item.departmentId === panel.departmentId ? { ...item, presets: response.presets, colorTemplates: response.colorTemplates } : item
+      )));
+      setPresetDrafts((current) => ({ ...current, [panel.departmentId]: editableRosterPresets({ presets: response.presets }) }));
+      setColorTemplateDrafts((current) => ({ ...current, [panel.departmentId]: editableRosterColorTemplates({ colorTemplates: response.colorTemplates }) }));
+      setEditingPresetPanelId("");
+      setAlert(`${departmentLabelFor(panel.departmentId)} vardiya kartları ve renk şablonları kaydedildi.`);
+    } catch {
+      setAlert("Vardiya kartları kaydedilemedi. Düzenleme yetkisini kontrol edin.");
+    } finally {
+      setSavingPresetPanelId("");
+    }
+  };
+
+  const exportPanelTemplateCsv = (panel: ShiftPanelRecord) => {
+    const colorTemplates = (colorTemplateDrafts[panel.departmentId] ?? editableRosterColorTemplates(panel))
+      .map(sanitizeShiftRosterColorTemplate)
+      .filter((template) => template.label);
+    const templateIds = new Set(colorTemplates.map((template) => template.id));
+    const presets = (presetDrafts[panel.departmentId] ?? editableRosterPresets(panel))
+      .map(sanitizeShiftRosterPreset)
+      .filter((preset) => preset.label || preset.code || preset.startTime || preset.endTime)
+      .map((preset) => ({ ...preset, color: templateIds.has(preset.color) ? preset.color : colorTemplates[0]?.id ?? "custom" }));
+    downloadShiftRosterTemplateCsv(`nodera-${panel.departmentId}-vardiya-sablonu.csv`, presets, colorTemplates);
+  };
+
+  const importPanelTemplateCsv = async (panel: ShiftPanelRecord, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const imported = parseShiftRosterTemplateCsv(await file.text());
+      setPresetDrafts((current) => ({ ...current, [panel.departmentId]: imported.presets }));
+      setColorTemplateDrafts((current) => ({ ...current, [panel.departmentId]: imported.colorTemplates }));
+      setEditingPresetPanelId(panel.departmentId);
+      setAlert(`${departmentLabelFor(panel.departmentId)} vardiya şablonu içe aktarıldı. Kaydetmek için Kartları Kaydet'e basın.`);
+    } catch {
+      setAlert("CSV vardiya şablonu okunamadı. Dosya başlığı type,id,label,code,startTime,endTime,color,background,textColor olmalı.");
+    }
+  };
+
   const openCellOptions = (panel: ShiftPanelRecord, userId: string, date: string, target: HTMLButtonElement) => {
     if (!panel.canEdit) return;
     const key = rosterCellKey(panel.departmentId, userId, date);
@@ -7753,8 +9658,8 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
       const rect = target.getBoundingClientRect();
       const margin = 10;
       const gap = 8;
-      const pickerWidth = 124;
-      const pickerHeight = Math.min(320, window.innerHeight - margin * 2);
+      const pickerWidth = Math.min(300, window.innerWidth - margin * 2);
+      const pickerHeight = Math.min(520, window.innerHeight - margin * 2);
       let left = rect.right + gap;
       if (left + pickerWidth > window.innerWidth - margin) {
         left = rect.left - pickerWidth - gap;
@@ -7769,12 +9674,19 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
     });
   };
 
-  const applyCellPreset = (panel: ShiftPanelRecord, userId: string, date: string, preset: (typeof shiftRosterPresets)[number]) => {
+  const updateCellDraft = (panel: ShiftPanelRecord, userId: string, date: string, patch: Partial<ShiftPanelCellDraft>) => {
     if (!panel.canEdit) return;
     const key = rosterCellKey(panel.departmentId, userId, date);
-    const next = rosterPresetToDraft(preset);
-    setCellDrafts((current) => ({ ...current, [key]: next }));
+    setCellDrafts((current) => {
+      const currentDraft = current[key] ?? cellRecordToDraft(cellByKey.get(key));
+      const next = { ...currentDraft, ...patch };
+      return { ...current, [key]: next };
+    });
     setDirtyCells((current) => ({ ...current, [key]: true }));
+  };
+
+  const applyCellPreset = (panel: ShiftPanelRecord, userId: string, date: string, preset: ShiftRosterPreset) => {
+    updateCellDraft(panel, userId, date, rosterPresetToDraft(preset));
     setActiveRosterCell(null);
   };
 
@@ -7802,7 +9714,15 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
     try {
       for (const key of keys) {
         const [, userId, date] = key.split("::");
-        const draft = cellDrafts[key] ?? emptyShiftPanelCellDraft();
+        const rawDraft = cellDrafts[key] ?? emptyShiftPanelCellDraft();
+        const draft = {
+          ...rawDraft,
+          code: rawDraft.code.trim(),
+          startTime: rawDraft.startTime.trim(),
+          endTime: rawDraft.endTime.trim(),
+          note: rawDraft.note.trim(),
+          color: rawDraft.color || "auto"
+        };
         await apiRequest<{ item: ShiftPanelCellRecord | null }>(`/shift-panels/${encodeURIComponent(panel.departmentId)}/cell`, {
           method: "PATCH",
           body: JSON.stringify({ userId, date, ...draft, color: rosterDraftColor(draft) })
@@ -7826,6 +9746,8 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
   const visiblePanels = canConfigure ? enabledPanels : panels;
   const activePanel = activeRosterCell ? panels.find((panel) => panel.departmentId === activeRosterCell.departmentId) : null;
   const activeDraft = activeRosterCell && activePanel ? draftFor(activeRosterCell.departmentId, activeRosterCell.userId, activeRosterCell.date) : null;
+  const activePanelPresetOptions = activePanel ? rosterPresetsWithEmpty(presetsForPanel(activePanel)) : [];
+  const activePanelColorTemplates = activePanel ? colorTemplatesForPanel(activePanel) : [];
 
   return (
     <div className="ui-list-stack">
@@ -7860,7 +9782,7 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
                         checked={draft.enabled}
                         onChange={(event) => updateConfigDraft(panel.departmentId, { enabled: event.target.checked })}
                       />
-                      <span>
+                      <span className="shift-panel-config-title">
                         <strong>{departmentLabelFor(panel.departmentId)}</strong>
                         <span className="ui-field-note">{draft.enabled ? "Çizelge açık" : "Çizelge kapalı"}</span>
                       </span>
@@ -7893,11 +9815,16 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
       <div className="ui-list-stack">
         {visiblePanels.length ? visiblePanels.map((panel) => {
           const dirtyCount = Object.keys(dirtyCells).filter((key) => key.startsWith(`${panel.departmentId}::`)).length;
+          const panelPresets = presetsForPanel(panel);
+          const panelColorTemplates = colorTemplatesForPanel(panel);
+          const canManagePresets = canConfigure || panel.canEdit;
+          const editingPresets = editingPresetPanelId === panel.departmentId;
           return (
             <div key={panel.departmentId} className="card">
               <div className="card-header">
                 <span>
                   <span className="card-title">{departmentLabelFor(panel.departmentId)}</span>
+                  {" "}
                   <span className="ui-meta">
                     {panel.editors.length
                       ? `Sorumlu: ${panel.editors.map((editor) => editor.fullName).join(", ")}`
@@ -7919,11 +9846,197 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
                 </div>
               </div>
               <div className="card-body">
-                <div className="shift-roster-legend">
-                  {shiftRosterPresets.filter((preset) => preset.id !== "empty").map((preset) => (
-                    <span key={preset.id} className={`shift-roster-legend-item shift-roster-${preset.color}`}>{preset.label}</span>
-                  ))}
+                <div className="shift-roster-legend-row">
+                  <div className="shift-roster-legend">
+                    {panelPresets.map((preset) => (
+                      <span
+                        key={preset.id}
+                        className={`shift-roster-legend-item shift-roster-colorized shift-roster-${preset.color}`}
+                        style={rosterColorStyle(preset.color, panelColorTemplates)}
+                      >
+                        {preset.label}
+                      </span>
+                    ))}
+                  </div>
+                  {canManagePresets && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setEditingPresetPanelId((current) => (current === panel.departmentId ? "" : panel.departmentId))}
+                    >
+                      <Settings size={13} /> Kartları Düzenle
+                    </button>
+                  )}
                 </div>
+                {canManagePresets && editingPresets && (
+                  <div className="shift-preset-editor">
+                    <div className="shift-preset-editor-list">
+                      {panelPresets.map((preset, index) => (
+                        <div key={preset.id} className="shift-preset-editor-row">
+                          <span
+                            className={`shift-roster-legend-item shift-roster-colorized shift-roster-${preset.color}`}
+                            style={rosterColorStyle(preset.color, panelColorTemplates)}
+                          >
+                            {sanitizeShiftRosterPreset(preset, index).label}
+                          </span>
+                          <label className="shift-roster-field">
+                            <span>Kart</span>
+                            <input
+                              className="form-control"
+                              value={preset.label}
+                              maxLength={80}
+                              onChange={(event) => updatePresetDraft(panel.departmentId, preset.id, { label: event.target.value })}
+                            />
+                          </label>
+                          <label className="shift-roster-field">
+                            <span>Kod / izin</span>
+                            <input
+                              className="form-control"
+                              value={preset.code}
+                              maxLength={80}
+                              placeholder="Farklı yerde görevli"
+                              onChange={(event) => updatePresetDraft(panel.departmentId, preset.id, { code: event.target.value })}
+                            />
+                          </label>
+                          <label className="shift-roster-field">
+                            <span>Başlangıç</span>
+                            <input
+                              className="form-control"
+                              type="time"
+                              value={preset.startTime}
+                              onChange={(event) => updatePresetDraft(panel.departmentId, preset.id, { startTime: event.target.value })}
+                            />
+                          </label>
+                          <label className="shift-roster-field">
+                            <span>Bitiş</span>
+                            <input
+                              className="form-control"
+                              type="time"
+                              value={preset.endTime}
+                              onChange={(event) => updatePresetDraft(panel.departmentId, preset.id, { endTime: event.target.value })}
+                            />
+                          </label>
+                          <label className="shift-roster-field">
+                            <span>Renk Şablonu</span>
+                            <select
+                              className="form-control"
+                              value={preset.color || panelColorTemplates[0]?.id || "custom"}
+                              onChange={(event) => updatePresetDraft(panel.departmentId, preset.id, { color: event.target.value })}
+                            >
+                              {panelColorTemplates.map((template) => (
+                                <option key={template.id} value={template.id}>{template.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => removePresetDraft(panel, preset.id)}
+                            disabled={panelPresets.length <= 1}
+                          >
+                            <Trash2 size={13} /> Sil
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="shift-color-template-editor">
+                      <div className="shift-color-template-head">
+                        <strong>Renk Şablonları</strong>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => addColorTemplateDraft(panel)} disabled={panelColorTemplates.length >= 16}>
+                          <Plus size={13} /> Şablon Ekle
+                        </button>
+                      </div>
+                      <div className="shift-color-template-list">
+                        {panelColorTemplates.map((template, index) => {
+                          const sanitizedTemplate = sanitizeShiftRosterColorTemplate(template, index);
+                          return (
+                            <div key={template.id} className="shift-color-template-row">
+                              <span className="shift-color-template-swatch" style={rosterColorStyle(sanitizedTemplate.id, panelColorTemplates)}>
+                                {sanitizedTemplate.label}
+                              </span>
+                              <label className="shift-roster-field">
+                                <span>Şablon</span>
+                                <input
+                                  className="form-control"
+                                  value={template.label}
+                                  maxLength={80}
+                                  onChange={(event) => updateColorTemplateDraft(panel.departmentId, template.id, { label: event.target.value })}
+                                />
+                              </label>
+                              <label className="shift-roster-field">
+                                <span>Arka Plan RGB</span>
+                                <div className="shift-color-input-row">
+                                  <input
+                                    type="color"
+                                    value={colorPickerValue(template.background, "#dbeafe")}
+                                    onChange={(event) => updateColorTemplateDraft(panel.departmentId, template.id, { background: event.target.value })}
+                                    aria-label="Arka plan rengi"
+                                  />
+                                  <input
+                                    className="form-control"
+                                    value={template.background}
+                                    maxLength={32}
+                                    placeholder="#dbeafe veya rgb(219, 234, 254)"
+                                    onChange={(event) => updateColorTemplateDraft(panel.departmentId, template.id, { background: event.target.value })}
+                                  />
+                                </div>
+                              </label>
+                              <label className="shift-roster-field">
+                                <span>Yazı RGB</span>
+                                <div className="shift-color-input-row">
+                                  <input
+                                    type="color"
+                                    value={colorPickerValue(template.textColor, "#111827")}
+                                    onChange={(event) => updateColorTemplateDraft(panel.departmentId, template.id, { textColor: event.target.value })}
+                                    aria-label="Yazı rengi"
+                                  />
+                                  <input
+                                    className="form-control"
+                                    value={template.textColor}
+                                    maxLength={32}
+                                    placeholder="#111827 veya rgb(17, 24, 39)"
+                                    onChange={(event) => updateColorTemplateDraft(panel.departmentId, template.id, { textColor: event.target.value })}
+                                  />
+                                </div>
+                              </label>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => removeColorTemplateDraft(panel, template.id)}
+                                disabled={panelColorTemplates.length <= 1}
+                              >
+                                <Trash2 size={13} /> Sil
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="shift-preset-editor-actions">
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => exportPanelTemplateCsv(panel)}>
+                        <Download size={13} /> CSV İndir
+                      </button>
+                      <label className="btn btn-ghost btn-sm shift-template-upload">
+                        <Upload size={13} /> CSV Yükle
+                        <input
+                          className="shift-template-file-input"
+                          type="file"
+                          accept=".csv,text/csv"
+                          onChange={(event) => void importPanelTemplateCsv(panel, event)}
+                        />
+                      </label>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => addPresetDraft(panel)} disabled={panelPresets.length >= 16}>
+                        <Plus size={13} /> Kart Ekle
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => resetPresetDrafts(panel)}>
+                        Vazgeç
+                      </button>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => void savePanelPresets(panel)} disabled={savingPresetPanelId === panel.departmentId}>
+                        <Save size={13} /> {savingPresetPanelId === panel.departmentId ? "Kaydediliyor" : "Kartları Kaydet"}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="shift-roster-scroll">
                   <table className="shift-roster-table">
                     <thead>
@@ -7951,7 +10064,8 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
                               <td key={date} className="shift-roster-td">
                                 <button
                                   type="button"
-                                  className={`shift-roster-cell shift-roster-${color} ${dirtyCells[key] ? "dirty" : ""} ${cellActive ? "active" : ""}`}
+                                  className={`shift-roster-cell shift-roster-colorized shift-roster-${color} ${dirtyCells[key] ? "dirty" : ""} ${cellActive ? "active" : ""}`}
+                                  style={rosterColorStyle(color, panelColorTemplates)}
                                   disabled={!panel.canEdit}
                                   onClick={(event) => openCellOptions(panel, staffUser.id, date, event.currentTarget)}
                                   title={`${staffUser.fullName} ${date}`}
@@ -7992,18 +10106,451 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
           aria-label="Vardiya seçeneği"
           style={{ top: activeRosterCell.top, left: activeRosterCell.left }}
         >
-          {shiftRosterPresets.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className={`shift-roster-preset shift-roster-${preset.color} ${rosterPresetMatchesDraft(preset, activeDraft) ? "selected" : ""}`}
-              onClick={() => applyCellPreset(activePanel, activeRosterCell.userId, activeRosterCell.date, preset)}
-            >
-              {preset.label}
-            </button>
-          ))}
+          <div className="shift-roster-preset-list">
+            {activePanelPresetOptions.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`shift-roster-preset shift-roster-colorized shift-roster-${preset.color} ${rosterPresetMatchesDraft(preset, activeDraft) ? "selected" : ""}`}
+                style={rosterColorStyle(preset.color, activePanelColorTemplates)}
+                onClick={() => applyCellPreset(activePanel, activeRosterCell.userId, activeRosterCell.date, preset)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function DepartmentTablesPage({ departmentLabelFor, departmentTables, navigate, queryParams, session, setAlert, setDepartmentTables }: RenderContext) {
+  const visibleTables = useMemo(() => departmentTables.filter((table) => table.enabled), [departmentTables]);
+  const requestedTableId = queryParams.get("table") ?? "";
+  const selectedTable = useMemo(() => (
+    visibleTables.find((table) => table.id === requestedTableId) ?? visibleTables[0] ?? null
+  ), [requestedTableId, visibleTables]);
+  const selectedColumnSignature = selectedTable?.columns.map((column) => `${column.id}:${column.label}:${column.type}`).join("|") ?? "";
+  const canCreateTable = canManageJobStatus(session, { departmentId: session.departmentId });
+  const [creatingNew, setCreatingNew] = useState(false);
+  const [editingConfig, setEditingConfig] = useState(false);
+  const [draft, setDraft] = useState<DepartmentTableDraft>(() => departmentTableDraftFromRecord(null, session, departmentLabelFor));
+  const [savingTable, setSavingTable] = useState(false);
+  const [rowDraft, setRowDraft] = useState<Record<string, string>>({});
+  const [rowNote, setRowNote] = useState("");
+  const [savingRow, setSavingRow] = useState(false);
+  const [editingRowId, setEditingRowId] = useState("");
+  const [editingRowDraft, setEditingRowDraft] = useState<Record<string, string>>({});
+  const [editingRowNote, setEditingRowNote] = useState("");
+
+  useEffect(() => {
+    if (creatingNew) return;
+    setDraft(departmentTableDraftFromRecord(selectedTable, session, departmentLabelFor));
+    setEditingConfig(false);
+  }, [creatingNew, departmentLabelFor, selectedTable, session]);
+
+  useEffect(() => {
+    setRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, ""])));
+    setRowNote("");
+    setEditingRowId("");
+    setEditingRowDraft({});
+    setEditingRowNote("");
+  }, [selectedColumnSignature, selectedTable?.columns, selectedTable?.id]);
+
+  const replaceTable = (table: DepartmentTableRecord) => {
+    setDepartmentTables((current) => {
+      const next = current.some((item) => item.id === table.id)
+        ? current.map((item) => (item.id === table.id ? table : item))
+        : [table, ...current];
+      return [...next].sort((left, right) => (
+        left.departmentName.localeCompare(right.departmentName, "tr-TR") || left.title.localeCompare(right.title, "tr-TR")
+      ));
+    });
+  };
+
+  const patchSelectedTableRows = (updater: (rows: DepartmentTableRow[]) => DepartmentTableRow[]) => {
+    if (!selectedTable) return;
+    setDepartmentTables((current) => current.map((table) => (
+      table.id === selectedTable.id ? { ...table, rows: updater(table.rows) } : table
+    )));
+  };
+
+  const startNewTable = () => {
+    setCreatingNew(true);
+    setEditingConfig(true);
+    setDraft(departmentTableDraftFromRecord(null, session, departmentLabelFor));
+  };
+
+  const selectTable = (tableId: string) => {
+    setCreatingNew(false);
+    navigate(`/department-tables?table=${encodeURIComponent(tableId)}`);
+  };
+
+  const updateDraftColumn = (index: number, patch: Partial<DepartmentTableColumn>) => {
+    setDraft((current) => ({
+      ...current,
+      columns: current.columns.map((column, columnIndex) => (columnIndex === index ? { ...column, ...patch } : column))
+    }));
+  };
+
+  const addDraftColumn = () => {
+    setDraft((current) => (
+      current.columns.length >= 24 ? current : { ...current, columns: [...current.columns, emptyDepartmentTableColumn()] }
+    ));
+  };
+
+  const removeDraftColumn = (index: number) => {
+    setDraft((current) => (
+      current.columns.length <= 1 ? current : { ...current, columns: current.columns.filter((_, columnIndex) => columnIndex !== index) }
+    ));
+  };
+
+  const saveTableConfig = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (savingTable) return;
+    const columns = sanitizedDepartmentTableColumns(draft.columns);
+    if (draft.title.trim().length < 2) {
+      setAlert("Tablo adı en az 2 karakter olmalı.");
+      return;
+    }
+    if (!columns.length) {
+      setAlert("En az bir kolon ekleyin.");
+      return;
+    }
+
+    const isNewTable = creatingNew || !selectedTable;
+    setSavingTable(true);
+    try {
+      const response = await apiRequest<{ item: DepartmentTableRecord }>(
+        isNewTable ? "/department-tables" : `/department-tables/${encodeURIComponent(selectedTable.id)}`,
+        {
+          method: isNewTable ? "POST" : "PATCH",
+          body: JSON.stringify({
+            departmentId: session.departmentId,
+            title: draft.title.trim(),
+            description: draft.description.trim(),
+            columns,
+            showInMenu: draft.showInMenu,
+            enabled: true
+          })
+        }
+      );
+      replaceTable(response.item);
+      setCreatingNew(false);
+      setEditingConfig(false);
+      setAlert(isNewTable ? "Departman tablosu oluşturuldu." : "Departman tablosu güncellendi.");
+      navigate(`/department-tables?table=${encodeURIComponent(response.item.id)}`);
+    } catch {
+      setAlert("Departman tablosu kaydedilemedi.");
+    } finally {
+      setSavingTable(false);
+    }
+  };
+
+  const clearRowForm = () => {
+    setRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, ""])));
+    setRowNote("");
+  };
+
+  const rowValuesFromDraft = (table: DepartmentTableRecord, values: Record<string, string>) => (
+    Object.fromEntries(table.columns.map((column) => [column.id, (values[column.id] ?? "").trim()]))
+  );
+
+  const addRow = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedTable || savingRow) return;
+    const values = rowValuesFromDraft(selectedTable, rowDraft);
+    if (!Object.values(values).some(Boolean) && !rowNote.trim()) {
+      setAlert("Satır için en az bir alan doldurun.");
+      return;
+    }
+
+    setSavingRow(true);
+    try {
+      const response = await apiRequest<{ item: DepartmentTableRow }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows`, {
+        method: "POST",
+        body: JSON.stringify({ values, note: rowNote.trim() })
+      });
+      patchSelectedTableRows((rows) => [response.item, ...rows]);
+      clearRowForm();
+      setAlert("Satır eklendi.");
+    } catch {
+      setAlert("Satır eklenemedi.");
+    } finally {
+      setSavingRow(false);
+    }
+  };
+
+  const startEditRow = (row: DepartmentTableRow) => {
+    setEditingRowId(row.id);
+    setEditingRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, row.values[column.id] ?? ""])));
+    setEditingRowNote(row.note);
+  };
+
+  const saveRow = async (rowId: string) => {
+    if (!selectedTable || !editingRowId) return;
+    const values = rowValuesFromDraft(selectedTable, editingRowDraft);
+    try {
+      const response = await apiRequest<{ item: DepartmentTableRow }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows/${encodeURIComponent(rowId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ values, note: editingRowNote.trim() })
+      });
+      patchSelectedTableRows((rows) => rows.map((row) => (row.id === rowId ? response.item : row)));
+      setEditingRowId("");
+      setEditingRowDraft({});
+      setEditingRowNote("");
+      setAlert("Satır güncellendi.");
+    } catch {
+      setAlert("Satır güncellenemedi.");
+    }
+  };
+
+  const deleteRow = async (rowId: string) => {
+    if (!selectedTable || !window.confirm("Satır silinsin mi?")) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows/${encodeURIComponent(rowId)}`, { method: "DELETE" });
+      patchSelectedTableRows((rows) => rows.filter((row) => row.id !== rowId));
+      setAlert("Satır silindi.");
+    } catch {
+      setAlert("Satır silinemedi.");
+    }
+  };
+
+  const exportSelectedTable = () => {
+    if (!selectedTable) return;
+    downloadExcelWorkbook(`nodera-${selectedTable.departmentId}-${selectedTable.slug}.xls`, [{
+      title: `${selectedTable.departmentName} - ${selectedTable.title}`,
+      headers: [...selectedTable.columns.map((column) => column.label), "Not", "Güncelleme"],
+      rows: selectedTable.rows.map((row) => [
+        ...selectedTable.columns.map((column) => row.values[column.id] ?? ""),
+        row.note,
+        formatDateTime(row.updatedAt)
+      ])
+    }]);
+  };
+
+  const canSaveTableConfig = creatingNew ? canCreateTable : Boolean(selectedTable?.canConfigure);
+
+  return (
+    <div className="ui-list-stack department-table-page">
+      <div className="card">
+        <div className="card-header">
+          <span>
+            <span className="card-title">Departman Tabloları</span>
+            <span className="ui-meta">{visibleTables.length} tablo / {visibleTables.reduce((total, table) => total + table.rows.length, 0)} satır</span>
+          </span>
+          <div className="ui-cluster-end">
+            {selectedTable && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={exportSelectedTable}>
+                <Download size={13} /> Exceli İndir
+              </button>
+            )}
+            {selectedTable?.canConfigure && !creatingNew && (
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingConfig((current) => !current)}>
+                <PenLine size={13} /> Tabloyu Düzenle
+              </button>
+            )}
+            {canCreateTable && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={startNewTable}>
+                <Plus size={13} /> Yeni Tablo
+              </button>
+            )}
+          </div>
+        </div>
+        {visibleTables.length > 0 && (
+          <div className="card-body">
+            <div className="jobs-view-tabs department-table-tabs" role="tablist" aria-label="Departman tabloları">
+              {visibleTables.map((table) => (
+                <button
+                  key={table.id}
+                  type="button"
+                  className={`jobs-view-tab ${!creatingNew && selectedTable?.id === table.id ? "active" : ""}`}
+                  onClick={() => selectTable(table.id)}
+                >
+                  {table.title} ({table.rows.length})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {(creatingNew || editingConfig || (!selectedTable && canCreateTable)) && canSaveTableConfig && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">{creatingNew || !selectedTable ? "Yeni Departman Tablosu" : "Tablo Ayarları"}</span>
+            <span className="badge badge-inprogress">{departmentLabelFor(session.departmentId)}</span>
+          </div>
+          <form className="card-body ui-body-form" onSubmit={saveTableConfig}>
+            <div className="form-row">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Tablo Adı <span className="required">*</span></label>
+                <input className="form-control" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} maxLength={120} />
+              </div>
+              <label className="checklist-item checklist-clickable department-table-menu-toggle">
+                <input type="checkbox" checked={draft.showInMenu} onChange={(event) => setDraft((current) => ({ ...current, showInMenu: event.target.checked }))} />
+                <span>Menüde Göster</span>
+              </label>
+            </div>
+            <div className="form-group ui-form-compact">
+              <label className="form-label">Açıklama</label>
+              <textarea className="form-control" value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} rows={2} maxLength={1000} />
+            </div>
+            <div className="department-table-column-list">
+              {draft.columns.map((column, index) => (
+                <div key={`${column.id || "new"}-${index}`} className="department-table-column-row">
+                  <label className="shift-roster-field">
+                    <span>Kolon</span>
+                    <input className="form-control" value={column.label} onChange={(event) => updateDraftColumn(index, { label: event.target.value })} maxLength={80} />
+                  </label>
+                  <label className="shift-roster-field">
+                    <span>Tip</span>
+                    <select className="form-control" value={column.type} onChange={(event) => updateDraftColumn(index, { type: event.target.value as DepartmentTableColumn["type"] })}>
+                      {departmentTableColumnTypeOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeDraftColumn(index)} disabled={draft.columns.length <= 1}>
+                    <Trash2 size={13} /> Sil
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="ui-cluster-end">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addDraftColumn} disabled={draft.columns.length >= 24}>
+                <Plus size={13} /> Kolon Ekle
+              </button>
+              {selectedTable && !creatingNew && (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingConfig(false)}>
+                  Vazgeç
+                </button>
+              )}
+              <button type="submit" className="btn btn-primary btn-sm" disabled={savingTable}>
+                <Save size={13} /> {savingTable ? "Kaydediliyor" : "Kaydet"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {selectedTable && !creatingNew ? (
+        <div className="card">
+          <div className="card-header">
+            <span>
+              <span className="card-title">{selectedTable.title}</span>
+              <span className="ui-meta">{selectedTable.departmentName} / {selectedTable.rows.length} satır</span>
+            </span>
+            <span className={`badge ${selectedTable.canEditRows ? "badge-completed" : "badge-pending"}`}>
+              {selectedTable.canEditRows ? "Düzenlenebilir" : "Görüntüleme"}
+            </span>
+          </div>
+          <div className="card-body ui-list-stack">
+            {selectedTable.description && <div className="module-helper">{selectedTable.description}</div>}
+            {selectedTable.canEditRows && (
+              <form className="department-table-row-form" onSubmit={addRow}>
+                {selectedTable.columns.map((column) => (
+                  <label key={column.id} className="department-table-field">
+                    <span>{column.label}</span>
+                    <input
+                      className="form-control"
+                      type={departmentTableInputType(column.type)}
+                      value={rowDraft[column.id] ?? ""}
+                      onChange={(event) => setRowDraft((current) => ({ ...current, [column.id]: event.target.value }))}
+                    />
+                  </label>
+                ))}
+                <label className="department-table-field">
+                  <span>Not</span>
+                  <input className="form-control" value={rowNote} onChange={(event) => setRowNote(event.target.value)} maxLength={2000} />
+                </label>
+                <button type="submit" className="btn btn-primary btn-sm department-table-row-submit" disabled={savingRow}>
+                  <Plus size={13} /> {savingRow ? "Ekleniyor" : "Satır Ekle"}
+                </button>
+              </form>
+            )}
+            <div className="table-scroll department-table-scroll">
+              <table className="data-table department-data-table">
+                <thead>
+                  <tr>
+                    {selectedTable.columns.map((column) => (
+                      <th key={column.id}>{column.label}<span className="ui-subtle"> {departmentTableColumnTypeLabel(column.type)}</span></th>
+                    ))}
+                    <th>Not</th>
+                    <th>Güncelleme</th>
+                    {selectedTable.canEditRows && <th>İşlem</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedTable.rows.length ? selectedTable.rows.map((row) => {
+                    const editing = editingRowId === row.id;
+                    return (
+                      <tr key={row.id}>
+                        {selectedTable.columns.map((column) => (
+                          <td key={column.id}>
+                            {editing ? (
+                              <input
+                                className="form-control form-control-sm"
+                                type={departmentTableInputType(column.type)}
+                                value={editingRowDraft[column.id] ?? ""}
+                                onChange={(event) => setEditingRowDraft((current) => ({ ...current, [column.id]: event.target.value }))}
+                              />
+                            ) : (
+                              row.values[column.id] || "-"
+                            )}
+                          </td>
+                        ))}
+                        <td>
+                          {editing ? (
+                            <input className="form-control form-control-sm" value={editingRowNote} onChange={(event) => setEditingRowNote(event.target.value)} maxLength={2000} />
+                          ) : (
+                            row.note || "-"
+                          )}
+                        </td>
+                        <td>{formatDateTime(row.updatedAt)}</td>
+                        {selectedTable.canEditRows && (
+                          <td>
+                            <div className="td-actions">
+                              {editing ? (
+                                <>
+                                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveRow(row.id)}>
+                                    <Save size={13} /> Kaydet
+                                  </button>
+                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingRowId("")}>
+                                    Vazgeç
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEditRow(row)}>
+                                    <PenLine size={13} /> Düzenle
+                                  </button>
+                                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteRow(row.id)}>
+                                    <Trash2 size={13} /> Sil
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan={selectedTable.columns.length + (selectedTable.canEditRows ? 3 : 2)}>
+                        <div className="ui-empty-inline">Kayıt yok.</div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        !canCreateTable && <EmptyState title="Departman tablosu yok" description="Bu departman için tablo oluşturma yetkisi olan kullanıcı işlem yapabilir." />
+      )}
     </div>
   );
 }
@@ -8350,12 +10897,37 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
   );
 }
 
+function isSystemNotification(notification: NotificationRecord) {
+  const channel = notification.channel.trim().toUpperCase();
+  const title = notification.title.toLocaleLowerCase("tr-TR");
+
+  return (
+    channel === "SHIFT_START_REMINDER" ||
+    channel === "APP_UPDATE" ||
+    channel.startsWith("APP_") ||
+    channel.includes("UPDATE") ||
+    title.includes("vardiya girişini başlat") ||
+    title.includes("vardiya girisini baslat") ||
+    title.includes("güncel değil") ||
+    title.includes("guncel degil") ||
+    title.includes("güncelle") ||
+    title.includes("guncelle")
+  );
+}
+
+function isReminderNotification(notification: NotificationRecord) {
+  const title = notification.title.toLocaleLowerCase("tr-TR");
+  const body = notification.body.toLocaleLowerCase("tr-TR");
+  return title.includes("hatırlatma") || title.includes("hatirlatma") || body.includes("hatırlatma") || body.includes("hatirlatma");
+}
+
 function RemindersPage({
   completeReminder,
   departmentLabelFor,
   handleCreateReminder,
   markNotificationRead,
   markNotificationsRead,
+  navigate,
   notifications,
   reminderDraft,
   reminderRecipients,
@@ -8365,16 +10937,54 @@ function RemindersPage({
 }: RenderContext) {
   const [formOpen, setFormOpen] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
+  const [notificationFilter, setNotificationFilter] = useState<"all" | "operation" | "system" | "due">("all");
   const visibleReminders = reminders.filter((reminder) => reminder.assignedTo.id === session.id || reminder.createdBy.id === session.id);
-  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
-  const dueReminderCount = visibleReminders.filter((reminder) => !reminder.completedAt && new Date(reminder.remindAt).getTime() <= Date.now() + 60 * 60 * 1000).length;
+  const systemNotifications = notifications.filter(isSystemNotification);
+  const operationNotifications = notifications.filter((notification) => !isSystemNotification(notification));
+  const reminderNotifications = operationNotifications.filter(isReminderNotification);
+  const filteredNotifications = notificationFilter === "operation"
+    ? operationNotifications
+    : notificationFilter === "system"
+      ? systemNotifications
+      : notificationFilter === "due"
+        ? reminderNotifications
+        : notifications;
+  const notificationFilterOptions = [
+    { id: "operation" as const, label: "Operasyon", count: operationNotifications.length },
+    { id: "system" as const, label: "Sistem", count: systemNotifications.length },
+    { id: "due" as const, label: "Yaklaşan", count: reminderNotifications.length },
+    { id: "all" as const, label: "Toplam", count: notifications.length }
+  ];
+  const selectedNotificationFilter = notificationFilterOptions.find((option) => option.id === notificationFilter) ?? notificationFilterOptions[3];
   const departmentChief = reminderRecipients.find((user) => ["technicalChief", "floorChief"].includes(user.roleId));
   const departmentManager = reminderRecipients.find((user) => user.roleId !== "staff" && !["technicalChief", "floorChief"].includes(user.roleId) && user.id !== session.id);
   const departmentStaff = reminderRecipients.filter((user) => user.roleId === "staff" && user.id !== session.id);
+  const openNotification = (notification: NotificationRecord) => {
+    const targetPath = notificationTargetPath(notification);
+    void markNotificationRead(notification.id);
+    navigate(targetPath);
+  };
   const openReminderForm = (assignedToId: string) => {
     setReminderDraft((draft) => ({ ...draft, assignedToId, remindAt: draft.remindAt || dateTimeLocalValue(new Date()) }));
     setFormOpen(true);
   };
+  const renderNotificationList = (items: NotificationRecord[], emptyText: string) => (
+    <div className="notification-list-shell notification-list-grouped">
+      {items.length ? items.map((notification) => (
+        <button key={notification.id} className={`notif-item ${notification.readAt ? "" : "unread"}`} onClick={() => openNotification(notification)}>
+          <div className={`notif-dot ${notification.readAt ? "success" : isSystemNotification(notification) ? "warning" : "info"}`} />
+          <div className="notif-content">
+            <div className="notif-title-row">
+              <span className="notif-title">{notification.title}</span>
+              <span className={`notification-kind-badge ${isSystemNotification(notification) ? "system" : "operation"}`}>{isSystemNotification(notification) ? "Sistem" : "Operasyon"}</span>
+            </div>
+            <div className="notif-msg">{notification.body}</div>
+            <div className="notif-time">{formatDateTime(notification.createdAt)}</div>
+          </div>
+        </button>
+      )) : <div className="ui-empty-inline ui-empty-inline-lg">{emptyText}</div>}
+    </div>
+  );
   return (
     <div className="side-panel-grid">
       <div>
@@ -8436,7 +11046,7 @@ function RemindersPage({
                 />
               </div>
               <div className="form-group ui-form-compact">
-                <label className="form-label">Fotoğraflar</label>
+                <label className="form-label">Fotoğraf / Video</label>
                 <PhotoPicker photos={reminderDraft.photos} setPhotos={(updater) => setReminderDraft((draft) => ({ ...draft, photos: updater(draft.photos) }))} />
               </div>
               <div className="form-row reminder-submit-row">
@@ -8457,8 +11067,9 @@ function RemindersPage({
                   {reminder.photos.length > 0 && (
                     <div className="photo-preview-grid compact">
                       {reminder.photos.map((photo, index) => (
-                        <button type="button" className="photo-preview photo-preview-button" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || "Fotoğraf"} büyüt`}>
-                          <Image src={photo.dataUrl} alt={photo.name} width={180} height={120} unoptimized />
+                        <button type="button" className="photo-preview photo-preview-button" key={photo.id ?? `${photo.name}-${index}`} onClick={() => setPreviewPhoto(photo)} aria-label={`${photo.name || (isVideoAttachment(photo) ? "Video" : "Fotoğraf")} büyüt`}>
+                          <MediaPreview photo={photo} width={180} height={120} />
+                          {isVideoAttachment(photo) ? <span className="photo-video-badge"><Video size={12} /> Video</span> : null}
                         </button>
                       ))}
                     </div>
@@ -8482,23 +11093,33 @@ function RemindersPage({
             <span className="card-title">Bildirimler</span>
             <button type="button" className="btn btn-ghost btn-sm" onClick={markNotificationsRead}>Tümünü Okundu Say</button>
           </div>
-          <div className="notification-summary">
-            <div><strong>{unreadCount}</strong><span>Okunmadı</span></div>
-            <div><strong>{dueReminderCount}</strong><span>Yaklaşan</span></div>
-            <div><strong>{notifications.length}</strong><span>Toplam</span></div>
+          <div className="notification-summary notification-filter-summary">
+            {notificationFilterOptions.map((option) => {
+              const active = option.id === notificationFilter;
+              const disabled = option.count === 0 && option.id !== "all";
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`notification-filter-card ${active ? "active" : ""}`}
+                  disabled={disabled}
+                  aria-pressed={active}
+                  onClick={() => setNotificationFilter(option.id)}
+                >
+                  <strong>{option.count}</strong>
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
           </div>
-          <div className="notification-list-shell">
-            {notifications.length ? notifications.map((notification) => (
-              <button key={notification.id} className={`notif-item ${notification.readAt ? "" : "unread"}`} onClick={() => markNotificationRead(notification.id)}>
-                <div className={`notif-dot ${notification.readAt ? "success" : "info"}`} />
-                <div className="notif-content">
-                  <div className="notif-title">{notification.title}</div>
-                  <div className="notif-msg">{notification.body}</div>
-                  <div className="notif-time">{formatDateTime(notification.createdAt)}</div>
-                </div>
-              </button>
-            )) : <div className="ui-empty-inline ui-empty-inline-lg">Bildirim yok</div>}
+          <div className="notification-active-filter">
+            <strong>{selectedNotificationFilter.label}</strong>
+            <span>{selectedNotificationFilter.count} kayıt</span>
           </div>
+          {renderNotificationList(
+            filteredNotifications,
+            notificationFilter === "all" ? "Bildirim yok" : `${selectedNotificationFilter.label} bildirimi yok`
+          )}
         </div>
       </div>
       <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
@@ -8743,18 +11364,25 @@ function HotelPanelPage({
           </span>
         </div>
         <div className="card-body ui-body-form">
-          <label className="maintenance-toggle-row">
-            <input
-              type="checkbox"
-              checked={maintenanceStatus.enabled}
-              disabled={savingMaintenanceMode}
-              onChange={(event) => void updateMaintenanceMode(event.target.checked)}
-            />
-            <span>
+          <div className="maintenance-action-row">
+            <span className="maintenance-action-copy">
               <strong>{maintenanceStatus.enabled ? "Bakım modu açık" : "Bakım modu kapalı"}</strong>
               <small>Tüm otel sayfalarında bakım ekranı gösterilir; Tenant Console açık kalır.</small>
             </span>
-          </label>
+            <button
+              type="button"
+              className={`btn ${maintenanceStatus.enabled ? "btn-start" : "btn-warning"} maintenance-action-button`}
+              disabled={savingMaintenanceMode}
+              onClick={() => void updateMaintenanceMode(!maintenanceStatus.enabled)}
+            >
+              {maintenanceStatus.enabled ? <XCircle size={15} /> : <Wrench size={15} />}
+              {savingMaintenanceMode
+                ? "Güncelleniyor"
+                : maintenanceStatus.enabled
+                  ? "Bakım modundan çık"
+                  : "Bakım modunu başlat"}
+            </button>
+          </div>
           <div className="form-row maintenance-message-row">
             <div className="form-group ui-form-compact">
               <label className="form-label" htmlFor="maintenanceMessage">Bakım Mesajı</label>
@@ -9129,9 +11757,11 @@ function DepartmentManagementCard({
   );
 }
 
-function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, setAlert }: RenderContext) {
+function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, rememberAuthenticatedPassword, session, setAlert, setDepartmentWorkPolicy }: RenderContext) {
   const [profileDraft, setProfileDraft] = useState({
+    fullName: session.fullName,
     username: session.username,
+    email: session.email,
     currentPassword: ""
   });
   const [savingProfile, setSavingProfile] = useState(false);
@@ -9141,38 +11771,61 @@ function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, set
     confirmPassword: ""
   });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState<WorkOrderPolicyRecord | null>(departmentWorkPolicy);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const policyDepartmentLabel = policyDraft ? departmentLabelFor(policyDraft.departmentId) : departmentLabelFor(session.departmentId);
+  const canConfigurePolicy = Boolean(policyDraft?.canConfigure) || canManageJobStatus(session, { departmentId: session.departmentId });
 
   useEffect(() => {
-    setProfileDraft({ username: session.username, currentPassword: "" });
-  }, [session.id, session.username]);
+    setProfileDraft({ fullName: session.fullName, username: session.username, email: session.email, currentPassword: "" });
+  }, [session.email, session.fullName, session.id, session.username]);
+
+  useEffect(() => {
+    setPolicyDraft(departmentWorkPolicy);
+  }, [departmentWorkPolicy]);
 
   async function handleProfileChange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (savingProfile) return;
 
+    const fullName = profileDraft.fullName.trim();
     const username = profileDraft.username.trim();
+    const email = profileDraft.email.trim();
+    if (fullName.length < 2) {
+      setAlert("Ad soyad en az 2 karakter olmalı.");
+      return;
+    }
     if (username.length < 2) {
       setAlert("Kullanıcı adı en az 2 karakter olmalı.");
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAlert("Geçerli bir e-posta adresi girin.");
+      return;
+    }
     if (!profileDraft.currentPassword) {
-      setAlert("Kullanıcı adını değiştirmek için mevcut şifre zorunludur.");
+      setAlert("Profil bilgilerini değiştirmek için mevcut şifre zorunludur.");
       return;
     }
 
+    const previousFullName = session.fullName;
     const previousUsername = session.username;
+    const previousEmail = session.email;
     setSavingProfile(true);
     try {
       const response = await apiRequest<{ ok: boolean; user: DemoUser }>("/auth/profile", {
         method: "PATCH",
         body: JSON.stringify({
+          fullName,
           username,
+          email,
           currentPassword: profileDraft.currentPassword
         })
       });
       rememberAuthenticatedPassword(response.user, profileDraft.currentPassword);
-      setProfileDraft({ username: response.user.username, currentPassword: "" });
-      setAlert(previousUsername === response.user.username ? "Profil bilgileri güncel." : "Kullanıcı adı güncellendi.");
+      setProfileDraft({ fullName: response.user.fullName, username: response.user.username, email: response.user.email, currentPassword: "" });
+      const profileChanged = previousFullName !== response.user.fullName || previousUsername !== response.user.username || previousEmail.toLowerCase() !== response.user.email.toLowerCase();
+      setAlert(profileChanged ? "Profil bilgileri güncellendi." : "Profil bilgileri güncel.");
       await refreshData();
     } catch (error) {
       setAlert(profileUpdateErrorMessage(error));
@@ -9217,6 +11870,41 @@ function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, set
     }
   }
 
+  const togglePolicyUser = (field: "assignmentAuthorityUserIds" | "deleteAuthorityUserIds", userId: string) => {
+    setPolicyDraft((draft) => {
+      if (!draft) return draft;
+      const values = new Set(draft[field]);
+      if (values.has(userId)) {
+        values.delete(userId);
+      } else {
+        values.add(userId);
+      }
+      return { ...draft, [field]: Array.from(values) };
+    });
+  };
+
+  async function saveDepartmentPolicy() {
+    if (!policyDraft || savingPolicy) return;
+    setSavingPolicy(true);
+    try {
+      const updated = await apiRequest<WorkOrderPolicyRecord>(`/work-order-policies/${encodeURIComponent(policyDraft.departmentId || session.departmentId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          assignmentAuthorityUserIds: policyDraft.assignmentAuthorityUserIds,
+          deleteAuthorityUserIds: policyDraft.deleteAuthorityUserIds
+        })
+      });
+      setPolicyDraft(updated);
+      setDepartmentWorkPolicy(updated);
+      setAlert("İş havuzu yetkileri güncellendi.");
+      await refreshData();
+    } catch {
+      setAlert("İş havuzu yetkileri kaydedilemedi.");
+    } finally {
+      setSavingPolicy(false);
+    }
+  }
+
   return (
     <>
       <div className="two-column-grid">
@@ -9230,12 +11918,24 @@ function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, set
               <div className="ui-profile-role">{roleLabel(session.roleId)}</div>
             </div>
             <div className="form-group">
-              <label className="form-label">Ad Soyad</label>
-              <input className="form-control" value={session.fullName} disabled />
+              <label className="form-label" htmlFor="settingsFullName">Ad Soyad <span className="required">*</span></label>
+              <input
+                id="settingsFullName"
+                className="form-control"
+                value={profileDraft.fullName}
+                onChange={(event) => setProfileDraft((draft) => ({ ...draft, fullName: event.target.value }))}
+                autoComplete="name"
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">E-posta</label>
-              <input className="form-control" value={session.email} disabled />
+              <label className="form-label" htmlFor="settingsEmail">E-posta <span className="required">*</span></label>
+              <input
+                id="settingsEmail"
+                className="form-control"
+                value={profileDraft.email}
+                onChange={(event) => setProfileDraft((draft) => ({ ...draft, email: event.target.value }))}
+                autoComplete="email"
+              />
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="settingsUsername">Kullanıcı Adı <span className="required">*</span></label>
@@ -9255,7 +11955,7 @@ function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, set
                 type="password"
                 value={profileDraft.currentPassword}
                 onChange={(event) => setProfileDraft((draft) => ({ ...draft, currentPassword: event.target.value }))}
-                placeholder="Kullanıcı adı değişikliği için"
+                placeholder="Profil değişikliği için"
                 autoComplete="current-password"
               />
             </div>
@@ -9309,6 +12009,51 @@ function SettingsPage({ refreshData, rememberAuthenticatedPassword, session, set
             </button>
           </form>
         </div>
+
+        {canConfigurePolicy && (
+          <div className="card">
+            <div className="card-header"><span className="card-title"><ShieldCheck size={15} /> {policyDepartmentLabel} İş Havuzu Yetkileri</span></div>
+            <div className="card-body ui-list-stack">
+              {policyDraft ? (
+                <>
+                  <div className="policy-grid policy-grid-header">
+                    <span>Personel</span>
+                    <span>Atama</span>
+                    <span>Silme</span>
+                  </div>
+                  {policyDraft.users.map((user) => {
+                    const lockedManager = canManageJobStatus(user, { departmentId: policyDraft.departmentId });
+                    return (
+                      <div className="policy-grid policy-user-row" key={user.id}>
+                        <span>
+                          <strong>{user.fullName}</strong>
+                          <small>{roleLabel(user.roleId)}</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={lockedManager || policyDraft.assignmentAuthorityUserIds.includes(user.id)}
+                          disabled={lockedManager}
+                          onChange={() => togglePolicyUser("assignmentAuthorityUserIds", user.id)}
+                        />
+                        <input
+                          type="checkbox"
+                          checked={lockedManager || policyDraft.deleteAuthorityUserIds.includes(user.id)}
+                          disabled={lockedManager}
+                          onChange={() => togglePolicyUser("deleteAuthorityUserIds", user.id)}
+                        />
+                      </div>
+                    );
+                  })}
+                  <button type="button" className="btn btn-primary btn-full" disabled={savingPolicy} onClick={saveDepartmentPolicy}>
+                    <Save size={15} /> {savingPolicy ? "Kaydediliyor" : "Yetkileri Kaydet"}
+                  </button>
+                </>
+              ) : (
+                <div className="ui-muted">İş havuzu yetkileri yükleniyor.</div>
+              )}
+            </div>
+          </div>
+        )}
 
         {session.roleId === "generalManager" && (
           <>

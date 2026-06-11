@@ -2,12 +2,15 @@ package com.example.nodera
 
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.widget.Toast
 
@@ -96,9 +99,20 @@ class HotelOpsAndroidBridge(context: Context) {
         return openTrustedDownload(appContext, url)
     }
 
+    @JavascriptInterface
+    fun saveImageToGallery(dataUrl: String?, fileName: String?): Boolean {
+        return saveMediaDataUrl(appContext, dataUrl, fileName, "image/jpeg")
+    }
+
+    @JavascriptInterface
+    fun saveMediaToGallery(dataUrl: String?, fileName: String?, mimeType: String?): Boolean {
+        return saveMediaDataUrl(appContext, dataUrl, fileName, mimeType)
+    }
+
     companion object {
         private const val SITE_ORIGIN = "https://noderasoftware.com"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+        private const val DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
         private val pendingApkDownloads = mutableMapOf<Long, String>()
         private var downloadReceiverRegistered = false
 
@@ -136,6 +150,103 @@ class HotelOpsAndroidBridge(context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             return runCatching { context.startActivity(intent) }.isSuccess
+        }
+
+        private fun saveMediaDataUrl(context: Context, rawDataUrl: String?, rawFileName: String?, rawMimeType: String?): Boolean {
+            val parsed = parseDataUrl(rawDataUrl, rawMimeType) ?: return false
+            val resolver = context.contentResolver
+            val isVideo = parsed.mimeType.startsWith("video/", ignoreCase = true)
+            val collection = if (isVideo) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                }
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                }
+            }
+
+            val displayName = mediaDisplayName(rawFileName, parsed.mimeType, isVideo)
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, parsed.mimeType)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val directory = if (isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "$directory/HotelOps")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+            }
+
+            val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return false
+            return runCatching {
+                resolver.openOutputStream(uri)?.use { output ->
+                    output.write(parsed.bytes)
+                    output.flush()
+                } ?: error("MediaStore output stream acilamadi")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+
+                val label = if (isVideo) "Video kaydedildi." else "Fotograf kaydedildi."
+                Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                true
+            }.getOrElse {
+                runCatching { resolver.delete(uri, null, null) }
+                Toast.makeText(context, "Medya kaydedilemedi.", Toast.LENGTH_SHORT).show()
+                false
+            }
+        }
+
+        private data class ParsedMediaDataUrl(val mimeType: String, val bytes: ByteArray)
+
+        private fun parseDataUrl(rawDataUrl: String?, fallbackMimeType: String?): ParsedMediaDataUrl? {
+            val dataUrl = rawDataUrl?.trim().orEmpty()
+            if (!dataUrl.startsWith("data:", ignoreCase = true)) return null
+
+            val commaIndex = dataUrl.indexOf(',')
+            if (commaIndex <= 5) return null
+
+            val metadata = dataUrl.substring(5, commaIndex)
+            val base64 = dataUrl.substring(commaIndex + 1)
+            if (!metadata.contains(";base64", ignoreCase = true) || base64.isBlank()) return null
+
+            val dataMimeType = metadata.substringBefore(";").takeIf { it.contains("/") }
+            val mimeType = (fallbackMimeType?.trim()?.takeIf { it.contains("/") }
+                ?: dataMimeType
+                ?: DEFAULT_IMAGE_MIME_TYPE)
+
+            val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return null
+            if (bytes.isEmpty()) return null
+
+            return ParsedMediaDataUrl(mimeType, bytes)
+        }
+
+        private fun mediaDisplayName(rawFileName: String?, mimeType: String, isVideo: Boolean): String {
+            val fallbackExtension = when {
+                mimeType.contains("png", ignoreCase = true) -> "png"
+                mimeType.contains("webp", ignoreCase = true) -> "webp"
+                mimeType.contains("quicktime", ignoreCase = true) -> "mov"
+                mimeType.contains("webm", ignoreCase = true) -> "webm"
+                isVideo -> "mp4"
+                else -> "jpg"
+            }
+            val fallbackName = if (isVideo) "hotelops-video" else "hotelops-foto"
+            val cleaned = rawFileName
+                ?.substringAfterLast('/')
+                ?.substringAfterLast('\\')
+                ?.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                ?.trim('.', ' ')
+                ?.takeIf { it.isNotBlank() }
+                ?: "$fallbackName-${System.currentTimeMillis()}.$fallbackExtension"
+
+            return if (cleaned.contains('.')) cleaned else "$cleaned.$fallbackExtension"
         }
 
         @Synchronized

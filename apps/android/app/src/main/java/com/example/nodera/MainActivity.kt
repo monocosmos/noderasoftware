@@ -18,6 +18,7 @@ import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.view.animation.ScaleAnimation
 import android.webkit.PermissionRequest
+import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -55,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private var pendingCameraPermissionRequest: PermissionRequest? = null
     private var pendingFileChooserCapture = false
     private var pendingFileChooserAllowMultiple = false
+    private var pendingFileChooserAcceptTypes: Array<String> = emptyArray()
+    @Volatile private var pendingMediaPickerKind = ""
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +88,29 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
         showSplashThenLoadWebView()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openNotificationRoute(intent)
+    }
+
+    override fun onPause() {
+        if (::webView.isInitialized) {
+            webView.onPause()
+            webView.pauseTimers()
+        }
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) {
+            webView.resumeTimers()
+            webView.onResume()
+        }
+        HotelOpsPushRegistrar.sync(this)
     }
 
     private fun configureSystemBars() {
@@ -125,6 +151,44 @@ class MainActivity : ComponentActivity() {
             systemBarInsets.bottom
         )
         webView.layoutParams = params
+    }
+
+    private fun routeUrlFromIntent(intent: Intent?): String? {
+        val routePath = intent?.getStringExtra(HotelOpsNotifier.EXTRA_ROUTE_PATH)
+            ?: intent?.getStringExtra("path")
+            ?: return null
+        return hotelUrlForRoutePath(routePath)
+    }
+
+    private fun hotelUrlForRoutePath(routePath: String?): String? {
+        val rawPath = routePath?.trim().orEmpty()
+        if (rawPath.isBlank() || rawPath.startsWith("//")) return null
+
+        if (rawPath.startsWith("https://")) {
+            val uri = Uri.parse(rawPath)
+            val host = uri.host?.lowercase()
+            val path = uri.path.orEmpty()
+            if ((host == "noderasoftware.com" || host == "www.noderasoftware.com") && (path == "/hotel" || path.startsWith("/hotel/"))) {
+                return rawPath
+            }
+            return null
+        }
+
+        val normalizedPath = when {
+            rawPath == "/" -> "/hotel/"
+            rawPath.startsWith("/hotel/") || rawPath == "/hotel" -> rawPath
+            rawPath.startsWith("/") -> "/hotel$rawPath"
+            else -> return null
+        }
+
+        return "https://noderasoftware.com$normalizedPath"
+    }
+
+    private fun openNotificationRoute(intent: Intent?) {
+        val url = routeUrlFromIntent(intent) ?: return
+        if (::webView.isInitialized) {
+            webView.loadUrl(url)
+        }
     }
 
     private fun showSplashThenLoadWebView() {
@@ -217,17 +281,24 @@ class MainActivity : ComponentActivity() {
                     pendingFilePathCallback?.onReceiveValue(null)
                     pendingFilePathCallback = filePathCallback
 
-                    val capture = fileChooserParams?.isCaptureEnabled == true
+                    val mediaPickerKind = consumeMediaPickerKind()
+                    val capture = when (mediaPickerKind) {
+                        "camera", "video" -> true
+                        "gallery" -> false
+                        else -> fileChooserParams?.isCaptureEnabled == true
+                    }
                     val allowMultiple = fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                    val acceptTypes = fileChooserAcceptTypes(fileChooserParams, mediaPickerKind)
                     pendingFileChooserCapture = capture
                     pendingFileChooserAllowMultiple = allowMultiple
+                    pendingFileChooserAcceptTypes = acceptTypes
 
                     if (capture && !hasCameraPermission()) {
                         requestPermissions(arrayOf(Manifest.permission.CAMERA), cameraPermissionRequest)
                         return true
                     }
 
-                    return launchFileChooser(capture, allowMultiple)
+                    return launchFileChooser(capture, allowMultiple, acceptTypes)
                 }
             }
 
@@ -300,6 +371,7 @@ class MainActivity : ComponentActivity() {
             // JavaScript bridge sadece HotelOps tarafinin ihtiyaci olan sinirli
             // fonksiyonlari acar: runtime, surum, token ve update bildirimi.
             addJavascriptInterface(HotelOpsAndroidBridge(applicationContext), "HotelOpsAndroidShell")
+            addJavascriptInterface(MediaPickerBridge(), "HotelOpsMediaPicker")
         }
 
         root.setBackgroundColor(Color.rgb(5, 10, 25))
@@ -321,7 +393,7 @@ class MainActivity : ComponentActivity() {
             }
         )
 
-        webView.loadUrl(siteUrl)
+        webView.loadUrl(routeUrlFromIntent(intent) ?: siteUrl)
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -345,9 +417,9 @@ class MainActivity : ComponentActivity() {
         }.getOrDefault(false)
     }
 
-    private fun launchFileChooser(capture: Boolean, allowMultiple: Boolean): Boolean {
+    private fun launchFileChooser(capture: Boolean, allowMultiple: Boolean, acceptTypes: Array<String>): Boolean {
         return runCatching {
-            startActivityForResult(createImageChooserIntent(capture, allowMultiple), fileChooserRequest)
+            startActivityForResult(createMediaChooserIntent(capture, allowMultiple, acceptTypes), fileChooserRequest)
             true
         }.getOrElse {
             cancelPendingFileChooser()
@@ -361,33 +433,133 @@ class MainActivity : ComponentActivity() {
         pendingCameraPhotoUri = null
         pendingFileChooserCapture = false
         pendingFileChooserAllowMultiple = false
+        pendingFileChooserAcceptTypes = emptyArray()
+        pendingMediaPickerKind = ""
     }
 
-    private fun createImageChooserIntent(capture: Boolean, allowMultiple: Boolean): Intent {
-        val cameraIntent = if (hasCameraPermission()) createCameraCaptureIntent() else null
-        if (capture && cameraIntent != null) return cameraIntent
+    private fun consumeMediaPickerKind(): String {
+        val kind = pendingMediaPickerKind
+        pendingMediaPickerKind = ""
+        return kind
+    }
+
+    private inner class MediaPickerBridge {
+        @JavascriptInterface
+        fun setKind(kind: String?) {
+            pendingMediaPickerKind = when (kind?.trim()?.lowercase()) {
+                "camera", "video", "gallery" -> kind.trim().lowercase()
+                else -> ""
+            }
+        }
+    }
+
+    private fun fileChooserAcceptTypes(fileChooserParams: FileChooserParams?, mediaPickerKind: String): Array<String> {
+        when (mediaPickerKind) {
+            "camera" -> return arrayOf("image/*")
+            "video" -> return arrayOf("video/*")
+            "gallery" -> return arrayOf("image/*", "video/*")
+        }
+
+        val explicitTypes = fileChooserParams?.acceptTypes
+            ?.flatMap { it.split(",") }
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+        if (explicitTypes.isNotEmpty()) return explicitTypes.toTypedArray()
+
+        val fallbackIntent = runCatching { fileChooserParams?.createIntent() }.getOrNull()
+        val fallbackTypes = mutableListOf<String>()
+        fallbackIntent?.type
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let(fallbackTypes::add)
+        fallbackIntent
+            ?.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.let(fallbackTypes::addAll)
+        return fallbackTypes.distinct().toTypedArray()
+    }
+
+    private fun normalizedAcceptTypes(acceptTypes: Array<String>): List<String> {
+        return acceptTypes
+            .flatMap { it.split(",") }
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+    }
+
+    private fun acceptsImage(acceptTypes: Array<String>): Boolean {
+        val normalizedTypes = normalizedAcceptTypes(acceptTypes)
+        if (normalizedTypes.isEmpty()) return true
+        return normalizedTypes.any { normalized ->
+            normalized == "*/*" || normalized.startsWith("image/")
+        }
+    }
+
+    private fun acceptsVideo(acceptTypes: Array<String>): Boolean {
+        return normalizedAcceptTypes(acceptTypes).any { normalized ->
+            normalized == "*/*" || normalized.startsWith("video/")
+        }
+    }
+
+    private fun createMediaChooserIntent(capture: Boolean, allowMultiple: Boolean, acceptTypes: Array<String>): Intent {
+        val wantsImage = acceptsImage(acceptTypes)
+        val wantsVideo = acceptsVideo(acceptTypes)
+        val imageCaptureIntent = if (wantsImage && hasCameraPermission()) createCameraCaptureIntent() else null
+        val videoCaptureIntent = if (wantsVideo && hasCameraPermission()) createVideoCaptureIntent() else null
+
+        if (capture) {
+            if (wantsVideo && !wantsImage && videoCaptureIntent != null) return videoCaptureIntent
+            if (imageCaptureIntent != null) return imageCaptureIntent
+            if (videoCaptureIntent != null) return videoCaptureIntent
+        }
+
+        val mimeTypes = when {
+            wantsImage && wantsVideo -> arrayOf("image/*", "video/*")
+            wantsVideo -> arrayOf("video/*")
+            else -> arrayOf("image/*")
+        }
 
         val contentIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = "image/*"
+            type = if (mimeTypes.size > 1) "*/*" else mimeTypes[0]
+            if (mimeTypes.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple)
         }
 
-        return Intent.createChooser(contentIntent, "Fotoğraf seç").apply {
-            if (cameraIntent != null) {
-                putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+        val initialIntents = listOfNotNull(imageCaptureIntent, videoCaptureIntent).toTypedArray()
+        return Intent.createChooser(contentIntent, "Medya sec").apply {
+            if (initialIntents.isNotEmpty()) {
+                putExtra(Intent.EXTRA_INITIAL_INTENTS, initialIntents)
             }
         }
     }
 
     private fun createCameraCaptureIntent(): Intent? {
-        val outputUri = createCameraOutputUri() ?: return null
+        val outputUri = createCameraOutputUri(".jpg") ?: return null
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
             clipData = ClipData.newUri(contentResolver, "HotelOps camera", outputUri)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
+        return prepareCaptureIntent(intent, outputUri)
+    }
+
+    private fun createVideoCaptureIntent(): Intent? {
+        val outputUri = createCameraOutputUri(".mp4") ?: return null
+        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
+            putExtra(MediaStore.EXTRA_DURATION_LIMIT, 60)
+            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0)
+            clipData = ClipData.newUri(contentResolver, "HotelOps camera", outputUri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        return prepareCaptureIntent(intent, outputUri)
+    }
+
+    private fun prepareCaptureIntent(intent: Intent, outputUri: Uri): Intent? {
         val cameraActivities = packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
         return if (cameraActivities.isNotEmpty()) {
             cameraActivities.forEach { activity ->
@@ -404,11 +576,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun createCameraOutputUri(): Uri? {
+    private fun createCameraOutputUri(extension: String): Uri? {
         return runCatching {
             val cameraDir = File(cacheDir, "camera").apply { mkdirs() }
-            val imageFile = File.createTempFile("hotelops-camera-", ".jpg", cameraDir)
-            FileProvider.getUriForFile(this, "${packageName}.fileprovider", imageFile)
+            val mediaFile = File.createTempFile("hotelops-camera-", extension, cameraDir)
+            FileProvider.getUriForFile(this, "${packageName}.fileprovider", mediaFile)
         }.getOrNull()
     }
 
@@ -445,6 +617,8 @@ class MainActivity : ComponentActivity() {
         pendingCameraPhotoUri = null
         pendingFileChooserCapture = false
         pendingFileChooserAllowMultiple = false
+        pendingFileChooserAcceptTypes = emptyArray()
+        pendingMediaPickerKind = ""
     }
 
     override fun onRequestPermissionsResult(
@@ -469,7 +643,7 @@ class MainActivity : ComponentActivity() {
 
         if (pendingFilePathCallback != null) {
             if (granted) {
-                launchFileChooser(pendingFileChooserCapture, pendingFileChooserAllowMultiple)
+                launchFileChooser(pendingFileChooserCapture, pendingFileChooserAllowMultiple, pendingFileChooserAcceptTypes)
             } else {
                 cancelPendingFileChooser()
             }
@@ -493,6 +667,36 @@ class MainActivity : ComponentActivity() {
               window.__HOTELOPS_APP_BUILD__ = ${HotelOpsAppVersion.BUILD};
               window.__HOTELOPS_APP_CHANNEL__ = "${HotelOpsAppVersion.CHANNEL}";
               window.dispatchEvent(new CustomEvent("hotelops:native-shell-ready"));
+
+              function mediaPickerKindFromTarget(target) {
+                try {
+                  var element = target && target.closest ? target.closest("[data-hotelops-media-picker], label") : null;
+                  if (!element) return "";
+                  var explicitKind = element.getAttribute("data-hotelops-media-picker") || "";
+                  if (explicitKind) return explicitKind;
+                  var text = (element.textContent || "").toLowerCase();
+                  if (text.indexOf("video") >= 0) return "video";
+                  if (text.indexOf("kamera") >= 0) return "camera";
+                  if (text.indexOf("galeri") >= 0 || text.indexOf("dosya") >= 0) return "gallery";
+                } catch (error) {}
+                return "";
+              }
+
+              function rememberMediaPicker(event) {
+                var kind = mediaPickerKindFromTarget(event.target);
+                if (!kind) return;
+                window.__hotelOpsMediaPickerKind = kind;
+                try {
+                  if (window.HotelOpsMediaPicker && window.HotelOpsMediaPicker.setKind) {
+                    window.HotelOpsMediaPicker.setKind(kind);
+                  }
+                } catch (error) {}
+              }
+
+              document.addEventListener("pointerdown", rememberMediaPicker, true);
+              document.addEventListener("touchstart", rememberMediaPicker, true);
+              document.addEventListener("mousedown", rememberMediaPicker, true);
+              document.addEventListener("click", rememberMediaPicker, true);
 
               function syncToken() {
                 try {

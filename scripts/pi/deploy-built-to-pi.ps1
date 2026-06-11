@@ -13,6 +13,8 @@ param(
 
   [switch] $PushDatabaseSchema,
 
+  [switch] $SkipDatabaseSchemaPush,
+
   [switch] $IncludeDownloads,
 
   [switch] $SkipLocalPiBackup,
@@ -39,6 +41,10 @@ $localApiSrcHash = ""
 $localApiDistHash = ""
 $piMaintenanceEnabledByDeploy = $false
 $piMaintenanceDisabledAfterDeploy = $false
+
+if ($PushDatabaseSchema -and $SkipDatabaseSchemaPush) {
+  throw "-PushDatabaseSchema ve -SkipDatabaseSchemaPush birlikte kullanilamaz."
+}
 
 $sshPortArgs = @()
 $scpPortArgs = @()
@@ -449,11 +455,18 @@ sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
     "echo 'Dependency kurulumu atlandi'"
   }
 
-  $prismaGenerateCommand = "cd /opt/noderasoftware && sudo -u hotelops npx prisma generate --schema prisma/schema.prisma"
-  $databaseCommand = if ($PushDatabaseSchema) {
-    "$prismaGenerateCommand && sudo -u hotelops npx prisma db push --schema prisma/schema.prisma"
+  $databaseCommand = if ($SkipDatabaseSchemaPush) {
+@"
+echo 'UYARI: Veritabani sema guncellemesi bilerek atlandi'
+cd /opt/noderasoftware
+sudo -u hotelops bash -lc 'set -a; . ./.env; set +a; npx prisma generate --schema prisma/schema.prisma'
+"@
   } else {
-    "$prismaGenerateCommand && echo 'Veritabani sema guncellemesi atlandi'"
+@"
+echo 'Prisma veritabani semasi uygulanıyor'
+cd /opt/noderasoftware
+sudo -u hotelops bash -lc 'set -a; . ./.env; set +a; npx prisma db push --schema prisma/schema.prisma --skip-generate && npx prisma generate --schema prisma/schema.prisma'
+"@
   }
   $webOutRsyncOptions = "--exclude downloads/ --exclude maintenance-status.json"
   $webPublicRsyncOptions = "--exclude downloads/ --exclude maintenance-status.json"
@@ -582,6 +595,9 @@ sudo rsync -a --delete '$remoteStage/apps/ios/' /opt/noderasoftware/apps/ios/
 sudo rsync -a --delete '$remoteStage/packages/' /opt/noderasoftware/packages/
 sudo rsync -a --delete '$remoteStage/docs/' /opt/noderasoftware/docs/
 sudo rsync -a --delete '$remoteStage/scripts/' /opt/noderasoftware/scripts/
+if [ -f /opt/noderasoftware/scripts/pi/noderasoftware-nginx-ssl.conf ]; then
+  sudo install -o root -g root -m 644 /opt/noderasoftware/scripts/pi/noderasoftware-nginx-ssl.conf /etc/nginx/sites-available/noderasoftware
+fi
 sudo rsync -a '$remoteStage/prisma/schema.prisma' /opt/noderasoftware/prisma/schema.prisma
 sudo rsync -a '$remoteStage/package.json' /opt/noderasoftware/package.json
 sudo rsync -a '$remoteStage/package-lock.json' /opt/noderasoftware/package-lock.json
@@ -594,6 +610,9 @@ sudo find /opt/noderasoftware/apps/api/dist -type d -exec chmod 755 {} +
 sudo find /opt/noderasoftware/apps/api/dist -type f -exec chmod 644 {} +
 sudo find /opt/noderasoftware/apps/web/out -type d -exec chmod 755 {} +
 sudo find /opt/noderasoftware/apps/web/out -type f -exec chmod 644 {} +
+sudo find /opt/noderasoftware/scripts -type d -exec chmod 755 {} +
+sudo find /opt/noderasoftware/scripts -type f -exec chmod 644 {} +
+sudo chmod +x /opt/noderasoftware/scripts/pi/*.sh 2>/dev/null || true
 sudo chmod +x /opt/noderasoftware/apps/desktop/scripts/*.sh 2>/dev/null || true
 sudo chmod +x /opt/noderasoftware/apps/android/gradlew 2>/dev/null || true
 
@@ -606,12 +625,23 @@ sudo nginx -t
 sudo systemctl reload nginx
 curl -k --resolve noderasoftware.com:443:127.0.0.1 -fsS https://noderasoftware.com/app-version.json | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const j=JSON.parse(s);if(!j.platforms||!j.platforms.desktop||!j.platforms.androidDirect||!j.platforms.androidPlay)process.exit(2);console.log("app-version-ok");});'
 curl -k --resolve noderasoftware.com:443:127.0.0.1 -fsS https://noderasoftware.com/web-build.json | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const j=JSON.parse(s);if(!j.buildId)process.exit(2);console.log("web-build-ok",j.buildId);});'
+health_ok=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
   if curl -fsS http://127.0.0.1:4000/health; then
+    health_ok=1
     break
   fi
   sleep 1
 done
+if [ "`$health_ok" != "1" ]; then
+  echo 'API health deploy sonrasi basarili olmadi' >&2
+  exit 1
+fi
+curl -fsS http://127.0.0.1:4000/health/deep
+curl -k --resolve noderasoftware.com:443:127.0.0.1 -fsS https://noderasoftware.com/api/health
+curl -k --resolve noderasoftware.com:443:127.0.0.1 -fsS https://noderasoftware.com/api/health/deep
+cd /opt/noderasoftware
+sudo -u hotelops bash -lc 'set -a; . ./.env; set +a; node scripts/pi/verify-live-api-smoke.mjs'
 
 "@
 

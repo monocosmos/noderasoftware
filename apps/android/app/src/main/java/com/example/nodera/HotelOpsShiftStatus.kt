@@ -18,6 +18,7 @@ object HotelOpsShiftStatus {
             .putString(HotelOpsPrefs.SHIFT_DEPARTMENT_NAME, cleanDepartmentName)
             .apply()
 
+        HotelOpsNotifier.cancelShiftStartReminder(appContext)
         HotelOpsNotifier.showShiftNotification(appContext, cleanEmployeeName, cleanDepartmentName, startedAt)
         return startedAt
     }
@@ -32,6 +33,7 @@ object HotelOpsShiftStatus {
             .remove(HotelOpsPrefs.SHIFT_DEPARTMENT_NAME)
             .apply()
 
+        HotelOpsNotifier.cancelShiftStartReminder(appContext)
         HotelOpsNotifier.cancelShiftNotification(appContext)
     }
 

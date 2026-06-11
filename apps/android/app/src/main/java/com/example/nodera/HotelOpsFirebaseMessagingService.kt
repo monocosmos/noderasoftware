@@ -29,6 +29,7 @@ class HotelOpsFirebaseMessagingService : FirebaseMessagingService() {
         val body = message.notification?.body ?: message.data["body"] ?: "Yeni is bildirimi var."
         val delivery = message.data["delivery"].orEmpty()
         val androidChannelId = message.data["androidChannelId"].orEmpty()
+        val routePath = message.data["path"].orEmpty()
         val silent = delivery.equals("silent", ignoreCase = true)
             || androidChannelId == HotelOpsNotifier.CHANNEL_SILENT_TRANSIENT
             || channel.equals("SILENT", ignoreCase = true)
@@ -41,6 +42,25 @@ class HotelOpsFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        HotelOpsNotifier.showOperationNotification(applicationContext, id, title, body, silent)
+        if (messageType.equals("shift_start_reminder_cancel", ignoreCase = true)) {
+            HotelOpsNotifier.cancelShiftStartReminder(applicationContext)
+            return
+        }
+
+        if (
+            messageType.equals("shift_start_reminder", ignoreCase = true) ||
+            channel.equals("SHIFT_START_REMINDER", ignoreCase = true) ||
+            androidChannelId == HotelOpsNotifier.CHANNEL_SHIFT_REMINDER ||
+            message.data["persistent"].equals("true", ignoreCase = true)
+        ) {
+            if (HotelOpsShiftStatus.isActive(applicationContext)) {
+                HotelOpsNotifier.cancelShiftStartReminder(applicationContext)
+                return
+            }
+            HotelOpsNotifier.showShiftStartReminder(applicationContext, title, body, routePath.ifBlank { "/dashboard" })
+            return
+        }
+
+        HotelOpsNotifier.showOperationNotification(applicationContext, id, title, body, silent, routePath)
     }
 }

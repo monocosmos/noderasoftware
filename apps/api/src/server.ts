@@ -16,7 +16,7 @@ import type { JwtPayload } from "jsonwebtoken";
 import { Server } from "socket.io";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import type { DepartmentCode, Notification as DbNotification, PushDevice, User } from "@prisma/client";
+import type { Attachment, DepartmentCode, Notification as DbNotification, PushDevice, User } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import {
   canCreateForDepartment,
@@ -43,10 +43,26 @@ let firebaseMessagingUnavailableLogged = false;
 let firebaseMessagingInstance: admin.messaging.Messaging | null | undefined;
 const androidSoundTransientChannel = "hotelops_sound_transient";
 const androidSilentTransientChannel = "hotelops_silent_transient";
+const androidShiftReminderChannel = "hotelops_shift_reminder";
+const notificationChannelWorkOrderSound = "WORK_ORDER_SOUND";
+const notificationChannelWorkOrderSilent = "WORK_ORDER_SILENT";
+const notificationChannelShiftStartReminder = "SHIFT_START_REMINDER";
+const shiftStartReminderRepeatMs = 5 * 60 * 1000;
+const shiftStartReminderGraceMs = Math.max(0, Number(process.env.SHIFT_START_REMINDER_GRACE_SECONDS ?? 0)) * 1000;
 const repoRoot = path.basename(process.cwd()) === "api" && path.basename(path.dirname(process.cwd())) === "apps"
   ? path.resolve(process.cwd(), "..", "..")
   : process.cwd();
 const maintenanceDefaultMessage = "Şu an bakım yapılıyor.";
+const maxPhotoUploadBytes = 2_500_000;
+const maxPhotoDataUrlLength = 3_500_000;
+const maxVideoUploadBytes = 25 * 1024 * 1024;
+const maxVideoDataUrlLength = 36_000_000;
+const maxVideoDurationSeconds = 60;
+const maxVideoMetadataDimension = 7680;
+const corruptedDefaultMaintenanceMessages = new Set([
+  "?u an bak?m yap?l?yor.",
+  "?u an bak?m yap?l?yor"
+]);
 
 type MaintenanceStatus = {
   enabled: boolean;
@@ -89,13 +105,25 @@ const io = new Server(server, {
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: corsOrigin, credentials: true }));
-app.use(express.json({ limit: "16mb" }));
+app.use(express.json({ limit: "40mb" }));
+const apiRateLimitWindowMs = 60_000;
+const apiRateLimitPerWindow = positiveIntegerEnv("API_RATE_LIMIT_PER_MINUTE", 6000);
+const authLoginRateLimitPerWindow = positiveIntegerEnv("AUTH_LOGIN_RATE_LIMIT_PER_MINUTE", 45);
+const authLoginRateLimiter = rateLimit({
+  windowMs: apiRateLimitWindowMs,
+  limit: authLoginRateLimitPerWindow,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => clientIp(req as express.Request)
+});
+
 app.use(
   rateLimit({
-    windowMs: 60_000,
-    limit: 180,
+    windowMs: apiRateLimitWindowMs,
+    limit: apiRateLimitPerWindow,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    skip: (req) => skipOperationalRateLimit(req as express.Request),
     keyGenerator: (req) => clientIp(req as express.Request)
   })
 );
@@ -148,10 +176,25 @@ function normalizeClientIp(value: string | null | undefined) {
   return raw;
 }
 
+function positiveIntegerEnv(name: string, fallback: number) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
 function clientIp(req: express.Request) {
   const forwardedFor = req.headers["x-forwarded-for"];
   const forwardedIp = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
   return normalizeClientIp(forwardedIp ?? req.ip ?? req.socket.remoteAddress);
+}
+
+function skipOperationalRateLimit(req: express.Request) {
+  return (
+    req.path === "/health" ||
+    req.path === "/health/deep" ||
+    req.path === "/system/maintenance" ||
+    req.path === "/sync/state" ||
+    req.path === "/auth/login"
+  );
 }
 
 function clientUserAgent(req: express.Request) {
@@ -167,12 +210,18 @@ function maintenanceStatusPaths() {
   ].filter((value): value is string => Boolean(value))));
 }
 
+function normalizeMaintenanceMessage(value: unknown) {
+  const message = typeof value === "string" ? value.trim() : "";
+  if (!message) return maintenanceDefaultMessage;
+  const compact = message.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+  if (corruptedDefaultMaintenanceMessages.has(compact)) return maintenanceDefaultMessage;
+  return message;
+}
+
 function normalizeMaintenanceStatus(value: unknown): MaintenanceStatus | null {
   if (!value || typeof value !== "object") return null;
   const data = value as Partial<MaintenanceStatus>;
-  const message = typeof data.message === "string" && data.message.trim()
-    ? data.message.trim()
-    : maintenanceDefaultMessage;
+  const message = normalizeMaintenanceMessage(data.message);
   const updatedAt = typeof data.updatedAt === "string" && data.updatedAt.trim()
     ? data.updatedAt
     : new Date(0).toISOString();
@@ -242,6 +291,14 @@ const stationSessionWindowSeconds = Number(process.env.STATION_ACTIVE_WINDOW_SEC
 const stationSessionWindowMs = Math.max(30, stationSessionWindowSeconds) * 1000;
 const stationActiveUserWindowSeconds = Number(process.env.STATION_ACTIVE_USER_WINDOW_SECONDS ?? 60);
 const stationActiveUserWindowMs = Math.max(20, stationActiveUserWindowSeconds) * 1000;
+const configuredSyncStatePollIntervalMs = Number(process.env.SYNC_STATE_POLL_INTERVAL_MS ?? 5000);
+const syncStatePollIntervalMs = Number.isFinite(configuredSyncStatePollIntervalMs)
+  ? Math.max(2000, configuredSyncStatePollIntervalMs)
+  : 5000;
+const configuredSyncStateMaxWaitMs = Number(process.env.SYNC_STATE_MAX_WAIT_MS ?? 25000);
+const syncStateMaxWaitMs = Number.isFinite(configuredSyncStateMaxWaitMs)
+  ? Math.min(60000, Math.max(0, configuredSyncStateMaxWaitMs))
+  : 25000;
 const activeSessions = new Map<string, ActiveSessionEntry>();
 
 function markSessionSeen(auth: AuthContext, userAgent = "unknown") {
@@ -332,6 +389,25 @@ function activeSessionSnapshot() {
   };
 }
 
+function activeAppUserIdsNow() {
+  const now = Date.now();
+  const sessionCutoff = now - stationSessionWindowMs;
+  const userCutoff = now - stationActiveUserWindowMs;
+  const userIds = new Set<string>();
+
+  for (const [sessionId, entry] of activeSessions) {
+    if (entry.socketCount <= 0 && entry.lastSeenAt < sessionCutoff) {
+      activeSessions.delete(sessionId);
+      continue;
+    }
+    if (entry.socketCount > 0 || (entry.heartbeatAt ?? entry.lastSeenAt) >= userCutoff) {
+      userIds.add(entry.userId);
+    }
+  }
+
+  return userIds;
+}
+
 function firebaseMessaging() {
   if (firebaseMessagingInstance !== undefined) return firebaseMessagingInstance;
 
@@ -364,6 +440,15 @@ function firebaseMessaging() {
 
 function androidNotificationDelivery(channel: string) {
   const normalizedChannel = channel.trim().toUpperCase();
+  if (normalizedChannel === notificationChannelShiftStartReminder) {
+    return {
+      channelId: androidShiftReminderChannel,
+      delivery: "sound",
+      priority: "high",
+      persistent: true
+    } as const;
+  }
+
   const silent = normalizedChannel === "SILENT"
     || normalizedChannel.startsWith("SILENT_")
     || normalizedChannel.endsWith("_SILENT");
@@ -371,8 +456,51 @@ function androidNotificationDelivery(channel: string) {
   return {
     channelId: silent ? androidSilentTransientChannel : androidSoundTransientChannel,
     delivery: silent ? "silent" : "sound",
-    priority: silent ? "normal" : "high"
+    priority: silent ? "normal" : "high",
+    persistent: false
   } as const;
+}
+
+function androidPushTtlForDelivery(delivery: ReturnType<typeof androidNotificationDelivery>) {
+  if (delivery.persistent) return 21_600_000;
+  return delivery.delivery === "silent" ? 1_800_000 : 86_400_000;
+}
+
+function sanitizeAndroidCollapseKey(value: string | undefined) {
+  const normalized = (value ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return normalized || undefined;
+}
+
+function androidConfigForDelivery(delivery: ReturnType<typeof androidNotificationDelivery>, collapseTag?: string) {
+  const config: admin.messaging.AndroidConfig = {
+    priority: delivery.priority,
+    ttl: androidPushTtlForDelivery(delivery)
+  };
+  const collapseKey = sanitizeAndroidCollapseKey(collapseTag);
+  if (collapseKey) config.collapseKey = collapseKey;
+  return config;
+}
+
+const workOrderCodePattern = /\b(?:WO|FLT|PM|HK|PLN)-\d+\b/i;
+
+function notificationTargetPath(notification: Pick<DbNotification, "title" | "body" | "channel">) {
+  const text = `${notification.title} ${notification.body}`;
+  const workOrderCode = text.match(workOrderCodePattern)?.[0]?.toUpperCase();
+  if (workOrderCode) return workOrderDetailPushPath(workOrderCode);
+
+  const normalizedTitle = notification.title.trim().toLocaleLowerCase("tr-TR");
+  const normalizedChannel = notification.channel.trim().toUpperCase();
+  if (normalizedTitle.includes("hat\u0131rlatma")) return "/reminders";
+  if (normalizedTitle.includes("talep")) return "/modules/requests";
+  if (normalizedTitle.includes("operasyon belgesi")) return "/modules/operation-documents";
+  if (normalizedTitle.includes("vardiya") || normalizedChannel === notificationChannelShiftStartReminder) return "/dashboard";
+  if (normalizedChannel.includes("REMINDER")) return "/reminders";
+
+  return "/reminders";
 }
 
 function routeParam(req: express.Request, name: string) {
@@ -485,6 +613,27 @@ function departmentSocketRoom(hotelId: string, departmentId: string) {
   return `hotel:${hotelId}:department:${departmentId}`;
 }
 
+function hotelSocketRoom(hotelId: string) {
+  return `hotel:${hotelId}`;
+}
+
+const systemSocketRoom = "system";
+let appDataEventVersion = 0;
+
+function emitHotelDataChanged(auth: AuthContext, entityType: string, action: string) {
+  appDataEventVersion += 1;
+  io.to(hotelSocketRoom(auth.hotelId)).emit("app-data.changed", {
+    version: appDataEventVersion,
+    entityType,
+    action,
+    serverTime: new Date().toISOString()
+  });
+}
+
+function emitMaintenanceChanged(status: MaintenanceStatus) {
+  io.to(systemSocketRoom).emit("maintenance.changed", status);
+}
+
 function canTrackScopedDepartmentOrigin(auth: AuthContext) {
   return auth.roleId !== "staff";
 }
@@ -549,6 +698,23 @@ function workOrderVisibilityWhere(auth: AuthContext): Prisma.WorkOrderWhereInput
   };
 }
 
+function reminderVisibilityWhere(auth: AuthContext): Prisma.ReminderWhereInput {
+  return {
+    hotelId: auth.hotelId,
+    deletedAt: null,
+    department: { code: departmentCodeFromClientId(auth.departmentId) },
+    OR: [{ assignedToId: auth.userId }, { createdById: auth.userId }]
+  };
+}
+
+function managementRequestVisibilityWhere(auth: AuthContext): Prisma.ManagementRequestWhereInput {
+  return {
+    hotelId: auth.hotelId,
+    deletedAt: null,
+    OR: [{ createdById: auth.userId }, { recipientId: auth.userId }, { relatedUserId: auth.userId }]
+  };
+}
+
 function isPlatformAdmin(req: express.Request) {
   return Boolean(req.user && isPlatformAdminAccount(req.user));
 }
@@ -604,8 +770,10 @@ function isPlannedWorkOrderType(type: string) {
 function canCreateWorkOrderForDepartment(auth: AuthContext, type: string, targetDepartmentId: string) {
   if (type === "PlannedMaintenance") return auth.departmentId === "technical" && targetDepartmentId === "technical";
   if (type === "PlannedHousekeeping") return auth.departmentId === "housekeeping" && targetDepartmentId === "housekeeping";
-  if (type === "Fault") return targetDepartmentId === "technical";
-  if (type === "Job") return targetDepartmentId === "housekeeping";
+  if (type === "Fault") return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
+  if (type === "Job") {
+    return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
+  }
   return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
 }
 
@@ -630,6 +798,16 @@ function parsePhotos(value: string | null | undefined) {
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseUserIdArray(value: string | null | undefined) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? Array.from(new Set(parsed.map(String).filter(Boolean))) : [];
   } catch {
     return [];
   }
@@ -1152,6 +1330,23 @@ function serializeUser(user: User & { hotel?: { code: string; name: string } | n
   };
 }
 
+type WorkOrderSerializationOptions = {
+  includeAttachmentData?: boolean;
+};
+
+function serializeAttachment(attachment: Attachment, options: WorkOrderSerializationOptions = {}) {
+  return {
+    id: attachment.id,
+    name: attachment.fileName,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    dataUrl: options.includeAttachmentData ? attachment.publicUrl ?? "" : "",
+    hasDataUrl: Boolean(attachment.publicUrl),
+    phase: attachment.phase,
+    mediaType: attachment.type === "VIDEO" ? "VIDEO" : "PHOTO"
+  };
+}
+
 function serializeWorkOrder(
   workOrder: Prisma.WorkOrderGetPayload<{
     include: {
@@ -1162,8 +1357,10 @@ function serializeWorkOrder(
       timeline: true;
       approvals: true;
       attachments: true;
+      participants: { include: { user: { include: { hotel: true; role: true; department: true } } } };
     };
-  }>
+  }>,
+  options: WorkOrderSerializationOptions = {}
 ) {
   const open = !["COMPLETED", "HK_VERIFIED", "CLOSED", "CANCELLED"].includes(workOrder.status);
   const slaRisk = Boolean(open && workOrder.slaDueAt && workOrder.slaDueAt.getTime() - Date.now() <= 60 * 60 * 1000);
@@ -1175,6 +1372,7 @@ function serializeWorkOrder(
     priority: mapPriorityToClient(workOrder.priority),
     status: mapStatusToClient(workOrder.status, workOrder.slaDueAt),
     assignee: workOrder.assignedTo?.fullName ?? "",
+    assigneeId: workOrder.assignedToId ?? "",
     room: workOrder.room ?? "",
     location: workOrder.location,
     due: workOrder.slaDueAt?.toISOString() ?? "",
@@ -1211,25 +1409,20 @@ function serializeWorkOrder(
       createdAt: approval.createdAt.toISOString(),
       updatedAt: approval.updatedAt.toISOString()
     })),
-    photos: workOrder.attachments.map((attachment) => ({
-      id: attachment.id,
-      name: attachment.fileName,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-      dataUrl: attachment.publicUrl ?? "",
-      phase: attachment.phase
-    }))
+    photos: workOrder.attachments.map((attachment) => serializeAttachment(attachment, options)),
+    participants: workOrder.participants.map((participant) => serializeUser(participant.user))
   };
 }
 
 function workOrderNotificationText(workOrder: Prisma.WorkOrderGetPayload<{ include: { department: true } }>) {
+  const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
   const title = workOrder.type === "FAULT"
     ? "Yeni arıza"
     : workOrder.type === "PLANNED_MAINTENANCE"
       ? "Yeni planlı bakım"
       : workOrder.type === "PLANNED_HOUSEKEEPING"
         ? "Yeni HK görevi"
-        : "Yeni iş";
+        : `${departmentName(departmentId)} - Yeni iş`;
   const location = [workOrder.room ? `Oda ${workOrder.room}` : "", workOrder.location].filter(Boolean).join(" - ");
   return {
     title,
@@ -1252,7 +1445,10 @@ async function audit(req: express.Request, entityType: string, entityId: string,
       workOrderId
     }
   });
+  emitHotelDataChanged(req.auth, entityType, action);
 }
+
+const userInclude = { hotel: true, role: true, department: true } as const;
 
 const workOrderInclude = {
   department: true,
@@ -1261,10 +1457,10 @@ const workOrderInclude = {
   comments: { include: { author: true }, where: { deletedAt: null }, orderBy: { createdAt: "asc" as const } },
   timeline: { orderBy: { createdAt: "asc" as const } },
   approvals: { orderBy: { createdAt: "asc" as const } },
-  attachments: true
+  attachments: true,
+  participants: { include: { user: { include: userInclude } }, orderBy: { createdAt: "asc" as const } }
 } as const;
 
-const userInclude = { hotel: true, role: true, department: true } as const;
 const platformAdminUsername = "NODERADMIN";
 const platformAdminRole = "siteAdmin";
 const platformAdminHotelCode = "NODERA_PLATFORM";
@@ -1289,7 +1485,9 @@ const changePasswordSchema = z.object({
 });
 
 const updateOwnProfileSchema = z.object({
+  fullName: z.string().trim().min(2).max(120).optional(),
   username: z.string().trim().min(2).max(80).transform((value) => value.toLocaleLowerCase("tr-TR")),
+  email: z.string().trim().min(3).max(160).refine((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)).transform((value) => value.toLowerCase()).optional(),
   currentPassword: z.string().min(1).max(256)
 });
 
@@ -1312,6 +1510,27 @@ const shiftPanelConfigSchema = z.object({
   editorUserIds: z.array(z.string().min(1)).max(30).default([])
 });
 
+const shiftPanelPresetSchema = z.object({
+  id: z.string().trim().max(80).optional().default(""),
+  label: z.string().trim().min(1).max(80),
+  code: z.string().trim().max(80).optional().default(""),
+  startTime: z.string().trim().max(8).optional().default(""),
+  endTime: z.string().trim().max(8).optional().default(""),
+  color: z.string().trim().min(1).max(24).optional().default("custom")
+});
+
+const shiftPanelColorTemplateSchema = z.object({
+  id: z.string().trim().max(80).optional().default(""),
+  label: z.string().trim().min(1).max(80),
+  background: z.string().trim().min(1).max(32).optional().default("#dbeafe"),
+  textColor: z.string().trim().min(1).max(32).optional().default("#111827")
+});
+
+const shiftPanelPresetsSchema = z.object({
+  presets: z.array(shiftPanelPresetSchema).min(1).max(16),
+  colorTemplates: z.array(shiftPanelColorTemplateSchema).min(1).max(16).optional()
+});
+
 const shiftPanelEntrySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   shiftName: z.string().trim().max(80).optional().default("GUNLUK"),
@@ -1324,7 +1543,7 @@ const shiftPanelEntrySchema = z.object({
 const shiftPanelCellSchema = z.object({
   userId: z.string().min(1),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  code: z.string().trim().max(12).optional().default(""),
+  code: z.string().trim().max(80).optional().default(""),
   startTime: z.string().trim().max(8).optional().default(""),
   endTime: z.string().trim().max(8).optional().default(""),
   note: z.string().trim().max(160).optional().default(""),
@@ -1390,16 +1609,81 @@ async function ensurePlatformAdminHome(userId: string) {
 const photoSchema = z.object({
   name: z.string().min(1).max(160),
   mimeType: z.string().min(1).max(80),
-  size: z.number().int().min(0).max(2_500_000),
-  dataUrl: z.string().min(1).max(3_500_000),
-  phase: z.enum(["GENERAL", "BEFORE", "AFTER"]).optional().default("GENERAL")
+  size: z.number().int().min(0).max(maxVideoUploadBytes),
+  dataUrl: z.string().min(1).max(maxVideoDataUrlLength),
+  phase: z.enum(["GENERAL", "BEFORE", "AFTER"]).optional().default("GENERAL"),
+  mediaType: z.enum(["PHOTO", "VIDEO"]).optional().default("PHOTO"),
+  durationSeconds: z.number().min(0).max(maxVideoDurationSeconds).optional(),
+  width: z.number().int().min(1).max(maxVideoMetadataDimension).optional(),
+  height: z.number().int().min(1).max(maxVideoMetadataDimension).optional(),
+  compressed: z.boolean().optional()
+}).superRefine((attachment, ctx) => {
+  if (attachment.mediaType === "VIDEO") {
+    if (!attachment.mimeType.toLowerCase().startsWith("video/mp4")) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mimeType"], message: "VIDEO_MP4_REQUIRED" });
+    }
+    if (attachment.size > maxVideoUploadBytes) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["size"], message: "VIDEO_TOO_LARGE" });
+    }
+    if (attachment.dataUrl.length > maxVideoDataUrlLength) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["dataUrl"], message: "VIDEO_DATA_TOO_LARGE" });
+    }
+    if (attachment.durationSeconds === undefined || attachment.durationSeconds > maxVideoDurationSeconds) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["durationSeconds"], message: "VIDEO_DURATION_TOO_LONG" });
+    }
+    return;
+  }
+
+  if (!attachment.mimeType.startsWith("image/")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mimeType"], message: "PHOTO_MIME_REQUIRED" });
+  }
+  if (attachment.size > maxPhotoUploadBytes) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["size"], message: "PHOTO_TOO_LARGE" });
+  }
+  if (attachment.dataUrl.length > maxPhotoDataUrlLength) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["dataUrl"], message: "PHOTO_DATA_TOO_LARGE" });
+  }
 });
+
+function attachmentTypeFromMedia(attachment: z.infer<typeof photoSchema>) {
+  return attachment.mediaType === "VIDEO" ? "VIDEO" : "PHOTO";
+}
+
+function safeAttachmentMimeType(attachment: z.infer<typeof photoSchema>) {
+  const value = attachment.mimeType.trim().toLowerCase();
+  if (attachment.mediaType === "VIDEO") {
+    if (value.startsWith("video/mp4")) return "video/mp4";
+    if (value.startsWith("video/webm")) return "video/webm";
+    if (value.startsWith("video/quicktime")) return "video/quicktime";
+    return value.split(";")[0] || "video/mp4";
+  }
+  if (value.startsWith("image/jpeg") || value.startsWith("image/jpg")) return "image/jpeg";
+  if (value.startsWith("image/png")) return "image/png";
+  if (value.startsWith("image/webp")) return "image/webp";
+  return value.split(";")[0] || "image/jpeg";
+}
+
+function dataUrlBase64Payload(dataUrl: string) {
+  const marker = ";base64,";
+  const markerIndex = dataUrl.toLowerCase().lastIndexOf(marker);
+  if (markerIndex >= 0) return dataUrl.slice(markerIndex + marker.length);
+  const commaIndex = dataUrl.indexOf(",");
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : "";
+}
+
+function normalizeAttachmentDataUrl(attachment: z.infer<typeof photoSchema>) {
+  if (!attachment.dataUrl.startsWith("data:")) return attachment.dataUrl;
+  const payload = dataUrlBase64Payload(attachment.dataUrl);
+  if (!payload) return attachment.dataUrl;
+  return `data:${safeAttachmentMimeType(attachment)};base64,${payload}`;
+}
 
 const workOrderSchema = z.object({
   title: z.string().min(3),
   type: z.enum(["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"]),
   departmentId: z.string().min(1),
   priority: z.enum(["Urgent", "High", "Normal", "Low"]),
+  status: z.enum(["Pending", "Completed"]).optional().default("Pending"),
   assignee: z.string().optional().default(""),
   assigneeId: z.string().optional().default(""),
   room: z.string().optional().default(""),
@@ -1410,6 +1694,25 @@ const workOrderSchema = z.object({
   tags: z.string().optional().default(""),
   checklist: z.array(z.string()).optional().default([]),
   photos: z.array(photoSchema).optional().default([])
+});
+
+const workOrderUpdateSchema = z.object({
+  title: z.string().min(3).optional(),
+  type: z.enum(["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"]).optional(),
+  departmentId: z.string().min(1).optional(),
+  priority: z.enum(["Urgent", "High", "Normal", "Low"]).optional(),
+  assignee: z.string().optional(),
+  assigneeId: z.string().optional(),
+  room: z.string().optional(),
+  location: z.string().optional(),
+  due: z.string().optional(),
+  guestImpact: z.boolean().optional(),
+  description: z.string().optional(),
+  tags: z.string().optional(),
+  checklist: z.array(z.string()).optional(),
+  photos: z.array(photoSchema).optional(),
+  status: z.enum(["Pending", "InProgress", "Completed", "Delayed", "Cancelled"]).optional(),
+  participantIds: z.array(z.string().min(1)).optional()
 });
 
 const calendarEventSchema = z.object({
@@ -1426,6 +1729,32 @@ const departmentSchema = z.object({
   departmentId: z.string().optional(),
   name: z.string().trim().min(2).max(80).optional()
 }).refine((value) => Boolean(value.departmentId || value.name), { message: "departmentId or name is required" });
+
+const workOrderPolicySchema = z.object({
+  assignmentAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([]),
+  deleteAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([])
+});
+
+const departmentTableColumnSchema = z.object({
+  id: z.string().trim().max(80).optional().default(""),
+  label: z.string().trim().min(1).max(80),
+  type: z.enum(["text", "number", "date", "time", "status"]).optional().default("text")
+});
+
+const departmentTableSchema = z.object({
+  departmentId: z.string().min(1).optional().default(""),
+  title: z.string().trim().min(2).max(120),
+  slug: z.string().trim().max(80).optional().default(""),
+  description: z.string().trim().max(1000).optional().default(""),
+  columns: z.array(departmentTableColumnSchema).min(1).max(24),
+  showInMenu: z.boolean().optional().default(true),
+  enabled: z.boolean().optional().default(true)
+});
+
+const departmentTableRowSchema = z.object({
+  values: z.record(z.string().max(2000)).optional().default({}),
+  note: z.string().trim().max(2000).optional().default("")
+});
 
 const reminderSchema = z.object({
   title: z.string().min(2),
@@ -1486,7 +1815,7 @@ function serializeCalendarEvent(event: Prisma.CalendarEventGetPayload<{ include:
 const departmentLeaderRoles: Record<string, string[]> = {
   executive: ["generalManager"],
   hr: ["hrManager"],
-  technical: ["technicalManager", "technicalChief"],
+  technical: ["technicalManager", "technicalAssistant", "technicalChief"],
   housekeeping: ["hkManager", "floorChief"],
   frontOffice: ["frontOfficeManager"],
   security: ["securityManager"],
@@ -1500,6 +1829,7 @@ const managementRequestRoles = new Set([
   "generalManager",
   "hrManager",
   "technicalManager",
+  "technicalAssistant",
   "hkManager",
   "frontOfficeManager",
   "securityManager",
@@ -1654,6 +1984,7 @@ function serializeNotification(notification: Prisma.NotificationGetPayload<objec
     title: notification.title,
     body: notification.body,
     channel: notification.channel,
+    path: notificationTargetPath(notification),
     readAt: notification.readAt?.toISOString() ?? "",
     createdAt: notification.createdAt.toISOString()
   };
@@ -1664,6 +1995,303 @@ function serializeShiftSession(shift: Prisma.ShiftSessionGetPayload<object>) {
     id: shift.id,
     startedAt: shift.startedAt.toISOString(),
     endedAt: shift.endedAt?.toISOString() ?? ""
+  };
+}
+
+function dateVersion(date: Date | null | undefined) {
+  return date?.getTime() ?? 0;
+}
+
+function maxDateVersion(...dates: Array<Date | null | undefined>) {
+  return Math.max(0, ...dates.map(dateVersion));
+}
+
+function syncStateHash(value: unknown) {
+  return crypto.createHash("sha1").update(JSON.stringify(value)).digest("hex");
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function queryNumber(value: unknown, fallback: number) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof raw === "string" ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+async function deepHealthSnapshot() {
+  const checks: Array<{ name: string; run: () => Promise<unknown> }> = [
+    { name: "db", run: () => prisma.$queryRaw`SELECT 1` },
+    { name: "hotels", run: () => prisma.hotel.findFirst({ select: { id: true } }) },
+    { name: "departments", run: () => prisma.department.findFirst({ select: { id: true } }) },
+    { name: "roles", run: () => prisma.role.findFirst({ select: { id: true } }) },
+    { name: "users", run: () => prisma.user.findFirst({ select: { id: true } }) },
+    { name: "authSessions", run: () => prisma.authSession.findFirst({ select: { id: true } }) },
+    { name: "workOrders", run: () => prisma.workOrder.findFirst({ select: { id: true } }) },
+    { name: "workOrderParticipants", run: () => prisma.workOrderParticipant.findFirst({ select: { id: true } }) },
+    { name: "workOrderPolicies", run: () => prisma.workOrderDepartmentPolicy.findFirst({ select: { id: true } }) },
+    { name: "departmentTables", run: () => prisma.departmentTable.findFirst({ select: { id: true } }) },
+    { name: "departmentTableRows", run: () => prisma.departmentTableRow.findFirst({ select: { id: true } }) },
+    { name: "shiftPanels", run: () => prisma.shiftPanel.findFirst({ select: { id: true } }) },
+    { name: "shiftPanelCells", run: () => prisma.shiftPanelCell.findFirst({ select: { id: true } }) },
+    { name: "notifications", run: () => prisma.notification.findFirst({ select: { id: true } }) },
+    { name: "reminders", run: () => prisma.reminder.findFirst({ select: { id: true } }) },
+    { name: "managementRequests", run: () => prisma.managementRequest.findFirst({ select: { id: true } }) },
+    { name: "operationDocuments", run: () => prisma.operationDocument.findFirst({ select: { id: true } }) },
+    { name: "pushDevices", run: () => prisma.pushDevice.findFirst({ select: { id: true } }) }
+  ];
+
+  const results = await Promise.all(checks.map(async (check) => {
+    try {
+      await check.run();
+      return [check.name, "up"] as const;
+    } catch {
+      return [check.name, "down"] as const;
+    }
+  }));
+  const failedChecks = results.filter(([, status]) => status !== "up").map(([name]) => name);
+
+  return {
+    ok: failedChecks.length === 0,
+    service: "hotelops-api",
+    db: results.find(([name]) => name === "db")?.[1] ?? "down",
+    schema: failedChecks.length === 0 ? "up" : "down",
+    checks: Object.fromEntries(results),
+    failedChecks,
+    time: new Date().toISOString()
+  };
+}
+
+async function buildSyncState(req: express.Request) {
+  const auth = req.auth!;
+  const user = req.user!;
+  const departmentCodes = scopeDepartmentCodes(auth);
+  const workOrderWhere = workOrderVisibilityWhere(auth);
+  const operationDocumentsEnabled = hasFeatureAccess(req, "operationDocuments");
+  const managementRequestsEnabled = hasFeatureAccess(req, "managementRequests") && canUseManagementRequests(auth);
+  const departmentTablesEnabled = hasFeatureAccess(req, "departmentTables");
+  const activeDepartmentsWhere = { hotelId: auth.hotelId, deletedAt: null } satisfies Prisma.DepartmentWhereInput;
+  const maintenance = readMaintenanceStatus();
+
+  const [
+    workOrders,
+    workOrderComments,
+    workOrderAttachments,
+    workOrderApprovals,
+    calendarEvents,
+    notifications,
+    unreadNotifications,
+    reminders,
+    manageableUsers,
+    departments,
+    activeShifts,
+    managementRequests,
+    operationDocuments,
+    operationDocumentReads,
+    departmentTables,
+    departmentTableRows,
+    workOrderPolicy
+  ] = await Promise.all([
+    prisma.workOrder.aggregate({
+      where: workOrderWhere,
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true, completedAt: true }
+    }),
+    prisma.comment.aggregate({
+      where: { deletedAt: null, workOrder: { is: workOrderWhere } },
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true }
+    }),
+    prisma.attachment.aggregate({
+      where: { workOrder: { is: workOrderWhere } },
+      _count: { _all: true },
+      _max: { createdAt: true }
+    }),
+    prisma.approval.aggregate({
+      where: { workOrder: { is: workOrderWhere } },
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true }
+    }),
+    prisma.calendarEvent.aggregate({
+      where: {
+        deletedAt: null,
+        department: { hotelId: auth.hotelId, code: { in: departmentCodes } }
+      },
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true }
+    }),
+    prisma.notification.aggregate({
+      where: { userId: auth.userId },
+      _count: { _all: true },
+      _max: { createdAt: true, readAt: true }
+    }),
+    prisma.notification.count({ where: { userId: auth.userId, readAt: null } }),
+    prisma.reminder.aggregate({
+      where: reminderVisibilityWhere(auth),
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true, oneHourNotifiedAt: true, dueNotifiedAt: true, completedAt: true }
+    }),
+    canManageUsers(auth.roleId)
+      ? prisma.user.aggregate({
+          where: visibleManageableUsersWhere(auth),
+          _count: { _all: true },
+          _max: { createdAt: true, updatedAt: true, lastLoginAt: true }
+        })
+      : Promise.resolve(null),
+    prisma.department.aggregate({
+      where: activeDepartmentsWhere,
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true }
+    }),
+    prisma.shiftSession.aggregate({
+      where: { userId: auth.userId },
+      _count: { _all: true },
+      _max: { startedAt: true, endedAt: true, updatedAt: true }
+    }),
+    managementRequestsEnabled
+      ? prisma.managementRequest.aggregate({
+          where: managementRequestVisibilityWhere(auth),
+          _count: { _all: true },
+          _max: { createdAt: true, updatedAt: true, readAt: true }
+        })
+      : Promise.resolve(null),
+    operationDocumentsEnabled
+      ? prisma.operationDocument.aggregate({
+          where: { hotelId: auth.hotelId, deletedAt: null },
+          _count: { _all: true },
+          _max: { createdAt: true, updatedAt: true }
+        })
+      : Promise.resolve(null),
+    operationDocumentsEnabled
+      ? prisma.operationDocumentRead.aggregate({
+          where: { userId: auth.userId, document: { hotelId: auth.hotelId, deletedAt: null } },
+          _count: { _all: true },
+          _max: { readAt: true }
+        })
+      : Promise.resolve(null),
+    departmentTablesEnabled
+      ? prisma.departmentTable.aggregate({
+          where: departmentTableVisibleWhere(auth),
+          _count: { _all: true },
+          _max: { createdAt: true, updatedAt: true }
+        })
+      : Promise.resolve(null),
+    departmentTablesEnabled
+      ? prisma.departmentTableRow.aggregate({
+          where: { table: departmentTableVisibleWhere(auth) },
+          _count: { _all: true },
+          _max: { createdAt: true, updatedAt: true }
+        })
+      : Promise.resolve(null),
+    prisma.workOrderDepartmentPolicy.aggregate({
+      where: { hotelId: auth.hotelId, department: { code: departmentCodeFromClientId(auth.departmentId) } },
+      _count: { _all: true },
+      _max: { createdAt: true, updatedAt: true }
+    })
+  ]);
+
+  const state = {
+    user: {
+      id: auth.userId,
+      active: user.isActive ? 1 : 0,
+      version: maxDateVersion(user.createdAt, user.updatedAt, user.lastLoginAt)
+    },
+    departments: {
+      count: departments._count._all,
+      version: maxDateVersion(departments._max.createdAt, departments._max.updatedAt)
+    },
+    users: manageableUsers
+      ? {
+          count: manageableUsers._count._all,
+          version: maxDateVersion(manageableUsers._max.createdAt, manageableUsers._max.updatedAt, manageableUsers._max.lastLoginAt)
+        }
+      : { count: 0, version: 0 },
+    workOrders: {
+      count: workOrders._count._all,
+      version: maxDateVersion(workOrders._max.createdAt, workOrders._max.updatedAt, workOrders._max.completedAt),
+      comments: {
+        count: workOrderComments._count._all,
+        version: maxDateVersion(workOrderComments._max.createdAt, workOrderComments._max.updatedAt)
+      },
+      attachments: {
+        count: workOrderAttachments._count._all,
+        version: maxDateVersion(workOrderAttachments._max.createdAt)
+      },
+      approvals: {
+        count: workOrderApprovals._count._all,
+        version: maxDateVersion(workOrderApprovals._max.createdAt, workOrderApprovals._max.updatedAt)
+      }
+    },
+    calendar: {
+      count: calendarEvents._count._all,
+      version: maxDateVersion(calendarEvents._max.createdAt, calendarEvents._max.updatedAt)
+    },
+    reminders: {
+      count: reminders._count._all,
+      version: maxDateVersion(
+        reminders._max.createdAt,
+        reminders._max.updatedAt,
+        reminders._max.oneHourNotifiedAt,
+        reminders._max.dueNotifiedAt,
+        reminders._max.completedAt
+      )
+    },
+    notifications: {
+      count: notifications._count._all,
+      unread: unreadNotifications,
+      version: maxDateVersion(notifications._max.createdAt, notifications._max.readAt)
+    },
+    shifts: {
+      count: activeShifts._count._all,
+      version: maxDateVersion(activeShifts._max.startedAt, activeShifts._max.endedAt, activeShifts._max.updatedAt)
+    },
+    managementRequests: managementRequests
+      ? {
+          count: managementRequests._count._all,
+          version: maxDateVersion(managementRequests._max.createdAt, managementRequests._max.updatedAt, managementRequests._max.readAt)
+        }
+      : { count: 0, version: 0 },
+    operationDocuments: operationDocuments
+      ? {
+          count: operationDocuments._count._all,
+          version: maxDateVersion(operationDocuments._max.createdAt, operationDocuments._max.updatedAt),
+          reads: {
+            count: operationDocumentReads?._count._all ?? 0,
+            version: maxDateVersion(operationDocumentReads?._max.readAt)
+          }
+        }
+      : { count: 0, version: 0, reads: { count: 0, version: 0 } },
+    departmentTables: departmentTables
+      ? {
+          count: departmentTables._count._all,
+          version: maxDateVersion(
+            departmentTables._max.createdAt,
+            departmentTables._max.updatedAt,
+            departmentTableRows?._max.createdAt,
+            departmentTableRows?._max.updatedAt
+          ),
+          rows: departmentTableRows?._count._all ?? 0
+        }
+      : { count: 0, version: 0, rows: 0 },
+    workOrderPolicy: workOrderPolicy
+      ? {
+          count: workOrderPolicy._count._all,
+          version: maxDateVersion(workOrderPolicy._max.createdAt, workOrderPolicy._max.updatedAt)
+        }
+      : { count: 0, version: 0 },
+    maintenance: {
+      enabled: maintenance.enabled ? 1 : 0,
+      message: maintenance.message,
+      version: Date.parse(maintenance.updatedAt) || 0
+    }
+  };
+
+  return {
+    etag: syncStateHash(state),
+    serverTime: new Date().toISOString(),
+    maintenance,
+    state
   };
 }
 
@@ -1680,12 +2308,172 @@ type ShiftPanelEntryWithUser = Prisma.ShiftPanelEntryGetPayload<{
 
 type ShiftPanelCellRecord = Prisma.ShiftPanelCellGetPayload<object>;
 
+type ShiftPanelPresetDefinition = {
+  id: string;
+  label: string;
+  code: string;
+  startTime: string;
+  endTime: string;
+  color: string;
+};
+
+type ShiftPanelColorTemplateDefinition = {
+  id: string;
+  label: string;
+  background: string;
+  textColor: string;
+};
+
+const defaultShiftPanelPresets: ShiftPanelPresetDefinition[] = [
+  { id: "day", label: "08:00-16:30", code: "", startTime: "08:00", endTime: "16:30", color: "day" },
+  { id: "mid", label: "13:00-21:30", code: "", startTime: "13:00", endTime: "21:30", color: "evening" },
+  { id: "evening", label: "14:30-23:00", code: "", startTime: "14:30", endTime: "23:00", color: "evening" },
+  { id: "night", label: "23:00-07:30", code: "", startTime: "23:00", endTime: "07:30", color: "night" },
+  { id: "off", label: "O", code: "O", startTime: "", endTime: "", color: "off" },
+  { id: "leave", label: "V", code: "V", startTime: "", endTime: "", color: "leave" },
+  { id: "sick", label: "B", code: "B", startTime: "", endTime: "", color: "sick" }
+];
+
+const defaultShiftPanelColorTemplates: ShiftPanelColorTemplateDefinition[] = [
+  { id: "day", label: "Gündüz", background: "#ffffff", textColor: "#111827" },
+  { id: "evening", label: "Akşam", background: "#f7b718", textColor: "#111827" },
+  { id: "night", label: "Gece", background: "#1f4e79", textColor: "#ffffff" },
+  { id: "off", label: "Off", background: "#ffff00", textColor: "#111827" },
+  { id: "leave", label: "İzin", background: "#ffff00", textColor: "#111827" },
+  { id: "sick", label: "Rapor", background: "#b04040", textColor: "#ffffff" },
+  { id: "custom", label: "Özel", background: "#dbeafe", textColor: "#111827" }
+];
+
 function canConfigureShiftPanels(auth: AuthContext) {
   return auth.roleId === "hrManager";
 }
 
 function canViewAllShiftPanels(auth: AuthContext) {
   return auth.roleId === "hrManager" || auth.roleId === "generalManager";
+}
+
+function normalizeShiftPanelPresetId(value: string, index: number) {
+  const normalized = value
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || `preset-${index + 1}`;
+}
+
+function shiftPanelPresetStorageRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function normalizeCssColor(value: unknown, fallback: string) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  const rgbMatch = raw.match(/^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i);
+  if (!rgbMatch) return fallback;
+  const channels = rgbMatch.slice(1).map((channel) => Math.max(0, Math.min(255, Number(channel))));
+  return `rgb(${channels[0]}, ${channels[1]}, ${channels[2]})`;
+}
+
+function normalizeShiftPanelColorTemplate(value: unknown, index: number): ShiftPanelColorTemplateDefinition | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const labelValue = typeof record.label === "string" ? record.label.trim().slice(0, 80) : "";
+  const label = labelValue || `Şablon ${index + 1}`;
+  const idValue = typeof record.id === "string" && record.id.trim() ? record.id : `${label}-${index + 1}`;
+
+  return {
+    id: normalizeShiftPanelPresetId(idValue, index),
+    label,
+    background: normalizeCssColor(record.background, "#dbeafe"),
+    textColor: normalizeCssColor(record.textColor, "#111827")
+  };
+}
+
+function normalizeShiftPanelColorTemplates(value: unknown): ShiftPanelColorTemplateDefinition[] {
+  const record = shiftPanelPresetStorageRecord(value);
+  const source = Array.isArray(record?.colorTemplates) && record.colorTemplates.length
+    ? record.colorTemplates
+    : defaultShiftPanelColorTemplates;
+  const seen = new Set<string>();
+  const templates: ShiftPanelColorTemplateDefinition[] = [];
+
+  source.slice(0, 16).forEach((item, index) => {
+    const template = normalizeShiftPanelColorTemplate(item, index);
+    if (!template) return;
+    let id = template.id;
+    let suffix = 2;
+    while (seen.has(id)) {
+      id = `${template.id}-${suffix}`;
+      suffix += 1;
+    }
+    seen.add(id);
+    templates.push({ ...template, id });
+  });
+
+  return templates.length ? templates : defaultShiftPanelColorTemplates;
+}
+
+function normalizeShiftPanelPreset(value: unknown, index: number): ShiftPanelPresetDefinition | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const code = typeof record.code === "string" ? record.code.trim().slice(0, 80) : "";
+  const startTime = typeof record.startTime === "string" ? record.startTime.trim().slice(0, 8) : "";
+  const endTime = typeof record.endTime === "string" ? record.endTime.trim().slice(0, 8) : "";
+  const labelValue = typeof record.label === "string" ? record.label.trim().slice(0, 80) : "";
+  const label = labelValue || code || [startTime, endTime].filter(Boolean).join("-") || `Kart ${index + 1}`;
+  const colorValue = typeof record.color === "string" ? record.color.trim().slice(0, 24) : "";
+  const idValue = typeof record.id === "string" && record.id.trim() ? record.id : `${label}-${index + 1}`;
+
+  return {
+    id: normalizeShiftPanelPresetId(idValue, index),
+    label,
+    code,
+    startTime,
+    endTime,
+    color: colorValue || "custom"
+  };
+}
+
+function normalizeShiftPanelPresets(value: unknown): ShiftPanelPresetDefinition[] {
+  const record = shiftPanelPresetStorageRecord(value);
+  const source = Array.isArray(record?.presets) && record.presets.length
+    ? record.presets
+    : Array.isArray(value) && value.length
+      ? value
+      : defaultShiftPanelPresets;
+  const seen = new Set<string>();
+  const presets: ShiftPanelPresetDefinition[] = [];
+
+  source.slice(0, 16).forEach((item, index) => {
+    const preset = normalizeShiftPanelPreset(item, index);
+    if (!preset) return;
+    let id = preset.id;
+    let suffix = 2;
+    while (seen.has(id)) {
+      id = `${preset.id}-${suffix}`;
+      suffix += 1;
+    }
+    seen.add(id);
+    presets.push({ ...preset, id });
+  });
+
+  return presets.length ? presets : defaultShiftPanelPresets;
+}
+
+function normalizeShiftPanelPresetConfig(value: unknown) {
+  const colorTemplates = normalizeShiftPanelColorTemplates(value);
+  const colorIds = new Set(colorTemplates.map((template) => template.id));
+  const fallbackColor = colorTemplates[0]?.id ?? "custom";
+  const presets = normalizeShiftPanelPresets(value).map((preset) => ({
+    ...preset,
+    color: colorIds.has(preset.color) ? preset.color : fallbackColor
+  }));
+  return { presets, colorTemplates };
 }
 
 function parseShiftPanelDate(value: string | undefined) {
@@ -1752,6 +2540,7 @@ function serializeShiftPanel(
     .filter((user) => user.isActive && !user.deletedAt) ?? [];
   const enabled = panel?.enabled ?? false;
   const canEdit = Boolean(enabled && editors.some((user) => user.id === auth.userId));
+  const presetConfig = normalizeShiftPanelPresetConfig(panel?.presets);
 
   return {
     id: panel?.id ?? "",
@@ -1761,6 +2550,8 @@ function serializeShiftPanel(
     canEdit,
     editorUserIds: editors.map((user) => user.id),
     editors: editors.map(serializeUser),
+    presets: presetConfig.presets,
+    colorTemplates: presetConfig.colorTemplates,
     staff: staff.map(serializeUser),
     cells: cells.map(serializeShiftPanelCell),
     entry: serializeShiftPanelEntry(entry)
@@ -1778,7 +2569,27 @@ function isInvalidPushTokenError(error: unknown) {
   ].includes(code);
 }
 
-async function sendPushNotifications(notifications: DbNotification[]) {
+type NotificationPushFields = {
+  pushPath?: string;
+  pushType?: string;
+  pushTag?: string;
+};
+
+type NotificationUncheckedCreateInputWithPush = Prisma.NotificationUncheckedCreateInput & NotificationPushFields;
+type NotificationCreateManyInputWithPush = Prisma.NotificationCreateManyInput & NotificationPushFields;
+
+function notificationPushData(fields: NotificationPushFields) {
+  const data: Record<string, string> = {};
+  if (fields.pushPath) data.path = fields.pushPath;
+  if (fields.pushType) data.type = fields.pushType;
+  if (fields.pushTag) data.tag = fields.pushTag;
+  return data;
+}
+
+async function sendPushNotifications(
+  notifications: DbNotification[],
+  pushDataByNotificationId = new Map<string, Record<string, string>>()
+) {
   if (!notifications.length) return;
 
   const messaging = firebaseMessaging();
@@ -1806,34 +2617,53 @@ async function sendPushNotifications(notifications: DbNotification[]) {
     const userNotifications = notificationsByUserId.get(device.userId) ?? [];
     for (const notification of userNotifications) {
       const delivery = androidNotificationDelivery(notification.channel);
+      const extraPushData = pushDataByNotificationId.get(notification.id) ?? {};
+      const notificationTag = extraPushData.tag || (delivery.persistent ? `${notification.channel}-${notification.userId}` : "");
+      const collapseTag = delivery.persistent ? notificationTag : "";
       const androidNotification: admin.messaging.AndroidNotification = {
         channelId: delivery.channelId
       };
       if (delivery.delivery === "sound") {
         androidNotification.sound = "default";
       }
+      if (notificationTag) {
+        androidNotification.tag = notificationTag;
+      }
+      if (delivery.persistent) {
+        androidNotification.sticky = true;
+      }
 
-      messageDevices.push(device);
-      messages.push({
+      const data = {
+        notificationId: notification.id,
+        title: notification.title,
+        body: notification.body,
+        channel: notification.channel,
+        delivery: delivery.delivery,
+        androidChannelId: delivery.channelId,
+        persistent: delivery.persistent ? "true" : "false",
+        createdAt: notification.createdAt.toISOString(),
+        path: notificationTargetPath(notification),
+        ...extraPushData
+      };
+      const message: admin.messaging.Message = {
         token: device.fcmToken,
-        notification: {
+        data,
+        android: androidConfigForDelivery(delivery, collapseTag)
+      };
+
+      if (!delivery.persistent) {
+        message.notification = {
           title: notification.title,
           body: notification.body
-        },
-        data: {
-          notificationId: notification.id,
-          title: notification.title,
-          body: notification.body,
-          channel: notification.channel,
-          delivery: delivery.delivery,
-          androidChannelId: delivery.channelId,
-          createdAt: notification.createdAt.toISOString()
-        },
-        android: {
-          priority: delivery.priority,
+        };
+        message.android = {
+          ...message.android,
           notification: androidNotification
-        }
-      });
+        };
+      }
+
+      messageDevices.push(device);
+      messages.push(message);
     }
   }
 
@@ -1858,21 +2688,68 @@ async function sendPushNotifications(notifications: DbNotification[]) {
   }
 }
 
-async function createNotificationAndPush(data: Prisma.NotificationUncheckedCreateInput) {
-  const notification = await prisma.notification.create({ data });
-  await sendPushNotifications([notification]);
+async function createNotificationAndPush(data: NotificationUncheckedCreateInputWithPush) {
+  const { pushPath, pushType, pushTag, ...notificationData } = data;
+  const notification = await prisma.notification.create({ data: notificationData });
+  await sendPushNotifications([notification], new Map([[notification.id, notificationPushData({ pushPath, pushType, pushTag })]]));
   return notification;
 }
 
-async function createNotificationsAndPush(data: Prisma.NotificationCreateManyInput[]) {
+async function createNotificationsAndPush(data: NotificationCreateManyInputWithPush[]) {
   if (!data.length) return [];
 
   const notifications: DbNotification[] = [];
+  const pushDataByNotificationId = new Map<string, Record<string, string>>();
   for (const payload of data) {
-    notifications.push(await prisma.notification.create({ data: payload }));
+    const { pushPath, pushType, pushTag, ...notificationData } = payload;
+    const notification = await prisma.notification.create({ data: notificationData });
+    notifications.push(notification);
+    pushDataByNotificationId.set(notification.id, notificationPushData({ pushPath, pushType, pushTag }));
   }
-  await sendPushNotifications(notifications);
+  await sendPushNotifications(notifications, pushDataByNotificationId);
   return notifications;
+}
+
+async function sendAndroidDataPushToUser(userId: string, data: Record<string, string>) {
+  const messaging = firebaseMessaging();
+  if (!messaging) return;
+
+  const devices = await prisma.pushDevice.findMany({
+    where: {
+      userId,
+      platform: "ANDROID",
+      disabledAt: null
+    }
+  });
+  if (!devices.length) return;
+
+  const collapseKey = sanitizeAndroidCollapseKey(data.tag || data.type || data.channel);
+  const androidConfig: admin.messaging.AndroidConfig = {
+    priority: "high",
+    ttl: 300_000
+  };
+  if (collapseKey) androidConfig.collapseKey = collapseKey;
+
+  const messages = devices.map((device) => ({
+    token: device.fcmToken,
+    data,
+    android: androidConfig
+  }));
+
+  try {
+    const result = await messaging.sendEach(messages);
+    const invalidDeviceIds = result.responses
+      .map((response, index) => (!response.success && isInvalidPushTokenError(response.error) ? devices[index].id : ""))
+      .filter(Boolean);
+    if (invalidDeviceIds.length) {
+      await prisma.pushDevice.updateMany({
+        where: { id: { in: invalidDeviceIds } },
+        data: { disabledAt: new Date() }
+      });
+    }
+  } catch (error) {
+    console.error("Android data push delivery failed.", error);
+  }
 }
 
 async function reminderRecipientUsers(auth: AuthContext) {
@@ -1891,30 +2768,506 @@ async function reminderRecipientUsers(auth: AuthContext) {
 }
 
 async function departmentAssigneeUsers(auth: AuthContext, targetDepartmentId = auth.departmentId) {
+  const targetCode = departmentCodeFromClientId(targetDepartmentId);
   return prisma.user.findMany({
     where: {
       hotelId: auth.hotelId,
       deletedAt: null,
       isActive: true,
-      department: { code: departmentCodeFromClientId(targetDepartmentId) },
-      OR: [{ role: { code: "staff" } }, { role: { code: { in: Array.from(departmentChiefRoles) } } }]
+      department: { code: targetCode }
     },
     include: userInclude,
     orderBy: [{ role: { code: "asc" } }, { fullName: "asc" }]
   });
 }
 
+function canConfigureWorkOrderPolicy(auth: AuthContext, departmentId: string) {
+  return canManageWorkOrderStatus(auth, departmentId);
+}
+
+async function workOrderDepartmentPolicy(hotelId: string, departmentDbId: string) {
+  return prisma.workOrderDepartmentPolicy.findUnique({
+    where: { hotelId_departmentId: { hotelId, departmentId: departmentDbId } }
+  });
+}
+
+async function workOrderPolicySets(hotelId: string, departmentDbId: string) {
+  const policy = await workOrderDepartmentPolicy(hotelId, departmentDbId);
+  return {
+    assignmentAuthorityUserIds: new Set(parseUserIdArray(policy?.assignerUserIdsJson)),
+    deleteAuthorityUserIds: new Set(parseUserIdArray(policy?.deleterUserIdsJson))
+  };
+}
+
+async function canAssignWorkOrder(auth: AuthContext, departmentId: string, departmentDbId: string) {
+  if (auth.departmentId !== departmentId) return false;
+  if (canManageWorkOrderStatus(auth, departmentId)) return true;
+  const policy = await workOrderPolicySets(auth.hotelId, departmentDbId);
+  return policy.assignmentAuthorityUserIds.has(auth.userId);
+}
+
+async function canDeleteAssignedDepartmentWorkOrder(
+  auth: AuthContext,
+  workOrder: { departmentId: string; assignedToId: string | null; type: string }
+) {
+  const department = await prisma.department.findUnique({ where: { id: workOrder.departmentId }, select: { code: true } });
+  const departmentId = department?.code ? clientDepartmentIdFromCode(department.code) : "";
+  if (!departmentId || auth.departmentId !== departmentId || !isWorkIncidentPoolType(workOrder.type)) return false;
+  if (canManageWorkOrderStatus(auth, departmentId)) return true;
+  if (workOrder.assignedToId !== auth.userId) return false;
+  const policy = await workOrderPolicySets(auth.hotelId, workOrder.departmentId);
+  return policy.deleteAuthorityUserIds.has(auth.userId);
+}
+
+function canDeleteOwnWorkOrder(auth: AuthContext) {
+  return rolePermissions[auth.roleId]?.includes("work-orders:delete-own") ?? false;
+}
+
+function isWorkIncidentPoolType(type: string) {
+  return type === "JOB" || type === "FAULT";
+}
+
+function canClaimDepartmentWorkOrder(auth: AuthContext, workOrder: { type: string; assignedToId: string | null; department: { code: string } }) {
+  const departmentId = clientDepartmentIdFromCode(workOrder.department.code);
+  return (
+    auth.departmentId === departmentId &&
+    isWorkIncidentPoolType(workOrder.type) &&
+    !workOrder.assignedToId
+  );
+}
+
+function canUpdateWorkOrderStatus(auth: AuthContext, workOrder: { assignedToId: string | null }, departmentId: string) {
+  return canManageWorkOrderStatus(auth, departmentId) || workOrder.assignedToId === auth.userId;
+}
+
+function serializeWorkOrderPolicy(
+  departmentId: string,
+  policy: { assignerUserIdsJson: string; deleterUserIdsJson: string } | null,
+  users: Array<User & { hotel?: { code: string; name: string } | null; role: { code: string }; department: { code: string } }>,
+  auth: AuthContext
+) {
+  return {
+    departmentId,
+    assignmentAuthorityUserIds: parseUserIdArray(policy?.assignerUserIdsJson),
+    deleteAuthorityUserIds: parseUserIdArray(policy?.deleterUserIdsJson),
+    users: users.map(serializeUser),
+    canConfigure: canConfigureWorkOrderPolicy(auth, departmentId)
+  };
+}
+
+type DepartmentTableColumnDefinition = z.infer<typeof departmentTableColumnSchema>;
+
+function normalizeDepartmentTableKey(value: string, fallback: string) {
+  const normalized = value
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return normalized || fallback;
+}
+
+function normalizeDepartmentTableColumns(columns: DepartmentTableColumnDefinition[]) {
+  const seen = new Set<string>();
+  return columns.slice(0, 24).map((column, index) => {
+    const baseId = normalizeDepartmentTableKey(column.id || column.label, `kolon-${index + 1}`);
+    let id = baseId;
+    let suffix = 2;
+    while (seen.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    seen.add(id);
+    return {
+      id,
+      label: column.label.trim().slice(0, 80),
+      type: column.type ?? "text"
+    };
+  });
+}
+
+function parseDepartmentTableColumns(value: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(value || "[]") as unknown;
+    const result = z.array(departmentTableColumnSchema).safeParse(parsed);
+    return result.success ? normalizeDepartmentTableColumns(result.data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseDepartmentTableRowValues(value: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(value || "{}") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, item]) => [key, String(item ?? "")]))
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function departmentTableVisibleWhere(auth: AuthContext): Prisma.DepartmentTableWhereInput {
+  return {
+    hotelId: auth.hotelId,
+    enabled: true,
+    department: {
+      deletedAt: null,
+      ...(canViewAllShiftPanels(auth) ? {} : { code: departmentCodeFromClientId(auth.departmentId) })
+    }
+  };
+}
+
+function canViewDepartmentTable(auth: AuthContext, departmentId: string) {
+  return canViewAllShiftPanels(auth) || auth.departmentId === departmentId;
+}
+
+function canConfigureDepartmentTable(auth: AuthContext, departmentId: string) {
+  return canManageWorkOrderStatus(auth, departmentId);
+}
+
+function canEditDepartmentTableRows(auth: AuthContext, departmentId: string) {
+  return auth.departmentId === departmentId || canConfigureDepartmentTable(auth, departmentId);
+}
+
+type SerializableDepartmentTable = {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  columnsJson: string;
+  showInMenu: boolean;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  department: { code: string; name: string };
+  rows?: Array<{
+    id: string;
+    valuesJson: string;
+    note: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+};
+
+function serializeDepartmentTable(table: SerializableDepartmentTable, auth: AuthContext) {
+  const departmentId = clientDepartmentIdFromCode(table.department.code);
+  return {
+    id: table.id,
+    departmentId,
+    departmentName: table.department.name,
+    slug: table.slug,
+    title: table.title,
+    description: table.description,
+    columns: parseDepartmentTableColumns(table.columnsJson),
+    showInMenu: table.showInMenu,
+    enabled: table.enabled,
+    canConfigure: canConfigureDepartmentTable(auth, departmentId),
+    canEditRows: canEditDepartmentTableRows(auth, departmentId),
+    rows: "rows" in table && Array.isArray(table.rows)
+      ? table.rows.map((row) => ({
+          id: row.id,
+          values: parseDepartmentTableRowValues(row.valuesJson),
+          note: row.note,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString()
+        }))
+      : [],
+    createdAt: table.createdAt.toISOString(),
+    updatedAt: table.updatedAt.toISOString()
+  };
+}
+
 async function departmentNotificationUsers(auth: AuthContext, targetDepartmentId: string) {
-  return prisma.user.findMany({
+  const targetDepartmentCode = departmentCodeFromClientId(targetDepartmentId);
+  const departmentUsers = await prisma.user.findMany({
     where: {
       hotelId: auth.hotelId,
       deletedAt: null,
       isActive: true,
       id: { not: auth.userId },
-      department: { code: departmentCodeFromClientId(targetDepartmentId) }
+      department: { code: targetDepartmentCode }
     },
     orderBy: [{ role: { code: "asc" } }, { fullName: "asc" }]
   });
+  if (departmentUsers.length) return departmentUsers;
+
+  return prisma.user.findMany({
+    where: {
+      hotelId: auth.hotelId,
+      deletedAt: null,
+      isActive: true,
+      id: auth.userId,
+      department: { code: targetDepartmentCode }
+    },
+    orderBy: [{ role: { code: "asc" } }, { fullName: "asc" }]
+  });
+}
+
+async function activeShiftUserIdSet(userIds: string[]) {
+  if (!userIds.length) return new Set<string>();
+  const sessions = await prisma.shiftSession.findMany({
+    where: {
+      userId: { in: userIds },
+      endedAt: null
+    },
+    select: { userId: true }
+  });
+  return new Set(sessions.map((session) => session.userId));
+}
+
+function workOrderDetailPushPath(workOrderCode: string) {
+  return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
+}
+
+async function workOrderNotificationPayloads(
+  users: Array<Pick<User, "id">>,
+  notificationText: { title: string; body: string },
+  workOrderCode: string
+) {
+  const activeShiftUserIds = await activeShiftUserIdSet(users.map((user) => user.id));
+  return users.map((user) => ({
+    userId: user.id,
+    title: notificationText.title,
+    body: notificationText.body,
+    channel: activeShiftUserIds.has(user.id) ? notificationChannelWorkOrderSound : notificationChannelWorkOrderSilent,
+    pushType: "work_order",
+    pushPath: workOrderDetailPushPath(workOrderCode),
+    pushTag: `work-order-${workOrderCode}`
+  }));
+}
+
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addUtcDays(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateKeyToShiftPanelDate(dateKey: string) {
+  return new Date(`${dateKey}T00:00:00.000Z`);
+}
+
+function minutesFromTime(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function localDateTimeFromPanelDate(dateKey: string, time: string) {
+  return new Date(`${dateKey}T${time}:00`);
+}
+
+function shiftWindowForCell(cell: Pick<ShiftPanelCellRecord, "date" | "startTime" | "endTime">) {
+  const dateKey = cell.date.toISOString().slice(0, 10);
+  const startMinutes = minutesFromTime(cell.startTime);
+  if (startMinutes === null) return null;
+
+  const start = localDateTimeFromPanelDate(dateKey, cell.startTime);
+  const endMinutes = minutesFromTime(cell.endTime);
+  if (endMinutes === null) {
+    return { dateKey, start, end: new Date(start.getTime() + 12 * 60 * 60 * 1000) };
+  }
+
+  const endDateKey = endMinutes <= startMinutes ? addUtcDays(dateKey, 1) : dateKey;
+  return { dateKey, start, end: localDateTimeFromPanelDate(endDateKey, cell.endTime) };
+}
+
+const shiftStartReminderLastSentAt = new Map<string, number>();
+
+function shiftReminderCandidateDateKeys(now: Date) {
+  const todayKey = localDateKey(now);
+  return [addUtcDays(todayKey, -1), todayKey];
+}
+
+function shiftStartReminderKey(cell: Pick<ShiftPanelCellRecord, "userId" | "startTime">, window: { dateKey: string }) {
+  return `${cell.userId}:${window.dateKey}:${cell.startTime}`;
+}
+
+function shiftWindowNeedsReminder(window: { start: Date; end: Date }, now: Date) {
+  return now.getTime() >= window.start.getTime() + shiftStartReminderGraceMs && now <= window.end;
+}
+
+async function createShiftStartReminder(cell: Pick<ShiftPanelCellRecord, "userId" | "startTime" | "endTime">, window: { dateKey: string; start: Date }, now: Date) {
+  const reminderKey = shiftStartReminderKey(cell, window);
+  const title = "Vardiya girişini başlat";
+  const body = `${cell.startTime}-${cell.endTime || "?"} vardiyan başladı. Ana sayfadan vardiya başlat.`;
+  const existingNotifications = await prisma.notification.findMany({
+    where: {
+      userId: cell.userId,
+      channel: notificationChannelShiftStartReminder,
+      title,
+      body,
+      createdAt: {
+        gte: window.start
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  const notification = existingNotifications[0] ?? await prisma.notification.create({
+    data: {
+      userId: cell.userId,
+      title,
+      body,
+      channel: notificationChannelShiftStartReminder
+    }
+  });
+  const duplicateIds = existingNotifications
+    .filter((item) => item.id !== notification.id)
+    .map((item) => item.id);
+  if (duplicateIds.length) {
+    await prisma.notification.deleteMany({ where: { id: { in: duplicateIds } } });
+  }
+
+  shiftStartReminderLastSentAt.set(reminderKey, now.getTime());
+  await sendPushNotifications([notification], new Map([[
+    notification.id,
+    notificationPushData({
+      pushType: "shift_start_reminder",
+      pushPath: "/dashboard",
+      pushTag: `shift-start-reminder-${cell.userId}`
+    })
+  ]]));
+}
+
+async function clearOpenShiftStartReminders(userId: string) {
+  const result = await prisma.notification.deleteMany({
+    where: {
+      userId,
+      channel: notificationChannelShiftStartReminder,
+      readAt: null,
+      createdAt: {
+        gte: new Date(Date.now() - 36 * 60 * 60 * 1000)
+      }
+    }
+  });
+  return result.count;
+}
+
+async function cancelShiftStartReminderPush(userId: string) {
+  await sendAndroidDataPushToUser(userId, {
+    type: "shift_start_reminder_cancel",
+    channel: notificationChannelShiftStartReminder,
+    persistent: "false",
+    createdAt: new Date().toISOString()
+  });
+}
+
+async function sendCurrentShiftStartReminder(userId: string, force = false) {
+  const now = new Date();
+  const activeShift = await prisma.shiftSession.findFirst({
+    where: { userId, endedAt: null },
+    select: { id: true }
+  });
+  if (activeShift) return false;
+
+  const cells = await prisma.shiftPanelCell.findMany({
+    where: {
+      userId,
+      date: { in: shiftReminderCandidateDateKeys(now).map(dateKeyToShiftPanelDate) },
+      startTime: { not: "" },
+      panel: { enabled: true },
+      user: {
+        deletedAt: null,
+        isActive: true,
+        shiftTrackingEnabled: true
+      }
+    },
+    orderBy: [{ date: "desc" }, { startTime: "desc" }]
+  });
+
+  for (const cell of cells) {
+    const window = shiftWindowForCell(cell);
+    if (!window || !shiftWindowNeedsReminder(window, now)) continue;
+
+    const reminderKey = shiftStartReminderKey(cell, window);
+    const lastSentAt = shiftStartReminderLastSentAt.get(reminderKey) ?? 0;
+    if (!force && now.getTime() - lastSentAt < shiftStartReminderRepeatMs) return false;
+
+    await createShiftStartReminder(cell, window, now);
+    return true;
+  }
+
+  return false;
+}
+
+function scheduleShiftStartReminderAfterShiftEnd(userId: string) {
+  setTimeout(() => {
+    void sendCurrentShiftStartReminder(userId, true).catch((error) => {
+      console.error("Shift start reminder after shift end failed", error);
+    });
+  }, 2500);
+}
+
+async function processShiftStartReminders() {
+  const now = new Date();
+  const cells = await prisma.shiftPanelCell.findMany({
+    where: {
+      date: { in: shiftReminderCandidateDateKeys(now).map(dateKeyToShiftPanelDate) },
+      startTime: { not: "" },
+      panel: { enabled: true },
+      user: {
+        deletedAt: null,
+        isActive: true,
+        shiftTrackingEnabled: true
+      }
+    },
+    include: {
+      user: true,
+      panel: { include: { department: true } }
+    }
+  });
+
+  if (!cells.length) return;
+
+  const userIds = Array.from(new Set(cells.map((cell) => cell.userId)));
+  const activeShiftUserIds = await activeShiftUserIdSet(userIds);
+  const validReminderKeys = new Set<string>();
+
+  for (const cell of cells) {
+    const window = shiftWindowForCell(cell);
+    if (!window) continue;
+
+    const reminderKey = shiftStartReminderKey(cell, window);
+    validReminderKeys.add(reminderKey);
+    if (!shiftWindowNeedsReminder(window, now)) {
+      shiftStartReminderLastSentAt.delete(reminderKey);
+      continue;
+    }
+
+    const hasStartedShift = activeShiftUserIds.has(cell.userId);
+    if (hasStartedShift) {
+      shiftStartReminderLastSentAt.delete(reminderKey);
+      const clearedCount = await clearOpenShiftStartReminders(cell.userId);
+      if (clearedCount > 0) {
+        await cancelShiftStartReminderPush(cell.userId);
+      }
+      continue;
+    }
+
+    const lastSentAt = shiftStartReminderLastSentAt.get(reminderKey) ?? 0;
+    if (now.getTime() - lastSentAt < shiftStartReminderRepeatMs) continue;
+
+    await createShiftStartReminder(cell, window, now);
+  }
+
+  const staleCutoff = now.getTime() - 36 * 60 * 60 * 1000;
+  for (const [key, sentAt] of shiftStartReminderLastSentAt) {
+    if (!validReminderKeys.has(key) || sentAt < staleCutoff) {
+      shiftStartReminderLastSentAt.delete(key);
+    }
+  }
 }
 
 async function processDueReminders(userId: string) {
@@ -2243,8 +3596,14 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+app.get("/health/deep", async (_req, res) => {
+  const snapshot = await deepHealthSnapshot();
+  res.status(snapshot.ok ? 200 : 503).json(snapshot);
+});
+
 app.get("/system/maintenance", (_req, res) => {
   res.set("Cache-Control", "no-store");
+  res.type("application/json; charset=utf-8");
   res.json(readMaintenanceStatus());
 });
 
@@ -2253,7 +3612,7 @@ app.patch("/system/maintenance", authenticate, requirePlatformAdmin, asyncHandle
   const before = readMaintenanceStatus();
   const after: MaintenanceStatus = {
     enabled: payload.enabled,
-    message: payload.message || maintenanceDefaultMessage,
+    message: normalizeMaintenanceMessage(payload.message),
     updatedAt: new Date().toISOString(),
     updatedBy: req.user?.username ?? req.auth!.userId,
     source: "tenant-console"
@@ -2267,6 +3626,7 @@ app.patch("/system/maintenance", authenticate, requirePlatformAdmin, asyncHandle
     before,
     after
   );
+  emitMaintenanceChanged(after);
   res.json(after);
 }));
 
@@ -2281,7 +3641,7 @@ app.post("/station/heartbeat", authenticate, asyncHandler(async (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 }));
 
-app.post("/auth/login", asyncHandler(async (req, res) => {
+app.post("/auth/login", authLoginRateLimiter, asyncHandler(async (req, res) => {
   const payload = loginSchema.parse(req.body);
   const usernameInput = payload.username.trim();
   const loginCandidates = Array.from(new Set([
@@ -2388,31 +3748,68 @@ app.patch("/auth/profile", authenticate, asyncHandler(async (req, res) => {
     res.status(401).json({ error: "INVALID_CURRENT_PASSWORD" });
     return;
   }
-  if (isReservedPlatformUser(req.user!)) {
+  const currentUsername = req.user!.username.trim().toLocaleLowerCase("tr-TR");
+  const currentEmail = req.user!.email.trim().toLowerCase();
+  const currentFullName = req.user!.fullName.trim();
+  const nextFullName = payload.fullName ?? currentFullName;
+  const nextEmail = payload.email ?? currentEmail;
+  const fullNameChanged = nextFullName !== currentFullName;
+  const usernameChanged = payload.username !== currentUsername;
+  const emailChanged = nextEmail !== currentEmail;
+
+  if (usernameChanged && isReservedPlatformUser(req.user!)) {
     res.status(403).json({ error: "PROFILE_USERNAME_DENIED" });
     return;
   }
-
-  const existing = await prisma.user.findFirst({
-    where: {
-      id: { not: req.auth!.userId },
-      deletedAt: null,
-      OR: [
-        { username: { equals: payload.username, mode: "insensitive" } },
-        { email: { equals: payload.username, mode: "insensitive" } }
-      ]
-    },
-    select: { id: true }
-  });
-  if (existing || isPlatformAdminUsername(payload.username)) {
-    res.status(409).json({ error: "DUPLICATE_USERNAME" });
+  if (!fullNameChanged && !usernameChanged && !emailChanged) {
+    res.json({ ok: true, user: serializeUser(req.user!) });
     return;
   }
 
+  if (usernameChanged) {
+    const existingUsername = await prisma.user.findFirst({
+      where: {
+        id: { not: req.auth!.userId },
+        deletedAt: null,
+        OR: [
+          { username: { equals: payload.username, mode: "insensitive" } },
+          { email: { equals: payload.username, mode: "insensitive" } }
+        ]
+      },
+      select: { id: true }
+    });
+    if (existingUsername || isPlatformAdminUsername(payload.username)) {
+      res.status(409).json({ error: "DUPLICATE_USERNAME" });
+      return;
+    }
+  }
+
+  if (emailChanged) {
+    const existingEmail = await prisma.user.findFirst({
+      where: {
+        id: { not: req.auth!.userId },
+        deletedAt: null,
+        OR: [
+          { email: { equals: nextEmail, mode: "insensitive" } },
+          { username: { equals: nextEmail, mode: "insensitive" } }
+        ]
+      },
+      select: { id: true }
+    });
+    if (existingEmail) {
+      res.status(409).json({ error: "DUPLICATE_EMAIL" });
+      return;
+    }
+  }
+
   const before = serializeUser(req.user!);
+  const data: Prisma.UserUpdateInput = {};
+  if (fullNameChanged) data.fullName = nextFullName;
+  if (usernameChanged) data.username = payload.username;
+  if (emailChanged) data.email = nextEmail;
   const updated = await prisma.user.update({
     where: { id: req.auth!.userId },
-    data: { username: payload.username },
+    data,
     include: userInclude
   });
   await audit(req, "User", updated.id, "UPDATE_PROFILE", before, serializeUser(updated));
@@ -2824,6 +4221,10 @@ app.post("/shifts/start", authenticate, asyncHandler(async (req, res) => {
   });
 
   if (activeShift) {
+    await Promise.all([
+      clearOpenShiftStartReminders(req.auth!.userId),
+      cancelShiftStartReminderPush(req.auth!.userId)
+    ]);
     res.json({ item: serializeShiftSession(activeShift) });
     return;
   }
@@ -2837,6 +4238,11 @@ app.post("/shifts/start", authenticate, asyncHandler(async (req, res) => {
       userAgent: String(clientUserAgent(req))
     }
   });
+
+  await Promise.all([
+    clearOpenShiftStartReminders(req.auth!.userId),
+    cancelShiftStartReminderPush(req.auth!.userId)
+  ]);
 
   res.status(201).json({ item: serializeShiftSession(shift) });
 }));
@@ -2861,6 +4267,7 @@ app.post("/shifts/end", authenticate, asyncHandler(async (req, res) => {
   });
 
   res.json({ item: serializeShiftSession(endedShift) });
+  scheduleShiftStartReminderAfterShiftEnd(req.auth!.userId);
 }));
 
 app.get("/shift-panels", authenticate, asyncHandler(async (req, res) => {
@@ -2998,6 +4405,44 @@ app.patch("/shift-panels/:departmentId/config", authenticate, asyncHandler(async
   res.json({ item: serializeShiftPanel(panel, department, null, req.auth!) });
 }));
 
+app.patch("/shift-panels/:departmentId/presets", authenticate, asyncHandler(async (req, res) => {
+  const payload = shiftPanelPresetsSchema.parse(req.body);
+  const department = await departmentForClientId(req.auth!.hotelId, routeParam(req, "departmentId"));
+  const panel = await prisma.shiftPanel.findUnique({
+    where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
+    include: { editors: true }
+  });
+
+  if (!panel || !panel.enabled) {
+    res.status(404).json({ error: "SHIFT_PANEL_NOT_FOUND" });
+    return;
+  }
+  if (!canConfigureShiftPanels(req.auth!) && !panel.editors.some((editor) => editor.userId === req.auth!.userId)) {
+    res.status(403).json({ error: "SHIFT_PANEL_EDIT_DENIED" });
+    return;
+  }
+
+  const presetConfig = normalizeShiftPanelPresetConfig({
+    presets: payload.presets,
+    colorTemplates: payload.colorTemplates ?? defaultShiftPanelColorTemplates
+  });
+  const savedPanel = await prisma.shiftPanel.update({
+    where: { id: panel.id },
+    data: { presets: toArchiveJson(presetConfig) },
+    include: {
+      department: true,
+      editors: { include: { user: { include: userInclude } } }
+    }
+  });
+
+  await audit(req, "ShiftPanel", savedPanel.id, "PRESETS", normalizeShiftPanelPresetConfig(panel.presets), {
+    departmentId: clientDepartmentIdFromCode(department.code),
+    ...presetConfig
+  });
+
+  res.json(normalizeShiftPanelPresetConfig(savedPanel.presets));
+}));
+
 app.patch("/shift-panels/:departmentId/cell", authenticate, asyncHandler(async (req, res) => {
   const payload = shiftPanelCellSchema.parse(req.body);
   const { date } = parseShiftPanelDate(payload.date);
@@ -3133,8 +4578,9 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   await processDueReminders(req.auth!.userId);
   await ensureHotelUserAccountIds(req.auth!.hotelId);
   const departments = scopeDepartmentIds(req.auth!);
+  const departmentTablesEnabled = hasFeatureAccess(req, "departmentTables");
 
-  const [workOrders, notifications, reminders, users, activeDepartments, activeShift] = await Promise.all([
+  const [workOrders, notifications, reminders, users, activeDepartments, activeShift, departmentTables] = await Promise.all([
     prisma.workOrder.findMany({
       where: workOrderVisibilityWhere(req.auth!),
       include: workOrderInclude,
@@ -3167,7 +4613,17 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
           where: { userId: req.auth!.userId, endedAt: null },
           orderBy: { startedAt: "desc" }
         })
-      : Promise.resolve(null)
+      : Promise.resolve(null),
+    departmentTablesEnabled
+      ? prisma.departmentTable.findMany({
+          where: departmentTableVisibleWhere(req.auth!),
+          include: {
+            department: true,
+            rows: { orderBy: { updatedAt: "desc" }, take: 200 }
+          },
+          orderBy: [{ department: { name: "asc" } }, { title: "asc" }]
+        })
+      : Promise.resolve([])
   ]);
 
   res.json({
@@ -3178,8 +4634,34 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     users: users.map(serializeUser),
     reminders: reminders.map(serializeReminder),
     departments: activeDepartments.map(serializeDepartment),
+    departmentTables: departmentTables.map((table) => serializeDepartmentTable(table, req.auth!)),
     notifications: notifications.map(serializeNotification),
-    activeShift: activeShift ? serializeShiftSession(activeShift) : null
+    activeShift: activeShift ? serializeShiftSession(activeShift) : null,
+    maintenance: readMaintenanceStatus()
+  });
+}));
+
+app.get("/sync/state", authenticate, asyncHandler(async (req, res) => {
+  await processDueReminders(req.auth!.userId);
+  markSessionHeartbeat(req.auth!, String(clientUserAgent(req)));
+
+  const since = typeof req.query.since === "string" ? req.query.since : "";
+  const requestedWaitMs = Math.max(0, queryNumber(req.query.waitMs, 0));
+  const waitMs = Math.min(requestedWaitMs, syncStateMaxWaitMs);
+  const deadline = Date.now() + waitMs;
+  let snapshot = await buildSyncState(req);
+
+  while (since && snapshot.etag === since && Date.now() < deadline && !req.aborted) {
+    await sleep(Math.min(syncStatePollIntervalMs, Math.max(0, deadline - Date.now())));
+    await processDueReminders(req.auth!.userId);
+    markSessionHeartbeat(req.auth!, String(clientUserAgent(req)));
+    snapshot = await buildSyncState(req);
+  }
+
+  if (req.aborted) return;
+  res.json({
+    ...snapshot,
+    changed: !since || snapshot.etag !== since
   });
 }));
 
@@ -3390,6 +4872,258 @@ app.delete("/departments/:departmentId", authenticate, requirePermission("depart
   res.json({ ok: true });
 });
 
+app.get("/work-order-policies/:departmentId", authenticate, asyncHandler(async (req, res) => {
+  const departmentId = routeParam(req, "departmentId");
+  if (req.auth!.departmentId !== departmentId && !canViewAllShiftPanels(req.auth!)) {
+    res.status(403).json({ error: "WORK_ORDER_POLICY_SCOPE_DENIED" });
+    return;
+  }
+
+  const department = await departmentForClientId(req.auth!.hotelId, departmentId);
+  const [policy, users] = await Promise.all([
+    workOrderDepartmentPolicy(req.auth!.hotelId, department.id),
+    departmentAssigneeUsers(req.auth!, departmentId)
+  ]);
+  res.json(serializeWorkOrderPolicy(departmentId, policy, users, req.auth!));
+}));
+
+app.patch("/work-order-policies/:departmentId", authenticate, requireModuleAccess("settings"), asyncHandler(async (req, res) => {
+  const departmentId = routeParam(req, "departmentId");
+  if (!canConfigureWorkOrderPolicy(req.auth!, departmentId)) {
+    res.status(403).json({ error: "WORK_ORDER_POLICY_CONFIG_DENIED" });
+    return;
+  }
+
+  const payload = workOrderPolicySchema.parse(req.body);
+  const department = await departmentForClientId(req.auth!.hotelId, departmentId);
+  const users = await departmentAssigneeUsers(req.auth!, departmentId);
+  const activeUserIds = new Set(users.map((user) => user.id));
+  const assignmentAuthorityUserIds = Array.from(new Set(payload.assignmentAuthorityUserIds)).filter(Boolean);
+  const deleteAuthorityUserIds = Array.from(new Set(payload.deleteAuthorityUserIds)).filter(Boolean);
+  const invalidUserIds = [...assignmentAuthorityUserIds, ...deleteAuthorityUserIds].filter((userId) => !activeUserIds.has(userId));
+  if (invalidUserIds.length) {
+    res.status(422).json({ error: "POLICY_USER_SCOPE_DENIED", invalidUserIds });
+    return;
+  }
+
+  const policy = await prisma.workOrderDepartmentPolicy.upsert({
+    where: { hotelId_departmentId: { hotelId: req.auth!.hotelId, departmentId: department.id } },
+    update: {
+      assignerUserIdsJson: JSON.stringify(assignmentAuthorityUserIds),
+      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds)
+    },
+    create: {
+      hotelId: req.auth!.hotelId,
+      departmentId: department.id,
+      assignerUserIdsJson: JSON.stringify(assignmentAuthorityUserIds),
+      deleterUserIdsJson: JSON.stringify(deleteAuthorityUserIds)
+    }
+  });
+  await audit(req, "WorkOrderDepartmentPolicy", policy.id, "UPSERT", null, serializeWorkOrderPolicy(departmentId, policy, users, req.auth!));
+  res.json(serializeWorkOrderPolicy(departmentId, policy, users, req.auth!));
+}));
+
+app.get("/department-tables", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const departmentId = typeof req.query.departmentId === "string" && req.query.departmentId.trim()
+    ? req.query.departmentId.trim()
+    : "";
+  const includeDisabled = typeof req.query.includeDisabled === "string" && req.query.includeDisabled === "true";
+  const where: Prisma.DepartmentTableWhereInput = {
+    hotelId: req.auth!.hotelId,
+    ...(includeDisabled && canViewAllShiftPanels(req.auth!) ? {} : { enabled: true }),
+    department: {
+      hotelId: req.auth!.hotelId,
+      deletedAt: null,
+      ...(departmentId
+        ? { code: departmentCodeFromClientId(departmentId) }
+        : canViewAllShiftPanels(req.auth!) ? {} : { code: departmentCodeFromClientId(req.auth!.departmentId) })
+    }
+  };
+  if (departmentId && !canViewDepartmentTable(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_SCOPE_DENIED" });
+    return;
+  }
+
+  const tables = await prisma.departmentTable.findMany({
+    where,
+    include: {
+      department: true,
+      rows: { orderBy: { updatedAt: "desc" }, take: 200 }
+    },
+    orderBy: [{ department: { name: "asc" } }, { title: "asc" }]
+  });
+  res.json({ items: tables.map((table) => serializeDepartmentTable(table, req.auth!)) });
+}));
+
+app.post("/department-tables", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const payload = departmentTableSchema.parse(req.body);
+  const departmentId = payload.departmentId || req.auth!.departmentId;
+  if (!canConfigureDepartmentTable(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_CONFIG_DENIED" });
+    return;
+  }
+
+  const department = await departmentForClientId(req.auth!.hotelId, departmentId);
+  const columns = normalizeDepartmentTableColumns(payload.columns);
+  const slug = normalizeDepartmentTableKey(payload.slug || payload.title, "tablo");
+  const table = await prisma.departmentTable.upsert({
+    where: { hotelId_departmentId_slug: { hotelId: req.auth!.hotelId, departmentId: department.id, slug } },
+    update: {
+      title: payload.title,
+      description: payload.description,
+      columnsJson: JSON.stringify(columns),
+      showInMenu: payload.showInMenu,
+      enabled: payload.enabled,
+      updatedById: req.auth!.userId
+    },
+    create: {
+      hotelId: req.auth!.hotelId,
+      departmentId: department.id,
+      slug,
+      title: payload.title,
+      description: payload.description,
+      columnsJson: JSON.stringify(columns),
+      showInMenu: payload.showInMenu,
+      enabled: payload.enabled,
+      createdById: req.auth!.userId,
+      updatedById: req.auth!.userId
+    },
+    include: { department: true, rows: true }
+  });
+  await audit(req, "DepartmentTable", table.id, "UPSERT", null, serializeDepartmentTable(table, req.auth!));
+  res.status(201).json({ item: serializeDepartmentTable(table, req.auth!) });
+}));
+
+app.patch("/department-tables/:tableId", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const existing = await prisma.departmentTable.findUnique({
+    where: { id: routeParam(req, "tableId") },
+    include: { department: true, rows: true }
+  });
+  if (!existing || existing.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const departmentId = clientDepartmentIdFromCode(existing.department.code);
+  if (!canConfigureDepartmentTable(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_CONFIG_DENIED" });
+    return;
+  }
+
+  const payload = departmentTableSchema.partial().parse(req.body);
+  const columns = payload.columns ? normalizeDepartmentTableColumns(payload.columns) : parseDepartmentTableColumns(existing.columnsJson);
+  const updated = await prisma.departmentTable.update({
+    where: { id: existing.id },
+    data: {
+      ...(payload.title ? { title: payload.title } : {}),
+      ...(payload.description !== undefined ? { description: payload.description } : {}),
+      ...(payload.columns ? { columnsJson: JSON.stringify(columns) } : {}),
+      ...(payload.showInMenu !== undefined ? { showInMenu: payload.showInMenu } : {}),
+      ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {}),
+      updatedById: req.auth!.userId
+    },
+    include: { department: true, rows: true }
+  });
+  await audit(req, "DepartmentTable", updated.id, "UPDATE", serializeDepartmentTable(existing, req.auth!), serializeDepartmentTable(updated, req.auth!));
+  res.json({ item: serializeDepartmentTable(updated, req.auth!) });
+}));
+
+app.post("/department-tables/:tableId/rows", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const table = await prisma.departmentTable.findUnique({ where: { id: routeParam(req, "tableId") }, include: { department: true } });
+  if (!table || table.hotelId !== req.auth!.hotelId || !table.enabled) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const departmentId = clientDepartmentIdFromCode(table.department.code);
+  if (!canEditDepartmentTableRows(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_ROW_DENIED" });
+    return;
+  }
+  const payload = departmentTableRowSchema.parse(req.body);
+  const columns = parseDepartmentTableColumns(table.columnsJson);
+  const allowedColumnIds = new Set(columns.map((column) => column.id));
+  const values = Object.fromEntries(Object.entries(payload.values).filter(([key]) => allowedColumnIds.has(key)));
+  const row = await prisma.departmentTableRow.create({
+    data: {
+      tableId: table.id,
+      valuesJson: JSON.stringify(values),
+      note: payload.note,
+      createdById: req.auth!.userId,
+      updatedById: req.auth!.userId
+    }
+  });
+  await audit(req, "DepartmentTableRow", row.id, "CREATE", null, { tableId: table.id, values });
+  res.status(201).json({
+    item: {
+      id: row.id,
+      values: parseDepartmentTableRowValues(row.valuesJson),
+      note: row.note,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString()
+    }
+  });
+}));
+
+app.patch("/department-tables/:tableId/rows/:rowId", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const table = await prisma.departmentTable.findUnique({ where: { id: routeParam(req, "tableId") }, include: { department: true } });
+  if (!table || table.hotelId !== req.auth!.hotelId || !table.enabled) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const departmentId = clientDepartmentIdFromCode(table.department.code);
+  if (!canEditDepartmentTableRows(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_ROW_DENIED" });
+    return;
+  }
+  const existingRow = await prisma.departmentTableRow.findFirst({ where: { id: routeParam(req, "rowId"), tableId: table.id } });
+  if (!existingRow) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const payload = departmentTableRowSchema.parse(req.body);
+  const columns = parseDepartmentTableColumns(table.columnsJson);
+  const allowedColumnIds = new Set(columns.map((column) => column.id));
+  const values = Object.fromEntries(Object.entries(payload.values).filter(([key]) => allowedColumnIds.has(key)));
+  const row = await prisma.departmentTableRow.update({
+    where: { id: routeParam(req, "rowId") },
+    data: {
+      valuesJson: JSON.stringify(values),
+      note: payload.note,
+      updatedById: req.auth!.userId
+    }
+  });
+  await audit(req, "DepartmentTableRow", row.id, "UPDATE", null, { tableId: table.id, values });
+  res.json({
+    item: {
+      id: row.id,
+      values: parseDepartmentTableRowValues(row.valuesJson),
+      note: row.note,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString()
+    }
+  });
+}));
+
+app.delete("/department-tables/:tableId/rows/:rowId", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
+  const table = await prisma.departmentTable.findUnique({ where: { id: routeParam(req, "tableId") }, include: { department: true } });
+  if (!table || table.hotelId !== req.auth!.hotelId || !table.enabled) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const departmentId = clientDepartmentIdFromCode(table.department.code);
+  if (!canEditDepartmentTableRows(req.auth!, departmentId)) {
+    res.status(403).json({ error: "DEPARTMENT_TABLE_ROW_DENIED" });
+    return;
+  }
+  const existingRow = await prisma.departmentTableRow.findFirst({ where: { id: routeParam(req, "rowId"), tableId: table.id } });
+  if (!existingRow) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  const deleted = await prisma.departmentTableRow.delete({ where: { id: existingRow.id } });
+  await audit(req, "DepartmentTableRow", deleted.id, "DELETE", { tableId: table.id }, null);
+  res.json({ ok: true });
+}));
+
 app.get("/work-orders", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
   const workOrders = await prisma.workOrder.findMany({
     where: workOrderVisibilityWhere(req.auth!),
@@ -3411,7 +5145,7 @@ app.get("/work-orders/:code", authenticate, requirePermission("work-orders:read"
     return;
   }
 
-  res.json(serializeWorkOrder(workOrder));
+  res.json(serializeWorkOrder(workOrder, { includeAttachmentData: true }));
 });
 
 app.post("/work-orders", authenticate, requirePermission("work-orders:create"), requireModuleAccess("jobs"), async (req, res) => {
@@ -3436,6 +5170,9 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
   }
   const prefix = payload.type === "Fault" ? "FLT" : payload.type === "PlannedHousekeeping" ? "HK" : payload.type === "PlannedMaintenance" ? "PM" : "WO";
   const code = `${prefix}-${Date.now().toString().slice(-5)}`;
+  const initialStatus = payload.status;
+  const isDepartmentWorkIncidentPool = ["Job", "Fault"].includes(payload.type) && !assignee && initialStatus !== "Completed";
+  const initialPriority = isDepartmentWorkIncidentPool ? "Urgent" : payload.priority;
 
   const created = await prisma.workOrder.create({
     data: {
@@ -3451,42 +5188,41 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
       tags: payload.tags,
       guestImpact: hasFeatureAccess(req, "featureGuestImpact") ? payload.guestImpact : false,
       checklistJson: JSON.stringify(payload.checklist),
-      priority: mapPriorityToDb(payload.priority)!,
-      status: "REPORTED",
+      priority: mapPriorityToDb(initialPriority)!,
+      status: mapStatusToDb(initialStatus)!,
+      completedAt: initialStatus === "Completed" ? new Date() : null,
       slaDueAt: payload.due ? new Date(payload.due) : null,
       attachments: {
         create: payload.photos.map((photo, index) => ({
           uploaderId: req.auth!.userId,
-          type: "PHOTO",
+          type: attachmentTypeFromMedia(photo),
           fileName: photo.name,
-          mimeType: photo.mimeType,
+          mimeType: safeAttachmentMimeType(photo),
           size: photo.size,
           bucket: "inline",
           objectKey: `${code}-${index}`,
-          publicUrl: photo.dataUrl,
+          publicUrl: normalizeAttachmentDataUrl(photo),
           phase: photo.phase
         }))
       },
       timeline: {
         create: {
           actorId: req.auth!.userId,
-          status: "REPORTED",
-          message: "İş emri oluşturuldu.",
-          metadata: { source: "web" }
+          status: mapStatusToDb(initialStatus)!,
+          message: initialStatus === "Completed" ? "Biten iş kaydı oluşturuldu." : "İş emri oluşturuldu.",
+          metadata: { source: initialStatus === "Completed" ? "external-completed" : "web" }
         }
       }
     },
     include: workOrderInclude
   });
   await audit(req, "WorkOrder", created.code, "CREATE", null, serializeWorkOrder(created), created.id);
-  const notificationText = workOrderNotificationText(created);
-  const notificationUsers = await departmentNotificationUsers(req.auth!, payload.departmentId);
-  await createNotificationsAndPush(notificationUsers.map((user) => ({
-    userId: user.id,
-    title: notificationText.title,
-    body: notificationText.body
-  })));
-  io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
+  if (initialStatus !== "Completed") {
+    const notificationText = workOrderNotificationText(created);
+    const notificationUsers = await departmentNotificationUsers(req.auth!, payload.departmentId);
+    await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created.code));
+    io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
+  }
   res.status(201).json(serializeWorkOrder(created));
 });
 
@@ -3533,13 +5269,13 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
       attachments: {
         create: payload.photos.map((photo, index) => ({
           uploaderId: req.auth!.userId,
-          type: "PHOTO",
+          type: attachmentTypeFromMedia(photo),
           fileName: photo.name,
-          mimeType: photo.mimeType,
+          mimeType: safeAttachmentMimeType(photo),
           size: photo.size,
           bucket: "inline",
           objectKey: `${code}-${index}`,
-          publicUrl: photo.dataUrl,
+          publicUrl: normalizeAttachmentDataUrl(photo),
           phase: photo.phase
         }))
       },
@@ -3557,17 +5293,68 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
   await audit(req, "WorkOrder", created.code, "CALENDAR_CREATE", null, serializeWorkOrder(created), created.id);
   const notificationText = workOrderNotificationText(created);
   const notificationUsers = await departmentNotificationUsers(req.auth!, payload.departmentId);
-  await createNotificationsAndPush(notificationUsers.map((user) => ({
-    userId: user.id,
-    title: notificationText.title,
-    body: notificationText.body
-  })));
+  await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created.code));
   io.to(departmentSocketRoom(req.auth!.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
   res.status(201).json(serializeWorkOrder(created));
 });
 
+app.post("/work-orders/:code/claim", authenticate, requirePermission("work-orders:update"), requireModuleAccess("jobs"), asyncHandler(async (req, res) => {
+  const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
+  const departmentId = clientDepartmentIdFromCode(existing.department.code);
+  if (existing.department.hotelId !== req.auth!.hotelId) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+  if (!canAccessWorkOrder(req.auth!, existing)) {
+    res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
+    return;
+  }
+  if (existing.deletedAt || ["COMPLETED", "HK_VERIFIED", "CLOSED", "CANCELLED"].includes(existing.status)) {
+    res.status(409).json({ error: "WORK_ORDER_NOT_CLAIMABLE" });
+    return;
+  }
+  if (existing.assignedToId) {
+    res.status(409).json({ error: "WORK_ORDER_ALREADY_ASSIGNED" });
+    return;
+  }
+  if (!canClaimDepartmentWorkOrder(req.auth!, existing)) {
+    res.status(403).json({ error: "DEPARTMENT_POOL_CLAIM_DENIED" });
+    return;
+  }
+
+  const updated = await prisma.workOrder.update({
+    where: { code: existing.code },
+    data: {
+      assignedToId: req.auth!.userId,
+      status: "ACCEPTED",
+      timeline: {
+        create: {
+          actorId: req.auth!.userId,
+          status: "ACCEPTED",
+          message: `${departmentName(departmentId)} iş-ariza havuzundan işi aldı.`,
+          metadata: { claimedById: req.auth!.userId }
+        }
+      }
+    },
+    include: workOrderInclude
+  });
+  await audit(req, "WorkOrder", updated.code, "CLAIM", serializeWorkOrder(existing), serializeWorkOrder(updated), updated.id);
+  if (existing.createdById !== req.auth!.userId) {
+    await createNotificationsAndPush(await workOrderNotificationPayloads(
+      [{ id: existing.createdById }],
+      {
+        title: `${departmentName(departmentId)} işi aldı`,
+        body: `${updated.code} - ${updated.title} işi ${req.user!.fullName} tarafından alındı.`
+      },
+      updated.code
+    ));
+  }
+  io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
+  res.json(serializeWorkOrder(updated));
+}));
+
 app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:update"), requireModuleAccess("jobs"), async (req, res) => {
-  const payload = workOrderSchema.partial().extend({ status: z.enum(["Pending", "InProgress", "Completed", "Delayed", "Cancelled"]).optional() }).parse(req.body);
+  const payload = workOrderUpdateSchema.parse(req.body);
   const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
   const departmentId = clientDepartmentIdFromCode(existing.department.code);
   if (existing.department.hotelId !== req.auth!.hotelId) {
@@ -3579,9 +5366,14 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
     return;
   }
 
-  const requiresDepartmentManager = payload.status !== undefined || payload.assigneeId !== undefined || payload.assignee !== undefined;
-  if (requiresDepartmentManager && !canManageWorkOrderStatus(req.auth!, departmentId)) {
-    res.status(403).json({ error: "WORK_ORDER_MANAGER_REQUIRED" });
+  const assignmentRequested = payload.assigneeId !== undefined || payload.assignee !== undefined;
+  const statusRequested = payload.status !== undefined;
+  if (assignmentRequested && !await canAssignWorkOrder(req.auth!, departmentId, existing.departmentId)) {
+    res.status(403).json({ error: "WORK_ORDER_ASSIGN_DENIED" });
+    return;
+  }
+  if (statusRequested && !canUpdateWorkOrderStatus(req.auth!, existing, departmentId)) {
+    res.status(403).json({ error: "WORK_ORDER_STATUS_DENIED" });
     return;
   }
 
@@ -3598,6 +5390,10 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
       return;
     }
     data.assignedTo = assignee ? { connect: { id: assignee.id } } : { disconnect: true };
+    if (!payload.status) {
+      data.status = assignee ? "ASSIGNED" : "REPORTED";
+      data.completedAt = null;
+    }
   }
   if (payload.title) data.title = payload.title;
   if (payload.type) data.type = mapTypeToDb(payload.type)!;
@@ -3612,25 +5408,99 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
   if (payload.status) {
     data.status = mapStatusToDb(payload.status)!;
     if (payload.status === "Completed") data.completedAt = new Date();
+    if (payload.status === "Pending" || payload.status === "InProgress") data.completedAt = null;
+    if (payload.status === "Delayed") {
+      data.priority = mapPriorityToDb(payload.priority ?? "High")!;
+      data.slaDueAt = new Date(Date.now() - 60_000);
+      data.completedAt = null;
+    }
   }
 
-  const updated = await prisma.workOrder.update({
-    where: { code: routeParam(req, "code") },
-    data: {
-      ...data,
-      timeline: payload.status
-        ? {
-            create: {
-              actorId: req.auth!.userId,
-              status: mapStatusToDb(payload.status)!,
-              message: `Durum güncellendi: ${payload.status}`
-            }
-          }
-        : undefined
-    },
-    include: workOrderInclude
+  const updateData: Prisma.WorkOrderUpdateInput = { ...data };
+  const timelineEntries: Prisma.WorkOrderTimelineCreateWithoutWorkOrderInput[] = [];
+  if (assignmentRequested) {
+    timelineEntries.push({
+      actorId: req.auth!.userId,
+      status: (data.status as Prisma.EnumWorkOrderStatusFilter["equals"] | undefined) ?? existing.status,
+      message: data.assignedTo ? "İş personele atandı." : "İş-Arıza havuzuna geri bırakıldı.",
+      metadata: { assigneeId: payload.assigneeId ?? "", assignee: payload.assignee ?? "" }
+    });
+  }
+  if (payload.status) {
+    timelineEntries.push({
+      actorId: req.auth!.userId,
+      status: mapStatusToDb(payload.status)!,
+      message: `Durum güncellendi: ${payload.status}`
+    });
+  }
+  if (timelineEntries.length) {
+    updateData.timeline = { create: timelineEntries };
+  }
+
+  const participantIds = payload.status === "Completed"
+    ? Array.from(new Set([req.auth!.userId, ...(payload.participantIds ?? [])].filter(Boolean)))
+    : [];
+  if (participantIds.length) {
+    const validParticipants = await prisma.user.findMany({
+      where: {
+        id: { in: participantIds },
+        hotelId: req.auth!.hotelId,
+        deletedAt: null,
+        isActive: true,
+        departmentId: existing.departmentId
+      },
+      select: { id: true }
+    });
+    const validParticipantIds = new Set(validParticipants.map((user) => user.id));
+    const invalidParticipantIds = participantIds.filter((userId) => !validParticipantIds.has(userId));
+    if (invalidParticipantIds.length) {
+      res.status(422).json({ error: "PARTICIPANT_SCOPE_DENIED", invalidParticipantIds });
+      return;
+    }
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const item = await tx.workOrder.update({
+      where: { code: routeParam(req, "code") },
+      data: updateData,
+      include: workOrderInclude
+    });
+    if (participantIds.length) {
+      await tx.workOrderParticipant.deleteMany({ where: { workOrderId: item.id } });
+      await tx.workOrderParticipant.createMany({
+        data: participantIds.map((userId) => ({
+          workOrderId: item.id,
+          userId,
+          taggedById: req.auth!.userId,
+          role: userId === req.auth!.userId ? "COMPLETER" : "HELPER"
+        })),
+        skipDuplicates: true
+      });
+      return tx.workOrder.findUniqueOrThrow({ where: { code: item.code }, include: workOrderInclude });
+    }
+    return item;
   });
   await audit(req, "WorkOrder", updated.code, "UPDATE", serializeWorkOrder(existing), serializeWorkOrder(updated), updated.id);
+  if (assignmentRequested && updated.assignedToId && updated.assignedToId !== req.auth!.userId) {
+    await createNotificationsAndPush(await workOrderNotificationPayloads(
+      [{ id: updated.assignedToId }],
+      {
+        title: "Yeni iş atandı",
+        body: `${updated.code} - ${updated.title} size atandı.`
+      },
+      updated.code
+    ));
+  }
+  if (payload.status === "Completed" && existing.createdById !== req.auth!.userId) {
+    await createNotificationsAndPush(await workOrderNotificationPayloads(
+      [{ id: existing.createdById }],
+      {
+        title: "İş tamamlandı",
+        body: `${updated.code} - ${updated.title} tamamlandı.`
+      },
+      updated.code
+    ));
+  }
   io.to(departmentSocketRoom(req.auth!.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
   res.json(serializeWorkOrder(updated));
 });
@@ -3717,13 +5587,13 @@ app.post("/work-orders/:code/attachments", authenticate, requirePermission("work
     data: payload.photos.map((photo, index) => ({
       workOrderId: workOrder.id,
       uploaderId: req.auth!.userId,
-      type: "PHOTO",
+      type: attachmentTypeFromMedia(photo),
       fileName: photo.name,
-      mimeType: photo.mimeType,
+      mimeType: safeAttachmentMimeType(photo),
       size: photo.size,
       bucket: "inline",
       objectKey: `${workOrder.code}-extra-${Date.now()}-${index}`,
-      publicUrl: photo.dataUrl,
+      publicUrl: normalizeAttachmentDataUrl(photo),
       phase: photo.phase
     }))
   });
@@ -3732,14 +5602,20 @@ app.post("/work-orders/:code/attachments", authenticate, requirePermission("work
   res.status(201).json(serializeWorkOrder(updated));
 });
 
-app.delete("/work-orders/:code", authenticate, requirePermission("work-orders:delete-own"), requireModuleAccess("jobs"), async (req, res) => {
+app.delete("/work-orders/:code", authenticate, requireModuleAccess("jobs"), async (req, res) => {
   const existing = await prisma.workOrder.findUniqueOrThrow({ where: { code: routeParam(req, "code") }, include: workOrderInclude });
   if (existing.department.hotelId !== req.auth!.hotelId) {
     res.status(404).json({ error: "NOT_FOUND" });
     return;
   }
-  if (existing.createdById !== req.auth!.userId) {
-    res.status(403).json({ error: "ONLY_OWN_WORK_ORDER_CAN_BE_DELETED" });
+  if (!canAccessWorkOrder(req.auth!, existing)) {
+    res.status(403).json({ error: "DEPARTMENT_SCOPE_DENIED" });
+    return;
+  }
+  const canDeleteOwn = existing.createdById === req.auth!.userId && canDeleteOwnWorkOrder(req.auth!);
+  const canDeleteAssignedDepartment = await canDeleteAssignedDepartmentWorkOrder(req.auth!, existing);
+  if (!canDeleteOwn && !canDeleteAssignedDepartment) {
+    res.status(403).json({ error: "WORK_ORDER_DELETE_DENIED" });
     return;
   }
   const updated = await prisma.workOrder.update({
@@ -4256,7 +6132,17 @@ app.get("/audit-logs", authenticate, requirePermission("audit:read"), requireMod
   res.json({ items: logs });
 });
 
+function isPayloadTooLargeError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { status?: number; statusCode?: number; type?: string };
+  return candidate.status === 413 || candidate.statusCode === 413 || candidate.type === "entity.too.large";
+}
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (isPayloadTooLargeError(error)) {
+    res.status(413).json({ error: "PAYLOAD_TOO_LARGE" });
+    return;
+  }
   if (error instanceof z.ZodError) {
     res.status(422).json({ error: "VALIDATION_ERROR", details: error.flatten() });
     return;
@@ -4284,8 +6170,9 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
-  if (typeof token !== "string") {
-    next(new Error("UNAUTHENTICATED"));
+  if (typeof token !== "string" || !token) {
+    socket.data.publicOnly = true;
+    next();
     return;
   }
   try {
@@ -4297,9 +6184,17 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
+  socket.join(systemSocketRoom);
+
+  if (socket.data.publicOnly) {
+    socket.emit("maintenance.changed", readMaintenanceStatus());
+    return;
+  }
+
   const auth = socket.data.auth as AuthContext;
   markSessionSocketConnected(auth);
   const scope = scopeDepartmentIds(auth);
+  socket.join(hotelSocketRoom(auth.hotelId));
   scope.forEach((departmentId) => socket.join(departmentSocketRoom(auth.hotelId, departmentId)));
   socket.emit("session.ready", { scope });
   socket.on("disconnect", () => {
@@ -4325,6 +6220,19 @@ setInterval(() => {
     })
     .finally(() => {
       reminderWorkerRunning = false;
+    });
+}, 60 * 1000);
+
+let shiftStartReminderWorkerRunning = false;
+setInterval(() => {
+  if (shiftStartReminderWorkerRunning) return;
+  shiftStartReminderWorkerRunning = true;
+  void processShiftStartReminders()
+    .catch((error) => {
+      console.error("Shift start reminder worker failed", error);
+    })
+    .finally(() => {
+      shiftStartReminderWorkerRunning = false;
     });
 }, 60 * 1000);
 

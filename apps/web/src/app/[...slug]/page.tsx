@@ -1,70 +1,18 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { HotelOpsSystem } from "@/components/hotel-ops-system";
 import { LegacyHotelRedirect } from "@/components/legacy-hotel-redirect";
-
-const hotelRoutes = [
-  ["hotel"],
-  ["hotel", "login"],
-  ["hotel", "dashboard"],
-  ["hotel", "jobs"],
-  ["hotel", "jobs", "new"],
-  ["hotel", "jobs", "detail"],
-  ["hotel", "maintenance"],
-  ["hotel", "housekeeping"],
-  ["hotel", "calendar", "department"],
-  ["hotel", "calendar", "technical"],
-  ["hotel", "calendar", "housekeeping"],
-  ["hotel", "reminders"],
-  ["hotel", "modules", "inventory"],
-  ["hotel", "modules", "rooms"],
-  ["hotel", "modules", "lost-found"],
-  ["hotel", "modules", "guest-requests"],
-  ["hotel", "modules", "requests"],
-  ["hotel", "modules", "operation-documents"],
-  ["hotel", "modules", "training"],
-  ["hotel", "modules", "minibar"],
-  ["hotel", "modules", "equipment"],
-  ["hotel", "modules", "announcements"],
-  ["hotel", "modules", "vip"],
-  ["hotel", "reports"],
-  ["hotel", "users"],
-  ["hotel", "hotelpanel"],
-  ["hotel", "settings"]
-];
-
-const legacyHotelRoutes = [
-  ["login"],
-  ["dashboard"],
-  ["jobs"],
-  ["jobs", "new"],
-  ["jobs", "detail"],
-  ["maintenance"],
-  ["housekeeping"],
-  ["calendar", "department"],
-  ["calendar", "technical"],
-  ["calendar", "housekeeping"],
-  ["reminders"],
-  ["modules", "inventory"],
-  ["modules", "rooms"],
-  ["modules", "lost-found"],
-  ["modules", "guest-requests"],
-  ["modules", "requests"],
-  ["modules", "operation-documents"],
-  ["modules", "training"],
-  ["modules", "minibar"],
-  ["modules", "equipment"],
-  ["modules", "announcements"],
-  ["modules", "vip"],
-  ["reports"],
-  ["users"],
-  ["hotelpanel"],
-  ["settings"]
-];
+import {
+  hotelRouteSlugs,
+  isKnownHotelRouteSlug,
+  isKnownLegacyHotelRouteSlug,
+  legacyHotelRouteSlugs
+} from "@/lib/hotel-routes";
 
 export const dynamicParams = false;
 
 export function generateStaticParams() {
-  return [...hotelRoutes, ...legacyHotelRoutes].map((slug) => ({ slug }));
+  return [...hotelRouteSlugs, ...legacyHotelRouteSlugs].map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string[] }> }): Promise<Metadata> {
@@ -85,7 +33,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function SlugPage({ params }: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await params;
-  if (slug[0] !== "hotel") return <LegacyHotelRedirect />;
+  if (slug[0] !== "hotel") {
+    if (!isKnownLegacyHotelRouteSlug(slug)) notFound();
+    return <LegacyHotelRedirect />;
+  }
+
+  if (!isKnownHotelRouteSlug(slug)) notFound();
   return <HotelOpsSystem />;
 }
-
