@@ -3931,8 +3931,8 @@ textarea.form-control {
 
 .photo-lightbox-close {
   position: fixed;
-  top: max(28px, calc(env(safe-area-inset-top) + 18px));
-  right: max(28px, calc(env(safe-area-inset-right) + 18px));
+  top: max(58px, calc(env(safe-area-inset-top) + 48px));
+  right: max(58px, calc(env(safe-area-inset-right) + 48px));
   z-index: 10001;
   width: 42px;
   height: 42px;
@@ -4743,7 +4743,7 @@ textarea.form-control {
 
 .floating-alert-layer {
   position: fixed;
-  top: calc(var(--classic-safe-top) + 14px);
+  top: calc(var(--classic-safe-top) + 52px);
   left: 50%;
   z-index: 900;
   width: min(520px, calc(100vw - 32px));

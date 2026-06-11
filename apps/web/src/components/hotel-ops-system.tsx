@@ -592,7 +592,7 @@ const HOTEL_TIMEZONE_OPTIONS = [
 const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
 const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
 const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/reminders"] as const;
-const ALERT_AUTO_DISMISS_SECONDS = 10;
+const ALERT_AUTO_DISMISS_SECONDS = 5;
 const MAX_SAVED_LOGIN_ACCOUNTS = 8;
 
 type LoginResponse = {

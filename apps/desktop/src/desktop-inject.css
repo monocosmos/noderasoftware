@@ -93,6 +93,16 @@ html.hotelops-desktop-shell .alert-close * {
   -webkit-app-region: no-drag !important;
 }
 
+html.hotelops-desktop-shell .floating-alert-layer {
+  top: 76px !important;
+}
+
+html.hotelops-desktop-shell .photo-lightbox-close {
+  top: 68px !important;
+  right: 68px !important;
+  -webkit-app-region: no-drag !important;
+}
+
 html.hotelops-desktop-shell .brand-icon,
 html.hotelops-desktop-shell .login-logo .logo-mark {
   overflow: hidden !important;
