@@ -703,6 +703,10 @@ function mobileTabIndexForPath(path: string) {
 }
 
 function isNavPathActive(currentPath: string, itemPath: string) {
+  if (currentPath === "/jobs/new?view=outgoing") {
+    if (itemPath === "/jobs?view=outgoing") return true;
+    if (itemPath === "/jobs") return false;
+  }
   if (itemPath.includes("?")) return currentPath === itemPath;
   if (currentPath.startsWith("/jobs?") && itemPath === "/jobs") return false;
 
