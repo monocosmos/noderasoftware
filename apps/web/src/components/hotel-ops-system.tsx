@@ -703,15 +703,19 @@ function mobileTabIndexForPath(path: string) {
 }
 
 function isNavPathActive(currentPath: string, itemPath: string) {
-  if (currentPath === "/jobs/new?view=outgoing") {
-    if (itemPath === "/jobs?view=outgoing") return true;
-    if (itemPath === "/jobs") return false;
-  }
-  if (itemPath.includes("?")) return currentPath === itemPath;
-  if (currentPath.startsWith("/jobs?") && itemPath === "/jobs") return false;
-
   const currentPathname = (currentPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
   const itemPathname = (itemPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+  const currentQueryParams = new URLSearchParams(currentPath.split("?")[1] ?? "");
+  const itemQueryParams = new URLSearchParams(itemPath.split("?")[1] ?? "");
+  const isOutgoingJobRequest = currentPathname === "/jobs/new" && currentQueryParams.get("view") === "outgoing";
+
+  if (isOutgoingJobRequest) {
+    if (itemPathname === "/jobs" && itemQueryParams.get("view") === "outgoing") return true;
+    if (itemPathname === "/jobs" && !itemPath.includes("?")) return false;
+  }
+
+  if (itemPath.includes("?")) return currentPath === itemPath;
+  if (currentPath.startsWith("/jobs?") && itemPath === "/jobs") return false;
 
   if (itemPathname === "/dashboard") {
     return currentPathname === "/" || currentPathname === "/dashboard" || currentPathname === "/login";

@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.net.http.SslError
@@ -133,6 +134,14 @@ class MainActivity : ComponentActivity() {
             startConnectionMonitor()
         }
         HotelOpsPushRegistrar.sync(this)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        configureSystemBars()
+        if (::root.isInitialized) {
+            ViewCompat.requestApplyInsets(root)
+        }
     }
 
     private fun configureSystemBars() {
