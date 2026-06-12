@@ -3595,7 +3595,16 @@ function newJobActionLabel() {
   return "Yeni İş Oluştur";
 }
 
-function submitJobLabel(initialStatus?: JobDraft["initialStatus"]) {
+function isOutgoingJobRequestView(queryParams: URLSearchParams) {
+  return queryParams.get("view") === "outgoing";
+}
+
+function newJobButtonLabel(isOutgoingRequest: boolean) {
+  return isOutgoingRequest ? "İş Talebi" : "Yeni İş";
+}
+
+function submitJobLabel(initialStatus?: JobDraft["initialStatus"], isOutgoingRequest = false) {
+  if (isOutgoingRequest) return "İş Talebi Gönder";
   if (initialStatus === "Completed") return "Biten İş Olarak Kaydet";
   return "İş Oluştur";
 }
@@ -4325,6 +4334,10 @@ function jobDepartmentsForType(user: DemoUser, type: JobType, availableDepartmen
   if (type === "PlannedHousekeeping") return ["housekeeping"];
   if (type === "Job" || type === "Fault") return jobDepartmentsFor(user, availableDepartmentIds);
   return jobDepartmentsFor(user, availableDepartmentIds);
+}
+
+function requestableDepartmentsForType(user: DemoUser, type: JobType, availableDepartmentIds?: string[]): string[] {
+  return jobDepartmentsForType(user, type, availableDepartmentIds).filter((departmentId) => departmentId !== user.departmentId);
 }
 
 function newJobDraft(user?: DemoUser): JobDraft {
@@ -5203,7 +5216,10 @@ export function HotelOpsSystem() {
       return;
     }
 
-    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
+    const isOutgoingRequest = currentPath === "/jobs/new" && isOutgoingJobRequestView(queryParams);
+    const allowedDepartments = isOutgoingRequest
+      ? requestableDepartmentsForType(session, "Job", activeDepartmentOptions.map((department) => department.id))
+      : jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
@@ -5224,10 +5240,16 @@ export function HotelOpsSystem() {
 
     setJobs((current) => [record, ...current]);
     if (record.status !== "Completed") emitWorkOrderNotification(record);
-    setAlert(record.status === "Completed" ? "Biten iş kaydı oluşturuldu." : "İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
-    setJobDraft(newJobDraft(session));
-    setChecklistText("");
-    navigate(record.status === "Completed" ? "/jobs?view=completed" : "/jobs");
+      setAlert(
+        isOutgoingRequest
+          ? "İş talebi oluşturuldu ve seçilen departmana gönderildi."
+          : record.status === "Completed"
+            ? "Biten iş kaydı oluşturuldu."
+            : "İş kaydı oluşturuldu ve ilgili departman paneline düştü."
+      );
+      setJobDraft(newJobDraft(session));
+      setChecklistText("");
+      navigate(isOutgoingRequest ? "/jobs?view=outgoing" : record.status === "Completed" ? "/jobs?view=completed" : "/jobs");
     jobCreateInProgressRef.current = false;
     setJobCreateInProgress(false);
   }
@@ -5439,7 +5461,10 @@ export function HotelOpsSystem() {
       return;
     }
 
-    const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
+    const isOutgoingRequest = currentPath === "/jobs/new" && isOutgoingJobRequestView(queryParams);
+    const allowedDepartments = isOutgoingRequest
+      ? requestableDepartmentsForType(session, "Job", activeDepartmentOptions.map((department) => department.id))
+      : jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
@@ -5454,11 +5479,17 @@ export function HotelOpsSystem() {
       });
       setJobs((current) => [created, ...current]);
       if (created.status !== "Completed") emitWorkOrderNotification(created);
-      setAlert(created.status === "Completed" ? "Biten iş kaydı oluşturuldu." : "İş kaydı oluşturuldu ve ilgili departman paneline düştü.");
+      setAlert(
+        isOutgoingRequest
+          ? "İş talebi oluşturuldu ve seçilen departmana gönderildi."
+          : created.status === "Completed"
+            ? "Biten iş kaydı oluşturuldu."
+            : "İş kaydı oluşturuldu ve ilgili departman paneline düştü."
+      );
       setJobDraft(newJobDraft(session));
       setChecklistText("");
       await refreshAppDataQuietly();
-      navigate(created.status === "Completed" ? "/jobs?view=completed" : "/jobs");
+      navigate(isOutgoingRequest ? "/jobs?view=outgoing" : created.status === "Completed" ? "/jobs?view=completed" : "/jobs");
     } catch (error) {
       setAlert(workOrderCreateErrorMessage(error));
     } finally {
@@ -6688,7 +6719,12 @@ function MobileBottomNav({
         })}
       </nav>
       {canCreateJob(session) && canUseModule(session, "jobs") && (
-        <button type="button" className={`mobile-fab ${hidden ? "hidden" : ""}`} onClick={() => navigate("/jobs/new")} aria-label="Yeni iş oluştur">
+        <button
+          type="button"
+          className={`mobile-fab ${hidden ? "hidden" : ""}`}
+          onClick={() => navigate(currentPath.startsWith("/jobs?view=outgoing") ? "/jobs/new?view=outgoing" : "/jobs/new")}
+          aria-label={currentPath.startsWith("/jobs?view=outgoing") ? "İş talebi oluştur" : "Yeni iş oluştur"}
+        >
           <Plus size={22} />
         </button>
       )}
@@ -6731,7 +6767,7 @@ function getPageTitle(path: string) {
   const pathname = path.split("?")[0] || "/";
   const queryParams = new URLSearchParams(path.split("?")[1] ?? "");
   if (pathname === "/jobs" && queryParams.get("view") === "outgoing") return { title: "Giden İşler", subtitle: "" };
-  if (pathname === "/jobs/new") return { title: "Yeni İş Oluştur", subtitle: "" };
+  if (pathname === "/jobs/new") return { title: isOutgoingJobRequestView(queryParams) ? "İş Talebi Oluştur" : "Yeni İş Oluştur", subtitle: "" };
   if (pathname === "/jobs/detail") return { title: "İş Detayı", subtitle: "" };
   if (pathname === "/jobs") return { title: "Gelen İşler", subtitle: "" };
   if (pathname === "/maintenance") return { title: "Takvim", subtitle: "Departman Takvimi" };
@@ -6901,12 +6937,12 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
   const isHousekeepingUser = isHousekeepingDepartmentUser(session);
   const focusJobs = isHotelWideRole ? visibleJobs : visibleJobs.filter((job) => job.departmentId === session.departmentId || job.assignee === session.fullName);
   const urgentJobs = activeUrgentJobsForUser(session, focusJobs);
-  const today = new Date().toDateString();
   const dashboardJobs = focusJobs.slice(0, 6);
   const assignedJobs = focusJobs.filter((job) => job.assignee === session.fullName && job.status !== "Completed");
   const requestedFromMe = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status));
   const unreadRequests = requestedFromMe.filter((request) => !request.readAt).length;
   const periodicMaintenanceCount = focusJobs.filter((job) => job.type === "PlannedMaintenance" && job.status !== "Completed").length;
+  const pendingJobsCount = focusJobs.filter((job) => job.status !== "Completed").length;
   const dashboardTitle =
     session.roleId === "hrManager"
       ? "Personel, yetki ve departman hareketleri"
@@ -6923,7 +6959,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
     ...(!isDepartmentManager && session.roleId !== "generalManager" && session.roleId !== "staff"
       ? [{ id: "dashboardInProgressJobs" as DashboardPartId, label: "Bana Atanan", value: assignedJobs.length, type: "inprogress", icon: Wrench, path: "/jobs" }]
       : []),
-    { id: "dashboardPendingJobs" as DashboardPartId, label: "Bugünkü Plan", value: focusJobs.filter((job) => job.due && new Date(job.due).toDateString() === today).length, type: "pending", icon: CalendarDays, path: "/jobs" },
+    { id: "dashboardPendingJobs" as DashboardPartId, label: "Bekleyen İşler", value: pendingJobsCount, type: "pending", icon: ClipboardList, path: "/jobs" },
     ...(canCreateJobType(session, "PlannedMaintenance") ? [{ id: "dashboardPeriodicMaintenance" as DashboardPartId, label: "Periyodik Bakım", value: periodicMaintenanceCount, type: "pending", icon: CalendarDays, path: "/jobs/new?type=PlannedMaintenance" }] : []),
     ...(session.roleId === "generalManager"
       ? [{ id: "dashboardFaultRecords" as DashboardPartId, label: "Açık Talepler", value: managementRequests.filter((request) => isActiveManagementRequestStatus(request.status)).length, type: "high", icon: MessageSquareText, path: "/modules/requests" }]
@@ -6977,7 +7013,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
           {kpis.map((kpi) => {
           const Icon = kpi.icon;
           return (
-            <button key={kpi.label} className={`kpi-card ${kpi.type}`} onClick={() => navigate(kpi.path ?? "/jobs")}>
+            <button key={kpi.label} className={`kpi-card ${kpi.type} ${kpi.id === "dashboardPendingJobs" ? "attention" : ""}`} onClick={() => navigate(kpi.path ?? "/jobs")}>
               <div className="kpi-icon"><Icon size={22} /></div>
               <div className="kpi-value">{kpi.value}</div>
               <div className="kpi-label">{kpi.label}</div>
@@ -7900,15 +7936,11 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const quickView = queryParams.get("view");
-  const isOutgoingView = quickView === "outgoing";
-  const poolView = quickView === "pool" && queryParams.get("pool") === "delayed" ? "delayed" : "priority";
+  const isOutgoingView = isOutgoingJobRequestView(queryParams);
   const incomingVisibleJobs = visibleJobs.filter((job) => isIncomingDepartmentJob(session, job));
   const incomingFilteredJobs = filteredJobs.filter((job) => isIncomingDepartmentJob(session, job));
   const outgoingFilteredJobs = filteredJobs.filter((job) => isOutgoingDepartmentJob(session, job));
   const activeIncomingCount = incomingVisibleJobs.filter((job) => job.status !== "Completed").length;
-  const departmentPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job)).length;
-  const priorityPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status !== "Delayed").length;
-  const delayedPoolCount = incomingVisibleJobs.filter((job) => isDepartmentPoolJob(job) && job.status === "Delayed").length;
   const completedCount = incomingVisibleJobs.filter((job) => job.status === "Completed").length;
   const blankFilters = {
     search: "",
@@ -7932,7 +7964,6 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
     .filter((job) => isOutgoingView ? job.status !== "Completed" : showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
     .filter((job) => {
       if (quickView === "assigned") return job.assignee === session.fullName;
-      if (quickView === "pool") return isDepartmentPoolJob(job) && (poolView === "delayed" ? job.status === "Delayed" : job.status !== "Delayed");
       if (quickView === "urgent") return isUrgentJobForUser(session, job);
       if (quickView === "delayed") return job.status === "Delayed" || Boolean(job.slaRisk);
       if (quickView === "periodic") return job.type === "PlannedMaintenance";
@@ -7942,8 +7973,6 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
     });
   const quickViewLabel = quickView === "assigned"
     ? "Bana Atanan"
-    : quickView === "pool"
-      ? poolView === "delayed" ? "Ertelenen Arıza" : "Öncelikli Arıza"
     : isOutgoingView
       ? "Giden İşler"
     : quickView === "urgent"
@@ -8014,22 +8043,21 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           </select>
           <button type="button" className="btn btn-primary filter-apply" onClick={() => setFiltersOpen(false)}>Uygula</button>
         </div>
-        {canCreateJob(session) && <button className="btn btn-primary" onClick={() => navigate("/jobs/new")}><Plus size={15} /> Yeni İş</button>}
+        {canCreateJob(session) && (
+          <button
+            className={`btn ${isOutgoingView ? "btn-primary" : "btn-success"} jobs-create-btn ${isOutgoingView ? "jobs-create-btn-outgoing" : "jobs-create-btn-incoming"}`}
+            onClick={() => navigate(isOutgoingView ? "/jobs/new?view=outgoing" : "/jobs/new")}
+          >
+            <Plus size={15} /> {newJobButtonLabel(isOutgoingView)}
+          </button>
+        )}
       </div>
       {filtersOpen && <button type="button" className="filter-backdrop" onClick={() => setFiltersOpen(false)} aria-label="Filtreleri kapat" />}
 
       {!isOutgoingView && (
         <div className="jobs-view-tabs" role="tablist" aria-label="Gelen işler görünümü">
-          <button type="button" className={`jobs-view-tab ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Bekleyen İşler ({activeIncomingCount})</button>
-          <button type="button" className={`jobs-view-tab ${quickView === "pool" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>
+          <button type="button" className={`jobs-view-tab jobs-view-tab-pending ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Bekleyen İşler ({activeIncomingCount})</button>
           <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
-        </div>
-      )}
-
-      {quickView === "pool" && (
-        <div className="jobs-pool-tabs" role="tablist" aria-label="İş havuzu alt görünümü">
-          <button type="button" className={`jobs-pool-tab ${poolView === "priority" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=priority")}>Öncelikli Arıza ({priorityPoolCount})</button>
-          <button type="button" className={`jobs-pool-tab ${poolView === "delayed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=pool&pool=delayed")}>Ertelenen Arıza ({delayedPoolCount})</button>
         </div>
       )}
 
@@ -8040,7 +8068,6 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
-          {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => navigate("/jobs?view=pool&pool=priority")}>İş Havuzu ({departmentPoolCount})</button>}
           {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>}
           {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>}
         </div>
@@ -8268,24 +8295,30 @@ function JobFormPage({
   setChecklistText,
   setJobDraft
 }: RenderContext) {
+  const isOutgoingRequest = isOutgoingJobRequestView(queryParams);
   const isPlannedJob = jobDraft.type === "PlannedMaintenance" || jobDraft.type === "PlannedHousekeeping";
   const availableDepartmentIds = useMemo(() => departmentOptions.map((department) => department.id), [departmentOptions]);
-  const allowedDepartments = jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
+  const allowedDepartments = isOutgoingRequest
+    ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
+    : jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
 
   useEffect(() => {
     const requestedType = queryParams.get("type") as JobType | null;
-    const type = requestedType === "Fault" ? "Job" : requestedType;
+    const type = isOutgoingRequest ? "Job" : requestedType === "Fault" ? "Job" : requestedType;
     const title = queryParams.get("title");
     const departmentId = queryParams.get("departmentId");
     const room = queryParams.get("room");
     const location = queryParams.get("location");
     const description = queryParams.get("description");
     const priority = queryParams.get("priority") as Priority | null;
-    const status = queryParams.get("status") as JobDraft["initialStatus"] | null;
+    const status = isOutgoingRequest ? "Pending" : queryParams.get("status") as JobDraft["initialStatus"] | null;
     if (type && ["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"].includes(type)) {
-      const nextDepartmentId = jobDepartmentsForType(session, type, availableDepartmentIds).includes(departmentId ?? "")
+      const availableTargetDepartments = isOutgoingRequest
+        ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
+        : jobDepartmentsForType(session, type, availableDepartmentIds);
+      const nextDepartmentId = availableTargetDepartments.includes(departmentId ?? "")
         ? departmentId!
-        : jobDepartmentsForType(session, type, availableDepartmentIds)[0];
+        : availableTargetDepartments[0];
       const nextInitialStatus = status === "Completed" ? "Completed" : "Pending";
       setJobDraft((draft) => ({
         ...draft,
@@ -8300,13 +8333,24 @@ function JobFormPage({
         location: location ?? draft.location,
         description: description ?? draft.description
       }));
+    } else if (isOutgoingRequest) {
+      setJobDraft((draft) => ({
+        ...draft,
+        type: "Job",
+        departmentId: requestableDepartmentsForType(session, "Job", availableDepartmentIds)[0] ?? draft.departmentId,
+        initialStatus: "Pending"
+      }));
     } else if (title) {
       setJobDraft((draft) => ({ ...draft, title }));
     }
-  }, [availableDepartmentIds, queryParams, session, setJobDraft]);
+  }, [availableDepartmentIds, isOutgoingRequest, queryParams, session, setJobDraft]);
 
   if (!canCreateJobType(session, jobDraft.type)) {
     return <AccessDenied message="Bu rol iş emri oluşturamaz; sadece yetkili olduğu kayıtları görüntüler." />;
+  }
+
+  if (isOutgoingRequest && !allowedDepartments.length) {
+    return <EmptyState title="Talep edilecek departman bulunamadı" description="Bu görünümde kendi departmanınıza talep açamazsınız. Önce başka bir departman tanımlayın." />;
   }
 
   return (
@@ -8314,24 +8358,31 @@ function JobFormPage({
       <form onSubmit={handleCreateJob} aria-busy={jobCreateInProgress}>
         <div className="card">
           <div className="card-header">
-            <span className="card-title">İş Bilgileri</span>
+            <span className="card-title">{isOutgoingRequest ? "İş Talep Bilgileri" : "İş Bilgileri"}</span>
           </div>
           <div className="card-body">
             <div className="form-group">
               <label className="form-label">İş Tipi <span className="required">*</span></label>
               <div className="type-selector">
-                {(["Job", "PlannedMaintenance", "PlannedHousekeeping"] as JobType[]).filter((type) => canCreateJobType(session, type)).map((type) => (
+                {(["Job", "PlannedMaintenance", "PlannedHousekeeping"] as JobType[])
+                  .filter((type) => !isOutgoingRequest || type === "Job")
+                  .filter((type) => canCreateJobType(session, type))
+                  .map((type) => (
                   <button
                     key={type}
                     type="button"
                     className={`type-btn ${jobDraft.type === type ? "selected" : ""}`}
                     onClick={() => setJobDraft((draft) => {
-                      const departmentId = jobDepartmentsForType(session, type, availableDepartmentIds).includes(draft.departmentId)
+                      const departmentIds = isOutgoingRequest
+                        ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
+                        : jobDepartmentsForType(session, type, availableDepartmentIds);
+                      const departmentId = departmentIds.includes(draft.departmentId)
                         ? draft.departmentId
-                        : jobDepartmentsForType(session, type, availableDepartmentIds)[0];
+                        : departmentIds[0];
                       return {
                         ...draft,
                         type,
+                        initialStatus: isOutgoingRequest ? "Pending" : draft.initialStatus,
                         departmentId
                       };
                     })}
@@ -8400,7 +8451,7 @@ function JobFormPage({
               </div>
             </div>
 
-            {isPlannedJob && (
+            {!isOutgoingRequest && isPlannedJob && (
               <div className="form-row ui-section-sm">
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Plan Tarihi / Saat</label>
@@ -8409,20 +8460,22 @@ function JobFormPage({
               </div>
             )}
 
-            <label className="job-completed-toggle ui-section-sm">
-              <input
-                type="checkbox"
-                checked={jobDraft.initialStatus === "Completed"}
-                onChange={(event) => setJobDraft((draft) => ({
-                  ...draft,
-                  initialStatus: event.target.checked ? "Completed" : "Pending"
-                }))}
-              />
-              <span>
-                <strong>Biten iş olarak kaydet</strong>
-                <small>Uygulama dışından gelen ve tamamlanmış işler bitirilen işler sekmesine eklenir.</small>
-              </span>
-            </label>
+            {!isOutgoingRequest && (
+              <label className="job-completed-toggle ui-section-sm">
+                <input
+                  type="checkbox"
+                  checked={jobDraft.initialStatus === "Completed"}
+                  onChange={(event) => setJobDraft((draft) => ({
+                    ...draft,
+                    initialStatus: event.target.checked ? "Completed" : "Pending"
+                  }))}
+                />
+                <span>
+                  <strong>Biten iş olarak kaydet</strong>
+                  <small>Uygulama dışından gelen ve tamamlanmış işler bitirilen işler sekmesine eklenir.</small>
+                </span>
+              </label>
+            )}
 
             <div className="form-group ui-section-sm">
               <label className="form-label">Açıklama</label>
@@ -8476,9 +8529,9 @@ function JobFormPage({
         </div>
 
         <div className="action-row ui-actions">
-          <button type="button" className="btn btn-ghost btn-lg" onClick={() => navigate("/jobs")} disabled={jobCreateInProgress}>İptal</button>
-          <button type="submit" className="btn btn-primary btn-lg" disabled={jobCreateInProgress}>
-            <CheckCircle2 size={17} /> {jobCreateInProgress ? "Oluşturuluyor" : submitJobLabel(jobDraft.initialStatus)}
+          <button type="button" className="btn btn-ghost btn-lg" onClick={() => navigate(isOutgoingRequest ? "/jobs?view=outgoing" : "/jobs")} disabled={jobCreateInProgress}>İptal</button>
+          <button type="submit" className={`btn ${isOutgoingRequest ? "btn-primary" : "btn-success"} btn-lg`} disabled={jobCreateInProgress}>
+            <CheckCircle2 size={17} /> {jobCreateInProgress ? "Oluşturuluyor" : submitJobLabel(jobDraft.initialStatus, isOutgoingRequest)}
           </button>
         </div>
       </form>
