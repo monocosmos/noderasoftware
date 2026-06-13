@@ -3854,8 +3854,14 @@ function canDelayJob(user: DemoUser, job: Pick<JobRecord, "departmentId">, polic
   return canManageJobStatus(user, job);
 }
 
-function canCompleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "departmentId">) {
-  return canManageJobStatus(user, job) || job.assigneeId === user.id || (!job.assigneeId && job.assignee === user.fullName);
+function canCompleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "createdByDepartmentId" | "createdByUserId" | "departmentId">) {
+  return (
+    canManageJobStatus(user, job) ||
+    job.assigneeId === user.id ||
+    (!job.assigneeId && job.assignee === user.fullName) ||
+    job.createdByUserId === user.id ||
+    job.createdByDepartmentId === user.departmentId
+  );
 }
 
 function canDeleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "departmentId" | "type">, policy: WorkOrderPolicyRecord | null) {
@@ -3962,7 +3968,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     jobs: true,
     maintenance: canUseTechnical,
     periodicMaintenance: user.departmentId === "technical",
-    meterTracking: user.departmentId === "technical" || isManager,
+    meterTracking: user.departmentId === "technical",
     housekeeping: canUseHousekeeping,
     departmentCalendar: true,
     reminders: true,

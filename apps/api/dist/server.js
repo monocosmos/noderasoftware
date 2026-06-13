@@ -2637,7 +2637,13 @@ function canClaimDepartmentWorkOrder(auth, workOrder) {
         !workOrder.assignedToId);
 }
 function canUpdateWorkOrderStatus(auth, workOrder, departmentId) {
-    return canManageWorkOrderStatus(auth, departmentId) || workOrder.assignedToId === auth.userId;
+    const createdByDepartmentId = workOrder.createdBy?.department?.code
+        ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+        : "";
+    return (canManageWorkOrderStatus(auth, departmentId) ||
+        workOrder.assignedToId === auth.userId ||
+        workOrder.createdById === auth.userId ||
+        (canTrackScopedDepartmentOrigin(auth) && createdByDepartmentId === auth.departmentId));
 }
 function serializeWorkOrderPolicy(departmentId, policy, users, auth) {
     return {

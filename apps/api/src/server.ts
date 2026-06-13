@@ -3069,8 +3069,20 @@ function canClaimDepartmentWorkOrder(auth: AuthContext, workOrder: { type: strin
   );
 }
 
-function canUpdateWorkOrderStatus(auth: AuthContext, workOrder: { assignedToId: string | null }, departmentId: string) {
-  return canManageWorkOrderStatus(auth, departmentId) || workOrder.assignedToId === auth.userId;
+function canUpdateWorkOrderStatus(
+  auth: AuthContext,
+  workOrder: { assignedToId: string | null; createdById?: string; createdBy?: { department?: { code: string } | null } | null },
+  departmentId: string
+) {
+  const createdByDepartmentId = workOrder.createdBy?.department?.code
+    ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+    : "";
+  return (
+    canManageWorkOrderStatus(auth, departmentId) ||
+    workOrder.assignedToId === auth.userId ||
+    workOrder.createdById === auth.userId ||
+    (canTrackScopedDepartmentOrigin(auth) && createdByDepartmentId === auth.departmentId)
+  );
 }
 
 function serializeWorkOrderPolicy(
