@@ -11867,6 +11867,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
   const [positiveCount, setPositiveCount] = useState(8);
   const [negativeCount, setNegativeCount] = useState(6);
   const [groundName, setGroundName] = useState("L Zemin Kat");
+  const [areaTextByLevel, setAreaTextByLevel] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!canUseAccess(session, "featureHotelFloorPlanning")) return;
@@ -11875,10 +11876,15 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
       setLoading(true);
       try {
         const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan");
-        if (!cancelled) setFloors(sortHotelFloors(response.floors));
+        if (!cancelled) {
+          const loadedFloors = sortHotelFloors(response.floors);
+          setFloors(loadedFloors);
+          setAreaTextByLevel(Object.fromEntries(loadedFloors.map((floor) => [String(floor.level), areaTextFromRecords(floor.areas)])));
+        }
       } catch {
         if (!cancelled) {
           setFloors([]);
+          setAreaTextByLevel({});
           setAlert("Kat planı yüklenemedi. Yetkiyi ve API bağlantısını kontrol edin.");
         }
       } finally {
@@ -11901,25 +11907,28 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
       nextFloors.push({ id: `draft-floor-${level}`, level, name: defaultFloorName(level), sortOrder: nextFloors.length, areas: [] });
     }
     setFloors(nextFloors);
+    setAreaTextByLevel(Object.fromEntries(nextFloors.map((floor) => [String(floor.level), ""])));
     setAlert(`${nextFloors.length} katlık mimari ağaç oluşturuldu.`);
   };
 
   const updateFloor = (level: number, patch: Partial<HotelFloorRecord>) => {
     setFloors((current) => sortHotelFloors(current.map((floor) => (floor.level === level ? { ...floor, ...patch } : floor))));
+    if (patch.level !== undefined && patch.level !== level) {
+      setAreaTextByLevel((current) => {
+        const next = { ...current, [String(patch.level)]: current[String(level)] ?? "" };
+        delete next[String(level)];
+        return next;
+      });
+    }
   };
 
   const removeFloor = (level: number) => {
     setFloors((current) => current.filter((floor) => floor.level !== level));
-  };
-
-  const addSingleFloor = () => {
-    const usedLevels = new Set(floors.map((floor) => floor.level));
-    let level = floors.length ? Math.max(...floors.map((floor) => floor.level)) + 1 : 1;
-    while (usedLevels.has(level)) level += 1;
-    setFloors((current) => sortHotelFloors([
-      ...current,
-      { id: `draft-floor-${level}`, level, name: defaultFloorName(level), sortOrder: current.length, areas: [] }
-    ]));
+    setAreaTextByLevel((current) => {
+      const next = { ...current };
+      delete next[String(level)];
+      return next;
+    });
   };
 
   const saveFloorPlan = async () => {
@@ -11933,7 +11942,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         level: floor.level,
         name: floor.name.trim() || defaultFloorName(floor.level),
         sortOrder: floorIndex,
-        areas: floor.areas.map((area, areaIndex) => ({
+        areas: floorAreasFromText(areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)).map((area, areaIndex) => ({
           label: area.label.trim(),
           kind: area.kind,
           sortOrder: areaIndex
@@ -11943,7 +11952,9 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         method: "PUT",
         body: JSON.stringify({ floors: payloadFloors })
       });
-      setFloors(sortHotelFloors(response.floors));
+      const savedFloors = sortHotelFloors(response.floors);
+      setFloors(savedFloors);
+      setAreaTextByLevel(Object.fromEntries(savedFloors.map((floor) => [String(floor.level), areaTextFromRecords(floor.areas)])));
       setAlert("Otel kat planı kaydedildi.");
     } catch (error) {
       if (isApiRequestError(error) && error.code === "FEATURE_ACCESS_DENIED") {
@@ -11990,7 +12001,6 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
           </label>
           <div className="ui-cluster">
             <button type="button" className="btn btn-primary" onClick={buildFloorTree}><Plus size={15} /> Kat Ağacı Oluştur</button>
-            <button type="button" className="btn btn-secondary" onClick={addSingleFloor}><Plus size={15} /> Tek Kat Ekle</button>
             <button type="button" className="btn btn-start" onClick={saveFloorPlan} disabled={saving || loading}>
               <Save size={15} /> {saving ? "Kaydediliyor" : "Planı Kaydet"}
             </button>
@@ -12038,8 +12048,12 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                 <textarea
                   className="form-control"
                   rows={4}
-                  value={areaTextFromRecords(floor.areas)}
-                  onChange={(event) => updateFloor(floor.level, { areas: floorAreasFromText(event.target.value) })}
+                  value={areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setAreaTextByLevel((current) => ({ ...current, [String(floor.level)]: text }));
+                    updateFloor(floor.level, { areas: floorAreasFromText(text) });
+                  }}
                   placeholder={"101, 102, 103\nNişantaşı toplantı salonu\nBresserie Restorant"}
                 />
               </label>
