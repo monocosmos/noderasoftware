@@ -47,32 +47,50 @@ type MeterTrackingPageProps = {
 type ApiRequestOptions = RequestInit & { timeoutMs?: number };
 
 const STORAGE_TOKEN = "hotelops.api.token";
+const SESSION_TOKEN = "hotelops.api.session-token";
+
+function apiBaseUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  if (typeof window === "undefined") return "http://127.0.0.1:4000";
+  if (window.location.port === "3000") return `${window.location.protocol}//${window.location.hostname}:4000`;
+  return "/api";
+}
 
 function storedApiToken() {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(STORAGE_TOKEN) || window.sessionStorage.getItem(STORAGE_TOKEN);
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(STORAGE_TOKEN) || window.sessionStorage.getItem(SESSION_TOKEN) || "";
 }
 
 async function apiRequest<T>(path: string, options: ApiRequestOptions = {}) {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  const { timeoutMs = 12000, ...requestOptions } = options;
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 15000);
-  const headers = new Headers(options.headers);
-  if (!headers.has("Content-Type") && options.body) headers.set("Content-Type", "application/json");
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const headers = new Headers(requestOptions.headers);
+  headers.set("Content-Type", "application/json; charset=utf-8");
   const token = storedApiToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
+  let response: Response;
   try {
-    const response = await fetch(`${baseUrl}${path}`, {
-      ...options,
+    response = await fetch(`${apiBaseUrl()}${path}`, {
+      ...requestOptions,
       headers,
+      credentials: "include",
       signal: options.signal ?? controller.signal
     });
-    if (!response.ok) throw new Error(`API_REQUEST_FAILED_${response.status}`);
-    return await response.json() as T;
+  } catch {
+    throw new Error("NETWORK_ERROR");
   } finally {
     window.clearTimeout(timeout);
   }
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || `API_REQUEST_FAILED_${response.status}`);
+  }
+
+  return await response.json() as T;
 }
 
 function formatDateTime(value: string) {
