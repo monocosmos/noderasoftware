@@ -667,12 +667,16 @@ function requirePermission(permission: PermissionCode) {
 }
 
 function hasFeatureAccess(req: express.Request, featureId: string) {
-  if (req.auth?.roleId === "generalManager") return true;
-  if (featureId === "managementRequests" || featureId === "reports" || featureId === "featureDailyReport") return true;
   try {
     const access = JSON.parse(req.user?.moduleAccessJson || "{}") as Record<string, boolean>;
+    if (featureId === "featureHotelFloorPlanning") return access[featureId] === true;
+    if (req.auth?.roleId === "generalManager") return true;
+    if (featureId === "managementRequests" || featureId === "reports" || featureId === "featureDailyReport") return true;
     return access[featureId] !== false;
   } catch {
+    if (featureId === "featureHotelFloorPlanning") return false;
+    if (req.auth?.roleId === "generalManager") return true;
+    if (featureId === "managementRequests" || featureId === "reports" || featureId === "featureDailyReport") return true;
     return true;
   }
 }
@@ -922,6 +926,26 @@ function serializeDepartment(department: { id?: string; code: string; name: stri
   };
 }
 
+type SerializableHotelFloor = Prisma.HotelFloorGetPayload<{ include: { areas: true } }>;
+
+function serializeHotelFloor(floor: SerializableHotelFloor) {
+  return {
+    id: floor.id,
+    level: floor.level,
+    name: floor.name,
+    sortOrder: floor.sortOrder,
+    areas: floor.areas
+      .slice()
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
+      .map((area) => ({
+        id: area.id,
+        label: area.label,
+        kind: area.kind,
+        sortOrder: area.sortOrder
+      }))
+  };
+}
+
 type SerializableHotelDepartment = {
   id?: string;
   code: string;
@@ -1000,6 +1024,23 @@ function normalizeDepartmentCode(value: string) {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 48);
+}
+
+function isFourDigitDepartmentCode(code: string) {
+  return /^\d{4}$/.test(code);
+}
+
+async function nextCustomDepartmentCode(hotelId: string) {
+  const departments = await prisma.department.findMany({
+    where: { hotelId },
+    select: { code: true }
+  });
+  const usedCodes = new Set(departments.map((department) => department.code));
+  for (let code = 1000; code <= 9999; code += 1) {
+    const candidate = String(code);
+    if (!usedCodes.has(candidate)) return candidate;
+  }
+  throw new Error("NO_AVAILABLE_DEPARTMENT_CODE");
 }
 
 const defaultHotelDepartmentIds = [
@@ -1832,6 +1873,29 @@ const departmentSchema = z.object({
   departmentId: z.string().optional(),
   name: z.string().trim().min(2).max(80).optional()
 }).refine((value) => Boolean(value.departmentId || value.name), { message: "departmentId or name is required" });
+
+const departmentUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(80)
+});
+
+const hotelFloorAreaSchema = z.object({
+  id: z.string().optional(),
+  label: z.string().trim().min(1).max(120),
+  kind: z.enum(["ROOM", "AREA"]).optional().default("ROOM"),
+  sortOrder: z.number().int().min(0).max(9999).optional()
+});
+
+const hotelFloorSchema = z.object({
+  id: z.string().optional(),
+  level: z.number().int().min(-99).max(200),
+  name: z.string().trim().min(1).max(120),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  areas: z.array(hotelFloorAreaSchema).max(1000).optional().default([])
+});
+
+const hotelFloorPlanSchema = z.object({
+  floors: z.array(hotelFloorSchema).max(300)
+});
 
 const workOrderPolicySchema = z.object({
   assignmentAuthorityUserIds: z.array(z.string().min(1)).max(100).optional().default([]),
@@ -5012,11 +5076,15 @@ app.get("/departments", authenticate, requirePermission("departments:read"), req
 app.post("/departments", authenticate, requirePermission("departments:write"), requireModuleAccess("settings"), async (req, res) => {
   const payload = departmentSchema.parse(req.body);
   const requestedName = payload.name?.trim() || (payload.departmentId ? departmentName(payload.departmentId) : "");
-  const code = payload.departmentId && departmentIdToCode[payload.departmentId]
-    ? departmentIdToCode[payload.departmentId]
-    : normalizeDepartmentCode(requestedName);
+  const code = payload.departmentId
+    ? departmentCodeFromClientId(payload.departmentId)
+    : await nextCustomDepartmentCode(req.auth!.hotelId);
   if (!code || code.length < 2) {
     res.status(422).json({ error: "INVALID_DEPARTMENT" });
+    return;
+  }
+  if (!payload.departmentId && !isFourDigitDepartmentCode(code)) {
+    res.status(422).json({ error: "INVALID_DEPARTMENT_CODE" });
     return;
   }
 
@@ -5032,6 +5100,31 @@ app.post("/departments", authenticate, requirePermission("departments:write"), r
   });
   await audit(req, "Department", created.id, "UPSERT", null, { code: created.code, name: created.name });
   res.status(201).json(serializeDepartment(created));
+});
+
+app.patch("/departments/:departmentId", authenticate, requirePermission("departments:write"), requireModuleAccess("settings"), async (req, res) => {
+  const departmentId = routeParam(req, "departmentId");
+  const payload = departmentUpdateSchema.parse(req.body);
+  const code = departmentCodeFromClientId(departmentId);
+  if (!code) {
+    res.status(422).json({ error: "INVALID_DEPARTMENT" });
+    return;
+  }
+
+  const existing = await prisma.department.findFirst({
+    where: { hotelId: req.auth!.hotelId, code }
+  });
+  if (!existing || existing.deletedAt) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return;
+  }
+
+  const updated = await prisma.department.update({
+    where: { id: existing.id },
+    data: { name: payload.name }
+  });
+  await audit(req, "Department", updated.id, "UPDATE", serializeDepartment(existing), serializeDepartment(updated));
+  res.json(serializeDepartment(updated));
 });
 
 app.delete("/departments/:departmentId", authenticate, requirePermission("departments:write"), requireModuleAccess("settings"), async (req, res) => {
@@ -5061,6 +5154,68 @@ app.delete("/departments/:departmentId", authenticate, requirePermission("depart
   await audit(req, "Department", deleted.id, "SOFT_DELETE", { code: existing.code, name: existing.name }, { deletedAt: deleted.deletedAt?.toISOString() });
   res.json({ ok: true });
 });
+
+app.get("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFloorPlanning"), asyncHandler(async (req, res) => {
+  const floors = await prisma.hotelFloor.findMany({
+    where: { hotelId: req.auth!.hotelId },
+    include: { areas: true },
+    orderBy: [{ sortOrder: "asc" }, { level: "desc" }]
+  });
+  res.json({ floors: floors.map(serializeHotelFloor) });
+}));
+
+app.put("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFloorPlanning"), asyncHandler(async (req, res) => {
+  const payload = hotelFloorPlanSchema.parse(req.body);
+  const levels = new Set<number>();
+  for (const floor of payload.floors) {
+    if (levels.has(floor.level)) {
+      res.status(422).json({ error: "DUPLICATE_FLOOR_LEVEL", level: floor.level });
+      return;
+    }
+    levels.add(floor.level);
+
+    const labels = new Set<string>();
+    for (const area of floor.areas) {
+      const key = area.label.toLocaleLowerCase("tr-TR");
+      if (labels.has(key)) {
+        res.status(422).json({ error: "DUPLICATE_FLOOR_AREA", level: floor.level, label: area.label });
+        return;
+      }
+      labels.add(key);
+    }
+  }
+
+  const floors = await prisma.$transaction(async (tx) => {
+    await tx.hotelFloor.deleteMany({ where: { hotelId: req.auth!.hotelId } });
+    for (const [floorIndex, floor] of payload.floors.entries()) {
+      await tx.hotelFloor.create({
+        data: {
+          hotelId: req.auth!.hotelId,
+          level: floor.level,
+          name: floor.name,
+          sortOrder: floor.sortOrder ?? floorIndex,
+          areas: {
+            create: floor.areas.map((area, areaIndex) => ({
+              label: area.label,
+              kind: area.kind,
+              sortOrder: area.sortOrder ?? areaIndex
+            }))
+          }
+        }
+      });
+    }
+    return tx.hotelFloor.findMany({
+      where: { hotelId: req.auth!.hotelId },
+      include: { areas: true },
+      orderBy: [{ sortOrder: "asc" }, { level: "desc" }]
+    });
+  });
+
+  const serialized = floors.map(serializeHotelFloor);
+  await audit(req, "HotelFloorPlan", req.auth!.hotelId, "UPSERT", null, { floors: serialized });
+  emitHotelDataChanged(req.auth!, "hotel-floor-plan", "upsert");
+  res.json({ floors: serialized });
+}));
 
 app.get("/work-order-policies/:departmentId", authenticate, asyncHandler(async (req, res) => {
   const departmentId = routeParam(req, "departmentId");

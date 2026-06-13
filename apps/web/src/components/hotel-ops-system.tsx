@@ -100,7 +100,8 @@ type FeatureAccessId =
   | "featureAdvancedFilters"
   | "featureGuestImpact"
   | "featureAuditLogs"
-  | "featureDailyReport";
+  | "featureDailyReport"
+  | "featureHotelFloorPlanning";
 type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
 type ModuleAccess = Record<AccessId, boolean>;
 type PageTransitionDirection = "none" | "forward" | "back";
@@ -433,6 +434,21 @@ type DepartmentTableDraft = {
   description: string;
   columns: DepartmentTableColumn[];
   showInMenu: boolean;
+};
+
+type HotelFloorAreaRecord = {
+  id: string;
+  label: string;
+  kind: "ROOM" | "AREA";
+  sortOrder: number;
+};
+
+type HotelFloorRecord = {
+  id: string;
+  level: number;
+  name: string;
+  sortOrder: number;
+  areas: HotelFloorAreaRecord[];
 };
 
 type NotificationRecord = {
@@ -2579,7 +2595,8 @@ const featureAccessOptions: Array<{ id: FeatureAccessId; label: string }> = [
   { id: "featureAdvancedFilters", label: "Gelişmiş filtreler" },
   { id: "featureGuestImpact", label: "Misafir etkisi işareti" },
   { id: "featureAuditLogs", label: "Denetim kayıtları" },
-  { id: "featureDailyReport", label: "Gün sonu raporu" }
+  { id: "featureDailyReport", label: "Gün sonu raporu" },
+  { id: "featureHotelFloorPlanning", label: "Otel Kat planlaması" }
 ];
 
 const roomStatusOptions = [
@@ -3923,7 +3940,8 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       featureAdvancedFilters: false,
       featureGuestImpact: false,
       featureAuditLogs: false,
-      featureDailyReport: false
+      featureDailyReport: false,
+      featureHotelFloorPlanning: false
     };
   }
 
@@ -3972,7 +3990,8 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     featureAdvancedFilters: true,
     featureGuestImpact: true,
     featureAuditLogs: isManager || user.roleId === "hrManager",
-    featureDailyReport: true
+    featureDailyReport: true,
+    featureHotelFloorPlanning: false
   };
 }
 
@@ -6559,8 +6578,8 @@ function SidebarNav({
     if (new Date(job.due).toDateString() !== today) return false;
     return session.roleId === "staff" ? job.assignee === session.fullName : true;
   }).length;
-  const can = (moduleId: ModuleId) => Boolean(moduleAccess[moduleId]);
-  const entry = (id: string, moduleId: ModuleId, path: string, label: string, icon: LucideIcon, badge?: number, keywords = "") => ({
+  const can = (accessId: AccessId) => Boolean(moduleAccess[accessId]);
+  const entry = (id: string, moduleId: AccessId, path: string, label: string, icon: LucideIcon, badge?: number, keywords = "") => ({
     id,
     moduleId,
     path,
@@ -6627,6 +6646,7 @@ function SidebarNav({
       title: "Sistem",
       items: [
         ...(isPlatformAdminUser(session) ? [entry("hotel-panel", "hotelPanel", "/hotelpanel", "Otel Paneli", LayoutDashboard, undefined, "otel tenant hotel admin panel")] : []),
+        entry("hotel-floor-planning", "featureHotelFloorPlanning", "/hotel-floor-planning", "Kat Planı", Home, undefined, "otel kat plan mimari oda alan"),
         entry("reports", "reports", "/reports", "Raporlar", BarChart3, undefined, "kpi audit"),
         entry("settings", "settings", "/settings", "Ayarlar", Settings, undefined, "sistem departman")
       ]
@@ -6873,7 +6893,7 @@ type RenderContext = {
   toggleUser: (userId: string) => void | Promise<void>;
 };
 
-function moduleForPath(path: string): ModuleId {
+function accessForPath(path: string): AccessId {
   if (path === "/" || path === "/dashboard" || path === "/login") return "dashboard";
   if (path === "/jobs" || path === "/jobs/new" || path === "/jobs/detail") return "jobs";
   if (path === "/maintenance") return "departmentCalendar";
@@ -6888,6 +6908,7 @@ function moduleForPath(path: string): ModuleId {
   if (path === "/hotelpanel") return "settings";
   if (path === "/modules/requests") return "managementRequests";
   if (path === "/modules/operation-documents") return "operationDocuments";
+  if (path === "/hotel-floor-planning") return "featureHotelFloorPlanning";
   const operationalModule = operationalModules.find((module) => module.path === path);
   if (operationalModule) return operationalModule.id;
   return "dashboard";
@@ -6895,8 +6916,8 @@ function moduleForPath(path: string): ModuleId {
 
 function renderPage(context: RenderContext) {
   const { currentPath } = context;
-  const moduleId = moduleForPath(currentPath);
-  if (!canUseModule(context.session, moduleId)) {
+  const accessId = accessForPath(currentPath);
+  if (!canUseAccess(context.session, accessId)) {
     return <AccessDenied message="Bu modül İnsan Kaynakları tarafından bu kullanıcı için kapatılmış." />;
   }
   if (currentPath === "/" || currentPath === "/dashboard" || currentPath === "/login") return <DashboardPage {...context} />;
@@ -6914,6 +6935,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/notifications") return <NotificationsPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
+  if (currentPath === "/hotel-floor-planning") return <HotelFloorPlanningPage {...context} />;
   if (currentPath === "/modules/requests") return <ManagementRequestsPage {...context} />;
   if (currentPath === "/modules/operation-documents") return <OperationDocumentsPage {...context} />;
   const operationalModule = operationalModules.find((module) => module.path === currentPath);
@@ -11806,6 +11828,237 @@ function HotelPanelPage({
   );
 }
 
+function defaultFloorName(level: number) {
+  if (level === 0) return "L Zemin Kat";
+  if (level > 0) return `${level}. Kat`;
+  return `${level}. Kat`;
+}
+
+function sortHotelFloors(floors: HotelFloorRecord[]) {
+  return floors.slice().sort((left, right) => right.level - left.level);
+}
+
+function areaTextFromRecords(areas: HotelFloorAreaRecord[]) {
+  return areas
+    .slice()
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
+    .map((area) => area.label)
+    .join("\n");
+}
+
+function floorAreasFromText(text: string): HotelFloorAreaRecord[] {
+  return text
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.findIndex((item) => item.toLocaleLowerCase("tr-TR") === value.toLocaleLowerCase("tr-TR")) === index)
+    .map((label, index) => ({
+      id: `draft-area-${Date.now()}-${index}`,
+      label,
+      kind: /^\d+[A-Z]?$/.test(label.toLocaleUpperCase("tr-TR")) ? "ROOM" : "AREA",
+      sortOrder: index
+    }));
+}
+
+function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
+  const [floors, setFloors] = useState<HotelFloorRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [positiveCount, setPositiveCount] = useState(8);
+  const [negativeCount, setNegativeCount] = useState(6);
+  const [groundName, setGroundName] = useState("L Zemin Kat");
+
+  useEffect(() => {
+    if (!canUseAccess(session, "featureHotelFloorPlanning")) return;
+    let cancelled = false;
+    const loadFloorPlan = async () => {
+      setLoading(true);
+      try {
+        const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan");
+        if (!cancelled) setFloors(sortHotelFloors(response.floors));
+      } catch {
+        if (!cancelled) {
+          setFloors([]);
+          setAlert("Kat planı yüklenemedi. Yetkiyi ve API bağlantısını kontrol edin.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadFloorPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, setAlert]);
+
+  const buildFloorTree = () => {
+    const nextFloors: HotelFloorRecord[] = [];
+    for (let level = positiveCount; level >= 1; level -= 1) {
+      nextFloors.push({ id: `draft-floor-${level}`, level, name: defaultFloorName(level), sortOrder: nextFloors.length, areas: [] });
+    }
+    nextFloors.push({ id: "draft-floor-0", level: 0, name: groundName.trim() || defaultFloorName(0), sortOrder: nextFloors.length, areas: [] });
+    for (let level = -1; level >= -negativeCount; level -= 1) {
+      nextFloors.push({ id: `draft-floor-${level}`, level, name: defaultFloorName(level), sortOrder: nextFloors.length, areas: [] });
+    }
+    setFloors(nextFloors);
+    setAlert(`${nextFloors.length} katlık mimari ağaç oluşturuldu.`);
+  };
+
+  const updateFloor = (level: number, patch: Partial<HotelFloorRecord>) => {
+    setFloors((current) => sortHotelFloors(current.map((floor) => (floor.level === level ? { ...floor, ...patch } : floor))));
+  };
+
+  const removeFloor = (level: number) => {
+    setFloors((current) => current.filter((floor) => floor.level !== level));
+  };
+
+  const addSingleFloor = () => {
+    const usedLevels = new Set(floors.map((floor) => floor.level));
+    let level = floors.length ? Math.max(...floors.map((floor) => floor.level)) + 1 : 1;
+    while (usedLevels.has(level)) level += 1;
+    setFloors((current) => sortHotelFloors([
+      ...current,
+      { id: `draft-floor-${level}`, level, name: defaultFloorName(level), sortOrder: current.length, areas: [] }
+    ]));
+  };
+
+  const saveFloorPlan = async () => {
+    if (!canUseAccess(session, "featureHotelFloorPlanning")) {
+      setAlert("Otel kat planlaması yetkiniz yok.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payloadFloors = sortHotelFloors(floors).map((floor, floorIndex) => ({
+        level: floor.level,
+        name: floor.name.trim() || defaultFloorName(floor.level),
+        sortOrder: floorIndex,
+        areas: floor.areas.map((area, areaIndex) => ({
+          label: area.label.trim(),
+          kind: area.kind,
+          sortOrder: areaIndex
+        })).filter((area) => area.label)
+      }));
+      const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan", {
+        method: "PUT",
+        body: JSON.stringify({ floors: payloadFloors })
+      });
+      setFloors(sortHotelFloors(response.floors));
+      setAlert("Otel kat planı kaydedildi.");
+    } catch (error) {
+      if (isApiRequestError(error) && error.code === "FEATURE_ACCESS_DENIED") {
+        setAlert("Otel kat planlaması yetkiniz yok.");
+      } else {
+        setAlert("Kat planı kaydedilemedi. Kat numarası ve alan adlarının tekrar etmediğini kontrol edin.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalAreas = floors.reduce((sum, floor) => sum + floor.areas.length, 0);
+  const roomCount = floors.reduce((sum, floor) => sum + floor.areas.filter((area) => area.kind === "ROOM").length, 0);
+
+  return (
+    <div className="ui-list-stack hotel-floor-planning-page">
+      <div className="dashboard-focus">
+        <div>
+          <span className="dashboard-eyebrow">Mimari ağaçlandırma</span>
+          <h2>Otel Kat Planlaması</h2>
+        </div>
+        <span className="badge badge-inprogress">{floors.length} kat / {totalAreas} oda-alan</span>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Kat Ağacı Oluştur</span>
+        </div>
+        <div className="card-body ui-body-form">
+          <div className="form-grid two">
+            <label className="form-group">
+              <span className="form-label">Üst kat adedi (+)</span>
+              <input className="form-control" type="number" min={0} max={200} value={positiveCount} onChange={(event) => setPositiveCount(Number(event.target.value) || 0)} />
+            </label>
+            <label className="form-group">
+              <span className="form-label">Alt kat adedi (-)</span>
+              <input className="form-control" type="number" min={0} max={99} value={negativeCount} onChange={(event) => setNegativeCount(Number(event.target.value) || 0)} />
+            </label>
+          </div>
+          <label className="form-group">
+            <span className="form-label">0 / L kat adı</span>
+            <input className="form-control" value={groundName} onChange={(event) => setGroundName(event.target.value)} placeholder="L Zemin Kat" />
+          </label>
+          <div className="ui-cluster">
+            <button type="button" className="btn btn-primary" onClick={buildFloorTree}><Plus size={15} /> Kat Ağacı Oluştur</button>
+            <button type="button" className="btn btn-secondary" onClick={addSingleFloor}><Plus size={15} /> Tek Kat Ekle</button>
+            <button type="button" className="btn btn-start" onClick={saveFloorPlan} disabled={saving || loading}>
+              <Save size={15} /> {saving ? "Kaydediliyor" : "Planı Kaydet"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="kpi-grid dashboard-kpi-grid">
+        <div className="kpi-card inprogress"><div className="kpi-value">{floors.filter((floor) => floor.level > 0).length}</div><div className="kpi-label">Üst kat</div></div>
+        <div className="kpi-card pending"><div className="kpi-value">{floors.filter((floor) => floor.level === 0).length}</div><div className="kpi-label">Zemin</div></div>
+        <div className="kpi-card delayed"><div className="kpi-value">{floors.filter((floor) => floor.level < 0).length}</div><div className="kpi-label">Alt kat</div></div>
+        <div className="kpi-card completed"><div className="kpi-value">{roomCount}</div><div className="kpi-label">Oda</div></div>
+      </div>
+
+      <div className="ui-list-stack">
+        {loading ? (
+          <EmptyState title="Yükleniyor" description="Kat planı hazırlanıyor." />
+        ) : floors.length ? sortHotelFloors(floors).map((floor) => (
+          <div className="card" key={floor.level}>
+            <div className="card-header">
+              <span className="card-title">
+                <span className="badge badge-inprogress">{floor.level > 0 ? `+${floor.level}` : floor.level === 0 ? "0 / L" : floor.level}</span>
+                {floor.name}
+              </span>
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => removeFloor(floor.level)}><Trash2 size={13} /> Sil</button>
+            </div>
+            <div className="card-body ui-body-form">
+              <div className="form-grid two">
+                <label className="form-group">
+                  <span className="form-label">Kat numarası</span>
+                  <input
+                    className="form-control"
+                    type="number"
+                    value={floor.level}
+                    onChange={(event) => updateFloor(floor.level, { level: Number(event.target.value) || 0 })}
+                  />
+                </label>
+                <label className="form-group">
+                  <span className="form-label">Kat adı</span>
+                  <input className="form-control" value={floor.name} onChange={(event) => updateFloor(floor.level, { name: event.target.value })} />
+                </label>
+              </div>
+              <label className="form-group">
+                <span className="form-label">Oda / alanlar</span>
+                <textarea
+                  className="form-control"
+                  rows={4}
+                  value={areaTextFromRecords(floor.areas)}
+                  onChange={(event) => updateFloor(floor.level, { areas: floorAreasFromText(event.target.value) })}
+                  placeholder={"101, 102, 103\nNişantaşı toplantı salonu\nBresserie Restorant"}
+                />
+              </label>
+              <div className="permission-preview-tags">
+                {floor.areas.slice(0, 16).map((area) => (
+                  <span key={`${floor.level}-${area.label}`} className={`badge ${area.kind === "ROOM" ? "badge-completed" : "badge-pending"}`}>{area.label}</span>
+                ))}
+                {floor.areas.length > 16 && <span className="badge badge-inprogress">+{floor.areas.length - 16}</span>}
+              </div>
+            </div>
+          </div>
+        )) : (
+          <EmptyState title="Kat planı yok" description="Üst ve alt kat adedini girip kat ağacını oluşturun." />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DepartmentManagementCard({
   departmentLabelFor,
   departmentOptions,
@@ -11817,6 +12070,9 @@ function DepartmentManagementCard({
   title = "Departmanlar"
 }: Pick<RenderContext, "departmentLabelFor" | "departmentOptions" | "departmentsList" | "refreshData" | "session" | "setAlert" | "setDepartmentsList"> & { title?: string }) {
   const [customDepartmentName, setCustomDepartmentName] = useState("");
+  const [editingDepartmentId, setEditingDepartmentId] = useState("");
+  const [editingDepartmentName, setEditingDepartmentName] = useState("");
+  const [savingDepartmentId, setSavingDepartmentId] = useState("");
 
   useEffect(() => {
     if (!canManageDepartments(session)) return;
@@ -11886,15 +12142,54 @@ function DepartmentManagementCard({
     }
   };
 
+  const startEditDepartment = (department: { id: string; label: string }) => {
+    setEditingDepartmentId(department.id);
+    setEditingDepartmentName(department.label);
+  };
+
+  const cancelEditDepartment = () => {
+    setEditingDepartmentId("");
+    setEditingDepartmentName("");
+  };
+
+  const saveDepartmentName = async (departmentId: string) => {
+    if (!canCreateDepartments(session)) {
+      setAlert("Departman düzenleme yetkisi sadece İnsan Kaynakları rolündedir.");
+      return;
+    }
+    const name = editingDepartmentName.trim();
+    if (!name) {
+      setAlert("Departman adı boş olamaz.");
+      return;
+    }
+    setSavingDepartmentId(departmentId);
+    try {
+      const updated = await apiRequest<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name })
+      });
+      setDepartmentsList((current) => current.map((department) => (
+        department.departmentId === updated.departmentId ? updated : department
+      )));
+      cancelEditDepartment();
+      setAlert(`${updated.name} departmanı güncellendi.`);
+      await refreshData();
+    } catch {
+      setAlert("Departman güncellenemedi. İK yetkisini ve API bağlantısını kontrol edin.");
+    } finally {
+      setSavingDepartmentId("");
+    }
+  };
+
   const existingDepartmentIds = useMemo(() => new Set(departmentsList.map((department) => department.departmentId)), [departmentsList]);
 
   const visibleDepartmentRows = useMemo(() => {
-    const rows = new Map<string, { id: string; label: string; active: boolean; custom: boolean }>();
+    const rows = new Map<string, { id: string; label: string; active: boolean; custom: boolean; code: string }>();
     for (const department of departmentOptions) {
-      rows.set(department.id, { id: department.id, label: department.label, active: existingDepartmentIds.has(department.id), custom: false });
+      rows.set(department.id, { id: department.id, label: department.label, active: existingDepartmentIds.has(department.id), custom: false, code: "" });
     }
     for (const department of departmentsList) {
-      rows.set(department.departmentId, { id: department.departmentId, label: department.name, active: true, custom: !departmentOptions.some((item) => item.id === department.departmentId) });
+      rows.set(department.departmentId, { id: department.departmentId, label: department.name, active: true, custom: !departmentOptions.some((item) => item.id === department.departmentId), code: department.code });
     }
     return Array.from(rows.values()).sort((left, right) => left.label.localeCompare(right.label, "tr-TR"));
   }, [departmentOptions, departmentsList, existingDepartmentIds]);
@@ -11921,22 +12216,52 @@ function DepartmentManagementCard({
           </>
         )}
         <div className="ui-list-stack-compact">
-          {visibleDepartmentRows.map((department) => (
+          {visibleDepartmentRows.map((department) => {
+            const editing = editingDepartmentId === department.id;
+            const saving = savingDepartmentId === department.id;
+            return (
             <div className="stat-row dept-row" key={department.id}>
-              <span className="stat-label">{department.label}</span>
+              <span className="stat-label">
+                {editing ? (
+                  <input
+                    className="form-control"
+                    value={editingDepartmentName}
+                    onChange={(event) => setEditingDepartmentName(event.target.value)}
+                    disabled={saving}
+                  />
+                ) : department.label}
+              </span>
               <span className="ui-cluster-end">
+                {department.code && <span className="badge badge-inprogress">ID {department.code}</span>}
                 <span className={`badge ${department.active ? "badge-completed" : "badge-pending"}`}>
                   {department.active ? "Aktif" : "Oluşturulmadı"}
                 </span>
                 {department.custom && <span className="badge badge-inprogress">Yeni</span>}
                 {canCreateDepartments(session) && department.active && department.id !== session.departmentId && (
-                  <button type="button" className="btn btn-danger btn-sm" onClick={() => deleteDepartment(department.id)}>
-                    <Trash2 size={13} /> Sil
-                  </button>
+                  editing ? (
+                    <>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveDepartmentName(department.id)} disabled={saving}>
+                        <Save size={13} /> {saving ? "Kaydediliyor" : "Kaydet"}
+                      </button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={cancelEditDepartment} disabled={saving}>
+                        <X size={13} /> İptal
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => startEditDepartment(department)}>
+                        <PenLine size={13} /> Düzenle
+                      </button>
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => deleteDepartment(department.id)}>
+                        <Trash2 size={13} /> Sil
+                      </button>
+                    </>
+                  )
                 )}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
