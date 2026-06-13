@@ -727,8 +727,9 @@ function isNavPathActive(currentPath: string, itemPath: string) {
   const currentQueryParams = new URLSearchParams(currentPath.split("?")[1] ?? "");
   const itemQueryParams = new URLSearchParams(itemPath.split("?")[1] ?? "");
   const isOutgoingJobRequest = currentPathname === "/jobs/new" && currentQueryParams.get("view") === "outgoing";
+  const isOutgoingJobDetail = currentPathname === "/jobs/detail" && currentQueryParams.get("view") === "outgoing";
 
-  if (isOutgoingJobRequest) {
+  if (isOutgoingJobRequest || isOutgoingJobDetail) {
     if (itemPathname === "/jobs" && itemQueryParams.get("view") === "outgoing") return true;
     if (itemPathname === "/jobs" && !itemPath.includes("?")) return false;
   }
@@ -3869,6 +3870,10 @@ function canDeleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigne
   if (canManageJobStatus(user, job)) return true;
   const isAssignedToUser = job.assigneeId === user.id || (!job.assigneeId && job.assignee === user.fullName);
   return isAssignedToUser && Boolean(policy?.deleteAuthorityUserIds.includes(user.id));
+}
+
+function canDeleteOutgoingJob(user: DemoUser, job: Pick<JobRecord, "createdByDepartmentId" | "departmentId">) {
+  return job.createdByDepartmentId === user.departmentId && job.departmentId !== user.departmentId;
 }
 
 function isHousekeepingStaff(user: Pick<DemoUser, "roleId" | "departmentId">) {
@@ -8122,16 +8127,16 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
         </div>
       </div>
 
-      {listJobs.length ? <JobCardList jobs={listJobs} navigate={navigate} departmentLabelFor={departmentLabelFor} /> : <EmptyState title={showCompletedJobs ? "Bitirilen iş bulunamadı" : "Aktif iş bulunamadı"} description={showCompletedJobs ? "Uygulama dışından tamamlanan işleri Biten İş Ekle ile kaydedebilirsiniz." : "Arama kriterlerinizi değiştirin veya yeni iş ekleyin."} />}
+      {listJobs.length ? <JobCardList jobs={listJobs} navigate={navigate} departmentLabelFor={departmentLabelFor} detailView={isOutgoingView ? "outgoing" : undefined} /> : <EmptyState title={showCompletedJobs ? "Bitirilen iş bulunamadı" : "Aktif iş bulunamadı"} description={showCompletedJobs ? "Uygulama dışından tamamlanan işleri Biten İş Ekle ile kaydedebilirsiniz." : "Arama kriterlerinizi değiştirin veya yeni iş ekleyin."} />}
     </>
   );
 }
 
-function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel }: { jobs: JobRecord[]; navigate: (path: string) => void; departmentLabelFor?: (departmentId: string) => string }) {
+function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel, detailView }: { jobs: JobRecord[]; navigate: (path: string) => void; departmentLabelFor?: (departmentId: string) => string; detailView?: "outgoing" }) {
   return (
     <div className="job-list">
       {jobs.map((job) => (
-        <button key={job.id} className={`job-card status-${job.status.toLowerCase()} priority-${job.priority.toLowerCase()}`} onClick={() => navigate(`/jobs/detail?id=${job.id}`)}>
+        <button key={job.id} className={`job-card status-${job.status.toLowerCase()} priority-${job.priority.toLowerCase()}`} onClick={() => navigate(`/jobs/detail?id=${job.id}${detailView ? `&view=${detailView}` : ""}`)}>
           <span className={`priority-strip ${jobStatusStripClass(job.status)}`} />
           <span className="job-main">
             <span className="job-title">{job.title}</span>
@@ -8749,12 +8754,14 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const checklistPct = checklistTotal ? Math.round((checklistDone / checklistTotal) * 100) : 0;
   const comments = job.comments ?? [];
   const timeline = job.timeline ?? [];
-  const canEditJobStatus = canManageJobStatus(session, job);
-  const canDelayCurrentJob = canDelayJob(session, job, departmentWorkPolicy);
-  const canClaimJob = canClaimDepartmentJob(session, job);
-  const canAssignCurrentJob = canAssignJob(session, job, departmentWorkPolicy);
-  const canCompleteCurrentJob = canCompleteJob(session, job);
-  const canDeleteCurrentJob = canDeleteJob(session, job, departmentWorkPolicy);
+  const detailView = queryParams.get("view");
+  const isOutgoingDetail = detailView === "outgoing" || isOutgoingDepartmentJob(session, job);
+  const canEditJobStatus = !isOutgoingDetail && canManageJobStatus(session, job);
+  const canDelayCurrentJob = !isOutgoingDetail && canDelayJob(session, job, departmentWorkPolicy);
+  const canClaimJob = !isOutgoingDetail && canClaimDepartmentJob(session, job);
+  const canAssignCurrentJob = !isOutgoingDetail && canAssignJob(session, job, departmentWorkPolicy);
+  const canCompleteCurrentJob = !isOutgoingDetail && canCompleteJob(session, job);
+  const canDeleteCurrentJob = canDeleteJob(session, job, departmentWorkPolicy) || canDeleteOutgoingJob(session, job);
   const assigneeOptions = detailAssignees.length ? detailAssignees : departmentAssignees.filter((user) => user.departmentId === job.departmentId);
   const participantOptions = assigneeOptions.filter((user) => user.id !== session.id && user.id !== job.assigneeId);
   const participantNames = (job.participants ?? []).map((user) => user.fullName).join(", ");
@@ -8807,7 +8814,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
       setJobs((current) => current.filter((item) => item.id !== job.id));
       setAlert("İş kaydı silindi.");
       await refreshData();
-      navigate("/jobs");
+      navigate(isOutgoingDetail ? "/jobs?view=outgoing" : "/jobs");
     } catch {
       setAlert("İş kaydı silinemedi.");
     }
@@ -8873,7 +8880,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
           {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={deleteJob}><Trash2 size={15} /> Sil</button>}
           {canEditJobStatus && job.status !== "Cancelled" && <button type="button" className="btn btn-danger" onClick={() => updateJob({ status: "Cancelled" })}>İptal Et</button>}
         </div>
-        <button className="btn btn-ghost" onClick={() => navigate("/jobs")}>Listeye Dön</button>
+        <button className="btn btn-ghost" onClick={() => navigate(isOutgoingDetail ? "/jobs?view=outgoing" : "/jobs")}>Listeye Dön</button>
       </div>
 
       <div className="detail-grid">

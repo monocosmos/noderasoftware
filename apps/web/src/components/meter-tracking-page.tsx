@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { ClipboardList, Download, PenLine, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { ClipboardList, Download, Plus, Save, ShieldCheck } from "lucide-react";
 
 type MeterTrackingSession = {
   departmentId: string;
@@ -140,13 +140,6 @@ function meterTrackingColumns(month: string): DepartmentTableColumn[] {
   ];
 }
 
-function departmentTableInputType(type: DepartmentTableColumn["type"]) {
-  if (type === "number") return "number";
-  if (type === "date") return "date";
-  if (type === "time") return "time";
-  return "text";
-}
-
 function excelCell(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -207,11 +200,13 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
   const [meterSeedText, setMeterSeedText] = useState("Elektrik Ana Sayaç\nSu Ana Sayaç\nDoğalgaz Ana Sayaç");
   const [newMeterName, setNewMeterName] = useState("");
   const [newMeterUnit, setNewMeterUnit] = useState("");
-  const [editingRowId, setEditingRowId] = useState("");
-  const [editingRowDraft, setEditingRowDraft] = useState<Record<string, string>>({});
-  const [editingRowNote, setEditingRowNote] = useState("");
+  const [meterFormOpen, setMeterFormOpen] = useState(false);
+  const [editingDayId, setEditingDayId] = useState("");
+  const [editingDayDraft, setEditingDayDraft] = useState<Record<string, string>>({});
   const canEdit = session.departmentId === "technical" && session.moduleAccess?.featureMeterTrackingEdit === true;
   const columns = table?.columns ?? meterTrackingColumns(month);
+  const meterRows = table?.rows ?? [];
+  const dayColumns = columns.filter((column) => column.id.startsWith("gun-"));
 
   const loadMeterTracking = useCallback(async () => {
     setLoading(true);
@@ -236,10 +231,6 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
   if (session.departmentId !== "technical") {
     return <AccessDenied message="Sayaç Takibi yalnızca teknik departman kullanıcıları için açılır." />;
   }
-
-  const rowValuesFromDraft = (values: Record<string, string>) => (
-    Object.fromEntries(columns.map((column) => [column.id, (values[column.id] ?? "").trim()]))
-  );
 
   const replaceRow = (row: DepartmentTableRow) => {
     setTable((current) => current ? { ...current, rows: current.rows.map((item) => (item.id === row.id ? row : item)) } : current);
@@ -308,6 +299,7 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
       addLocalRow(response.item);
       setNewMeterName("");
       setNewMeterUnit("");
+      setMeterFormOpen(false);
       setAlert("Sayaç satırı eklendi.");
     } catch {
       setAlert("Sayaç satırı eklenemedi.");
@@ -316,37 +308,32 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
     }
   };
 
-  const startEditRow = (row: DepartmentTableRow) => {
-    setEditingRowId(row.id);
-    setEditingRowDraft(Object.fromEntries(columns.map((column) => [column.id, row.values[column.id] ?? ""])));
-    setEditingRowNote(row.note);
+  const startEditDay = (dayId: string) => {
+    setEditingDayId(dayId);
+    setEditingDayDraft(Object.fromEntries(meterRows.map((row) => [row.id, row.values[dayId] ?? ""])));
   };
 
-  const saveRow = async (rowId: string) => {
+  const saveDay = async (dayId: string) => {
     if (!table || !canEdit) return;
     try {
-      const response = await apiRequest<{ item: DepartmentTableRow }>(`/meter-tracking/rows/${encodeURIComponent(rowId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ values: rowValuesFromDraft(editingRowDraft), note: editingRowNote.trim() })
-      });
-      replaceRow(response.item);
-      setEditingRowId("");
-      setEditingRowDraft({});
-      setEditingRowNote("");
-      setAlert("Sayaç satırı güncellendi.");
+      const responses = await Promise.all(meterRows.map((row) => (
+        apiRequest<{ item: DepartmentTableRow }>(`/meter-tracking/rows/${encodeURIComponent(row.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            values: {
+              ...row.values,
+              [dayId]: (editingDayDraft[row.id] ?? "").trim()
+            },
+            note: row.note
+          })
+        })
+      )));
+      responses.forEach((response) => replaceRow(response.item));
+      setEditingDayId("");
+      setEditingDayDraft({});
+      setAlert("Gün değerleri güncellendi.");
     } catch {
-      setAlert("Sayaç satırı güncellenemedi.");
-    }
-  };
-
-  const deleteRow = async (rowId: string) => {
-    if (!table || !canEdit || !window.confirm("Sayaç satırı silinsin mi?")) return;
-    try {
-      await apiRequest<{ ok: boolean }>(`/meter-tracking/rows/${encodeURIComponent(rowId)}`, { method: "DELETE" });
-      setTable({ ...table, rows: table.rows.filter((row) => row.id !== rowId) });
-      setAlert("Sayaç satırı silindi.");
-    } catch {
-      setAlert("Sayaç satırı silinemedi.");
+      setAlert("Gün değerleri güncellenemedi.");
     }
   };
 
@@ -354,11 +341,10 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
     if (!table) return;
     downloadExcelWorkbook(`nodera-sayac-takibi-${month}.xls`, [{
       title: table.title,
-      headers: [...table.columns.map((column) => column.label), "Not", "Güncelleme"],
-      rows: table.rows.map((row) => [
-        ...table.columns.map((column) => row.values[column.id] ?? ""),
-        row.note,
-        formatDateTime(row.updatedAt)
+      headers: ["Gün", ...meterRows.map((row) => row.values.sayac || "Sayaç")],
+      rows: dayColumns.map((day) => [
+        day.label,
+        ...meterRows.map((row) => row.values[day.id] ?? "")
       ])
     }]);
   };
@@ -367,7 +353,7 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
     <div className="ui-list-stack department-table-page">
       <div className="card">
         <div className="card-header">
-          <span>
+          <span className="meter-tracking-title">
             <span className="card-title">Sayaç Takibi</span>
             <span className="ui-meta">{loading ? "Yükleniyor" : table ? `${table.rows.length} sayaç / ${table.columns.length} kolon` : "Şablon yok"}</span>
           </span>
@@ -409,19 +395,17 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
             <div className="module-helper">Bu formu görüntüleyebilirsiniz. Yazma ve düzenleme yetkisi İnsan Kaynakları tarafından verilir.</div>
           )}
         </form>
-      </div>
-
-      {table ? (
-        <div className="card">
-          <div className="card-header">
-            <span>
-              <span className="card-title">{table.title}</span>
-              <span className="ui-meta">{table.description || "Teknik departman sayaç formu"}</span>
-            </span>
-          </div>
-          <div className="card-body ui-list-stack">
-            {canEdit && (
-              <form className="department-table-row-form" onSubmit={addMeterRow}>
+        {table && canEdit && (
+          <div className="card-body meter-tracking-add-panel">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMeterFormOpen((current) => !current)}
+            >
+              <Plus size={13} /> Sayaç Ekle
+            </button>
+            {meterFormOpen && (
+              <form className="meter-tracking-meter-form" onSubmit={addMeterRow}>
                 <label className="department-table-field">
                   <span>Sayaç adı</span>
                   <input className="form-control" value={newMeterName} onChange={(event) => setNewMeterName(event.target.value)} />
@@ -430,81 +414,89 @@ export function MeterTrackingPage({ session, setAlert }: MeterTrackingPageProps)
                   <span>Birim</span>
                   <input className="form-control" value={newMeterUnit} onChange={(event) => setNewMeterUnit(event.target.value)} placeholder="kWh, m3" />
                 </label>
-                <button type="submit" className="btn btn-primary btn-sm department-table-row-submit" disabled={savingRow}>
-                  <Plus size={13} /> {savingRow ? "Ekleniyor" : "Sayaç Ekle"}
-                </button>
+                <div className="ui-cluster-end">
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMeterFormOpen(false)}>
+                    Vazgeç
+                  </button>
+                  <button type="submit" className="btn btn-primary btn-sm" disabled={savingRow}>
+                    <Save size={13} /> {savingRow ? "Ekleniyor" : "Kaydet"}
+                  </button>
+                </div>
               </form>
             )}
-            <div className="table-scroll department-table-scroll">
-              <table className="data-table department-data-table">
+          </div>
+        )}
+      </div>
+
+      {table ? (
+        <div className="card">
+          <div className="card-header">
+            <span className="meter-tracking-title">
+              <span className="card-title">{table.title}</span>
+              <span className="ui-meta">{table.description || "Teknik departman sayaç formu"}</span>
+            </span>
+          </div>
+          <div className="card-body ui-list-stack">
+            <div className="table-scroll department-table-scroll meter-tracking-scroll">
+              <table className="data-table department-data-table meter-tracking-table">
                 <thead>
                   <tr>
-                    {table.columns.map((column) => (
-                      <th key={column.id}>{column.label}</th>
+                    <th>Gün</th>
+                    {meterRows.map((row) => (
+                      <th key={row.id}>
+                        <span className="meter-heading">{row.values.sayac || "Sayaç"}</span>
+                        {row.values.birim && <small>{row.values.birim}</small>}
+                      </th>
                     ))}
-                    <th>Not</th>
-                    <th>Güncelleme</th>
-                    {canEdit && <th>İşlem</th>}
+                    <th>İşlem</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {table.rows.length ? table.rows.map((row) => {
-                    const editing = editingRowId === row.id;
+                  {dayColumns.length && meterRows.length ? dayColumns.map((day) => {
+                    const editing = editingDayId === day.id;
                     return (
-                      <tr key={row.id}>
-                        {table.columns.map((column) => (
-                          <td key={column.id}>
+                      <tr key={day.id}>
+                        <td className="meter-tracking-day-cell">{day.label}</td>
+                        {meterRows.map((row) => (
+                          <td key={row.id}>
                             {editing ? (
                               <input
                                 className="form-control form-control-sm"
-                                type={departmentTableInputType(column.type)}
-                                value={editingRowDraft[column.id] ?? ""}
-                                onChange={(event) => setEditingRowDraft((current) => ({ ...current, [column.id]: event.target.value }))}
+                                type="number"
+                                value={editingDayDraft[row.id] ?? ""}
+                                onChange={(event) => setEditingDayDraft((current) => ({ ...current, [row.id]: event.target.value }))}
                               />
                             ) : (
-                              row.values[column.id] || "-"
+                              row.values[day.id] || "-"
                             )}
                           </td>
                         ))}
                         <td>
-                          {editing ? (
-                            <input className="form-control form-control-sm" value={editingRowNote} onChange={(event) => setEditingRowNote(event.target.value)} maxLength={2000} />
-                          ) : (
-                            row.note || "-"
-                          )}
+                          <div className="td-actions">
+                            {canEdit && editing ? (
+                              <>
+                                <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveDay(day.id)}>
+                                  <Save size={13} /> Kaydet
+                                </button>
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingDayId("")}>
+                                  Vazgeç
+                                </button>
+                              </>
+                            ) : canEdit ? (
+                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEditDay(day.id)}>
+                                Düzenle
+                              </button>
+                            ) : (
+                              <span className="ui-muted">{formatDateTime(table.updatedAt)}</span>
+                            )}
+                          </div>
                         </td>
-                        <td>{formatDateTime(row.updatedAt)}</td>
-                        {canEdit && (
-                          <td>
-                            <div className="td-actions">
-                              {editing ? (
-                                <>
-                                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveRow(row.id)}>
-                                    <Save size={13} /> Kaydet
-                                  </button>
-                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingRowId("")}>
-                                    Vazgeç
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEditRow(row)}>
-                                    <PenLine size={13} /> Düzenle
-                                  </button>
-                                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteRow(row.id)}>
-                                    <Trash2 size={13} /> Sil
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        )}
                       </tr>
                     );
                   }) : (
                     <tr>
-                      <td colSpan={table.columns.length + (canEdit ? 3 : 2)}>
-                        <div className="ui-empty-inline">Sayaç satırı yok.</div>
+                      <td colSpan={meterRows.length + 2}>
+                        <div className="ui-empty-inline">Sayaç değeri için önce sayaç ekleyin.</div>
                       </td>
                     </tr>
                   )}

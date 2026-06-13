@@ -3056,6 +3056,22 @@ function canDeleteOwnWorkOrder(auth: AuthContext) {
   return rolePermissions[auth.roleId]?.includes("work-orders:delete-own") ?? false;
 }
 
+function canDeleteOriginDepartmentWorkOrder(
+  auth: AuthContext,
+  workOrder: { department: { code: string }; createdBy?: { department?: { code: string } | null } | null }
+) {
+  const targetDepartmentId = clientDepartmentIdFromCode(workOrder.department.code);
+  const originDepartmentId = workOrder.createdBy?.department?.code
+    ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+    : "";
+  return (
+    Boolean(originDepartmentId) &&
+    originDepartmentId === auth.departmentId &&
+    targetDepartmentId !== auth.departmentId &&
+    canTrackScopedDepartmentOrigin(auth)
+  );
+}
+
 function isWorkIncidentPoolType(type: string) {
   return type === "JOB" || type === "FAULT";
 }
@@ -3074,15 +3090,7 @@ function canUpdateWorkOrderStatus(
   workOrder: { assignedToId: string | null; createdById?: string; createdBy?: { department?: { code: string } | null } | null },
   departmentId: string
 ) {
-  const createdByDepartmentId = workOrder.createdBy?.department?.code
-    ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
-    : "";
-  return (
-    canManageWorkOrderStatus(auth, departmentId) ||
-    workOrder.assignedToId === auth.userId ||
-    workOrder.createdById === auth.userId ||
-    (canTrackScopedDepartmentOrigin(auth) && createdByDepartmentId === auth.departmentId)
-  );
+  return canManageWorkOrderStatus(auth, departmentId) || workOrder.assignedToId === auth.userId;
 }
 
 function serializeWorkOrderPolicy(
@@ -6140,8 +6148,9 @@ app.delete("/work-orders/:code", authenticate, requireModuleAccess("jobs"), asyn
     return;
   }
   const canDeleteOwn = existing.createdById === req.auth!.userId && canDeleteOwnWorkOrder(req.auth!);
+  const canDeleteOriginDepartment = canDeleteOriginDepartmentWorkOrder(req.auth!, existing);
   const canDeleteAssignedDepartment = await canDeleteAssignedDepartmentWorkOrder(req.auth!, existing);
-  if (!canDeleteOwn && !canDeleteAssignedDepartment) {
+  if (!canDeleteOwn && !canDeleteOriginDepartment && !canDeleteAssignedDepartment) {
     res.status(403).json({ error: "WORK_ORDER_DELETE_DENIED" });
     return;
   }

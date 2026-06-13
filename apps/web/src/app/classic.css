@@ -2807,6 +2807,67 @@ textarea.form-control {
   min-width: 120px;
 }
 
+.meter-tracking-title {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.meter-tracking-add-panel {
+  border-top: 1px solid var(--classic-border);
+  padding-top: 14px;
+}
+
+.meter-tracking-meter-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 220px) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.meter-tracking-scroll {
+  max-height: 640px;
+}
+
+.meter-tracking-table th,
+.meter-tracking-table td {
+  min-width: 126px;
+}
+
+.meter-tracking-table th:first-child,
+.meter-tracking-table td:first-child {
+  min-width: 72px;
+  width: 72px;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+.meter-tracking-table thead th:first-child {
+  z-index: 3;
+  background: #f8fafc;
+}
+
+.meter-heading {
+  display: block;
+  font-weight: 700;
+}
+
+.meter-heading + small {
+  display: block;
+  margin-top: 3px;
+  color: var(--classic-muted);
+  font-size: 11px;
+}
+
+.meter-tracking-day-cell {
+  font-weight: 700;
+  color: var(--classic-primary);
+}
+
 .department-accordion {
   border: 1px solid var(--classic-border);
   border-radius: var(--classic-radius);
@@ -4116,13 +4177,19 @@ textarea.form-control {
 }
 
 .job-detail-actions {
-  align-items: start;
-  gap: 12px;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .job-detail-action-group {
-  row-gap: 12px;
-  column-gap: 10px;
+  row-gap: 10px;
+  column-gap: 12px;
+  margin-right: 12px;
+}
+
+.job-detail-actions > .btn {
+  margin-top: 2px;
 }
 
 .job-detail-sections {
