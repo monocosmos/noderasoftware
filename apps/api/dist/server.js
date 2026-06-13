@@ -560,7 +560,7 @@ function requirePermission(permission) {
 function hasFeatureAccess(req, featureId) {
     try {
         const access = JSON.parse(req.user?.moduleAccessJson || "{}");
-        if (featureId === "featureHotelFloorPlanning")
+        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit")
             return access[featureId] === true;
         if (req.auth?.roleId === "generalManager")
             return true;
@@ -569,7 +569,7 @@ function hasFeatureAccess(req, featureId) {
         return access[featureId] !== false;
     }
     catch {
-        if (featureId === "featureHotelFloorPlanning")
+        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit")
             return false;
         if (req.auth?.roleId === "generalManager")
             return true;
@@ -1648,7 +1648,7 @@ const departmentTableSchema = z.object({
     title: z.string().trim().min(2).max(120),
     slug: z.string().trim().max(80).optional().default(""),
     description: z.string().trim().max(1000).optional().default(""),
-    columns: z.array(departmentTableColumnSchema).min(1).max(24),
+    columns: z.array(departmentTableColumnSchema).min(1).max(40),
     showInMenu: z.boolean().optional().default(true),
     enabled: z.boolean().optional().default(true)
 });
@@ -2662,7 +2662,7 @@ function normalizeDepartmentTableKey(value, fallback) {
 }
 function normalizeDepartmentTableColumns(columns) {
     const seen = new Set();
-    return columns.slice(0, 24).map((column, index) => {
+    return columns.slice(0, 40).map((column, index) => {
         const baseId = normalizeDepartmentTableKey(column.id || column.label, `kolon-${index + 1}`);
         let id = baseId;
         let suffix = 2;
@@ -4522,7 +4522,7 @@ app.delete("/departments/:departmentId", authenticate, requirePermission("depart
     await audit(req, "Department", deleted.id, "SOFT_DELETE", { code: existing.code, name: existing.name }, { deletedAt: deleted.deletedAt?.toISOString() });
     res.json({ ok: true });
 });
-app.get("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFloorPlanning"), asyncHandler(async (req, res) => {
+app.get("/hotel-floor-plan", authenticate, asyncHandler(async (req, res) => {
     const floors = await prisma.hotelFloor.findMany({
         where: { hotelId: req.auth.hotelId },
         include: { areas: true },
@@ -4627,6 +4627,160 @@ app.patch("/work-order-policies/:departmentId", authenticate, requireModuleAcces
     });
     await audit(req, "WorkOrderDepartmentPolicy", policy.id, "UPSERT", null, serializeWorkOrderPolicy(departmentId, policy, users, req.auth));
     res.json(serializeWorkOrderPolicy(departmentId, policy, users, req.auth));
+}));
+const meterTrackingDepartmentId = "technical";
+const meterTrackingSlug = "sayac-takibi";
+function ensureTechnicalMeterScope(req, res) {
+    if (req.auth.departmentId !== meterTrackingDepartmentId) {
+        res.status(403).json({ error: "METER_TRACKING_TECHNICAL_ONLY" });
+        return false;
+    }
+    return true;
+}
+function serializeMeterTrackingTable(table, req) {
+    const item = serializeDepartmentTable(table, req.auth);
+    const canEdit = req.auth.departmentId === meterTrackingDepartmentId && hasFeatureAccess(req, "featureMeterTrackingEdit");
+    return { ...item, canConfigure: canEdit, canEditRows: canEdit };
+}
+async function findMeterTrackingTable(hotelId) {
+    const department = await departmentForClientId(hotelId, meterTrackingDepartmentId);
+    return prisma.departmentTable.findUnique({
+        where: { hotelId_departmentId_slug: { hotelId, departmentId: department.id, slug: meterTrackingSlug } },
+        include: {
+            department: true,
+            rows: { orderBy: { updatedAt: "desc" }, take: 500 }
+        }
+    });
+}
+app.get("/meter-tracking", authenticate, requireModuleAccess("meterTracking"), asyncHandler(async (req, res) => {
+    if (!ensureTechnicalMeterScope(req, res))
+        return;
+    const table = await findMeterTrackingTable(req.auth.hotelId);
+    res.json({ item: table ? serializeMeterTrackingTable(table, req) : null });
+}));
+app.put("/meter-tracking", authenticate, requireModuleAccess("meterTracking"), requireFeatureAccess("featureMeterTrackingEdit"), asyncHandler(async (req, res) => {
+    if (!ensureTechnicalMeterScope(req, res))
+        return;
+    const payload = departmentTableSchema.parse({
+        ...req.body,
+        departmentId: meterTrackingDepartmentId,
+        slug: meterTrackingSlug,
+        showInMenu: false,
+        enabled: true
+    });
+    const department = await departmentForClientId(req.auth.hotelId, meterTrackingDepartmentId);
+    const columns = normalizeDepartmentTableColumns(payload.columns);
+    const table = await prisma.departmentTable.upsert({
+        where: { hotelId_departmentId_slug: { hotelId: req.auth.hotelId, departmentId: department.id, slug: meterTrackingSlug } },
+        update: {
+            title: payload.title,
+            description: payload.description,
+            columnsJson: JSON.stringify(columns),
+            showInMenu: false,
+            enabled: true,
+            updatedById: req.auth.userId
+        },
+        create: {
+            hotelId: req.auth.hotelId,
+            departmentId: department.id,
+            slug: meterTrackingSlug,
+            title: payload.title,
+            description: payload.description,
+            columnsJson: JSON.stringify(columns),
+            showInMenu: false,
+            enabled: true,
+            createdById: req.auth.userId,
+            updatedById: req.auth.userId
+        },
+        include: { department: true, rows: { orderBy: { updatedAt: "desc" }, take: 500 } }
+    });
+    await audit(req, "DepartmentTable", table.id, "UPSERT_METER_TRACKING", null, serializeMeterTrackingTable(table, req));
+    res.json({ item: serializeMeterTrackingTable(table, req) });
+}));
+app.post("/meter-tracking/rows", authenticate, requireModuleAccess("meterTracking"), requireFeatureAccess("featureMeterTrackingEdit"), asyncHandler(async (req, res) => {
+    if (!ensureTechnicalMeterScope(req, res))
+        return;
+    const table = await findMeterTrackingTable(req.auth.hotelId);
+    if (!table || !table.enabled) {
+        res.status(404).json({ error: "METER_TRACKING_TEMPLATE_NOT_FOUND" });
+        return;
+    }
+    const payload = departmentTableRowSchema.parse(req.body);
+    const columns = parseDepartmentTableColumns(table.columnsJson);
+    const allowedColumnIds = new Set(columns.map((column) => column.id));
+    const values = Object.fromEntries(Object.entries(payload.values).filter(([key]) => allowedColumnIds.has(key)));
+    const row = await prisma.departmentTableRow.create({
+        data: {
+            tableId: table.id,
+            valuesJson: JSON.stringify(values),
+            note: payload.note,
+            createdById: req.auth.userId,
+            updatedById: req.auth.userId
+        }
+    });
+    await audit(req, "DepartmentTableRow", row.id, "CREATE_METER_TRACKING_ROW", null, { tableId: table.id, values });
+    res.status(201).json({
+        item: {
+            id: row.id,
+            values: parseDepartmentTableRowValues(row.valuesJson),
+            note: row.note,
+            createdAt: row.createdAt.toISOString(),
+            updatedAt: row.updatedAt.toISOString()
+        }
+    });
+}));
+app.patch("/meter-tracking/rows/:rowId", authenticate, requireModuleAccess("meterTracking"), requireFeatureAccess("featureMeterTrackingEdit"), asyncHandler(async (req, res) => {
+    if (!ensureTechnicalMeterScope(req, res))
+        return;
+    const table = await findMeterTrackingTable(req.auth.hotelId);
+    if (!table || !table.enabled) {
+        res.status(404).json({ error: "METER_TRACKING_TEMPLATE_NOT_FOUND" });
+        return;
+    }
+    const existingRow = await prisma.departmentTableRow.findFirst({ where: { id: routeParam(req, "rowId"), tableId: table.id } });
+    if (!existingRow) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+    }
+    const payload = departmentTableRowSchema.parse(req.body);
+    const columns = parseDepartmentTableColumns(table.columnsJson);
+    const allowedColumnIds = new Set(columns.map((column) => column.id));
+    const values = Object.fromEntries(Object.entries(payload.values).filter(([key]) => allowedColumnIds.has(key)));
+    const row = await prisma.departmentTableRow.update({
+        where: { id: existingRow.id },
+        data: {
+            valuesJson: JSON.stringify(values),
+            note: payload.note,
+            updatedById: req.auth.userId
+        }
+    });
+    await audit(req, "DepartmentTableRow", row.id, "UPDATE_METER_TRACKING_ROW", null, { tableId: table.id, values });
+    res.json({
+        item: {
+            id: row.id,
+            values: parseDepartmentTableRowValues(row.valuesJson),
+            note: row.note,
+            createdAt: row.createdAt.toISOString(),
+            updatedAt: row.updatedAt.toISOString()
+        }
+    });
+}));
+app.delete("/meter-tracking/rows/:rowId", authenticate, requireModuleAccess("meterTracking"), requireFeatureAccess("featureMeterTrackingEdit"), asyncHandler(async (req, res) => {
+    if (!ensureTechnicalMeterScope(req, res))
+        return;
+    const table = await findMeterTrackingTable(req.auth.hotelId);
+    if (!table || !table.enabled) {
+        res.status(404).json({ error: "METER_TRACKING_TEMPLATE_NOT_FOUND" });
+        return;
+    }
+    const existingRow = await prisma.departmentTableRow.findFirst({ where: { id: routeParam(req, "rowId"), tableId: table.id } });
+    if (!existingRow) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+    }
+    const deleted = await prisma.departmentTableRow.delete({ where: { id: existingRow.id } });
+    await audit(req, "DepartmentTableRow", deleted.id, "DELETE_METER_TRACKING_ROW", { tableId: table.id }, null);
+    res.json({ ok: true });
 }));
 app.get("/department-tables", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
     const departmentId = typeof req.query.departmentId === "string" && req.query.departmentId.trim()

@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { isKnownHotelAppPath, normalizeHotelAppPath } from "@/lib/hotel-routes";
 import { departments, getRole, type DepartmentId, type RoleId } from "@/lib/rbac";
+import { MeterTrackingPage } from "./meter-tracking-page";
 
 type JobType = "Job" | "Fault" | "PlannedMaintenance" | "PlannedHousekeeping";
 type Priority = "Urgent" | "High" | "Normal" | "Low";
@@ -63,6 +64,7 @@ type ModuleId =
   | "jobs"
   | "maintenance"
   | "periodicMaintenance"
+  | "meterTracking"
   | "housekeeping"
   | "departmentCalendar"
   | "reminders"
@@ -101,7 +103,8 @@ type FeatureAccessId =
   | "featureGuestImpact"
   | "featureAuditLogs"
   | "featureDailyReport"
-  | "featureHotelFloorPlanning";
+  | "featureHotelFloorPlanning"
+  | "featureMeterTrackingEdit";
 type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
 type ModuleAccess = Record<AccessId, boolean>;
 type PageTransitionDirection = "none" | "forward" | "back";
@@ -2552,6 +2555,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "dashboard", label: "Ana Sayfa", group: "Günlük Operasyon" },
   { id: "jobs", label: "İşlerim", group: "Günlük Operasyon" },
   { id: "periodicMaintenance", label: "Periyodik Bakım Planı", group: "Günlük Operasyon" },
+  { id: "meterTracking", label: "Sayaç Takibi", group: "Günlük Operasyon" },
   { id: "housekeeping", label: "HK Planlı İşler", group: "Günlük Operasyon" },
   { id: "departmentCalendar", label: "Departman Takvimi", group: "Takvim & Hatırlatma" },
   { id: "reminders", label: "Hatırlatmalar", group: "Takvim & Hatırlatma" },
@@ -2596,7 +2600,8 @@ const featureAccessOptions: Array<{ id: FeatureAccessId; label: string }> = [
   { id: "featureGuestImpact", label: "Misafir etkisi işareti" },
   { id: "featureAuditLogs", label: "Denetim kayıtları" },
   { id: "featureDailyReport", label: "Gün sonu raporu" },
-  { id: "featureHotelFloorPlanning", label: "Otel Kat planlaması" }
+  { id: "featureHotelFloorPlanning", label: "Otel Kat planlaması" },
+  { id: "featureMeterTrackingEdit", label: "Sayaç Takibi düzenleme" }
 ];
 
 const roomStatusOptions = [
@@ -3809,7 +3814,7 @@ function sanitizedDepartmentTableColumns(columns: DepartmentTableColumn[]) {
   return columns
     .map((column) => ({ id: column.id, label: column.label.trim(), type: column.type || "text" }))
     .filter((column) => column.label)
-    .slice(0, 24);
+    .slice(0, 40);
 }
 
 function departmentTableInputType(type: DepartmentTableColumn["type"]) {
@@ -3905,6 +3910,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       jobs: false,
       maintenance: false,
       periodicMaintenance: false,
+      meterTracking: false,
       housekeeping: false,
       departmentCalendar: false,
       reminders: false,
@@ -3941,7 +3947,8 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       featureGuestImpact: false,
       featureAuditLogs: false,
       featureDailyReport: false,
-      featureHotelFloorPlanning: false
+      featureHotelFloorPlanning: false,
+      featureMeterTrackingEdit: false
     };
   }
 
@@ -3955,6 +3962,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     jobs: true,
     maintenance: canUseTechnical,
     periodicMaintenance: user.departmentId === "technical",
+    meterTracking: user.departmentId === "technical" || isManager,
     housekeeping: canUseHousekeeping,
     departmentCalendar: true,
     reminders: true,
@@ -3991,7 +3999,8 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     featureGuestImpact: true,
     featureAuditLogs: isManager || user.roleId === "hrManager",
     featureDailyReport: true,
-    featureHotelFloorPlanning: false
+    featureHotelFloorPlanning: false,
+    featureMeterTrackingEdit: false
   };
 }
 
@@ -6611,6 +6620,7 @@ function SidebarNav({
         entry("incoming-jobs", "jobs", "/jobs", "Gelen İşler", ClipboardList, incomingJobs.length, "iş görev liste gelen departman havuzu"),
         entry("outgoing-jobs", "jobs", "/jobs?view=outgoing", "Giden İşler", Send, outgoingJobs.length, "iş görev liste giden departman havuzu"),
         ...(canCreateJobType(session, "PlannedMaintenance") ? [entry("periodic-maintenance", "periodicMaintenance", "/jobs/new?type=PlannedMaintenance", "Periyodik Bakım Planı", CalendarDays, undefined, "planlı bakım periyodik departman")] : []),
+        entry("meter-tracking", "meterTracking", "/meter-tracking", "Sayaç Takibi", ClipboardCheck, undefined, "sayaç enerji elektrik su doğalgaz teknik"),
         entry("housekeeping", "housekeeping", "/housekeeping", "HK Planları", Home, undefined, "kat temizlik housekeeping"),
         entry("calendar", "departmentCalendar", "/calendar/department", "Takvim", CalendarDays, todayPlannedJobCount, `${departmentLabelFor(session.departmentId)} bugün planlı iş`),
         entry("reminders", "reminders", "/reminders", "Hatırlatmalar", Bell, undefined, "hatırlatma"),
@@ -6809,6 +6819,7 @@ function getPageTitle(path: string) {
   if (pathname === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (pathname === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
+  if (pathname === "/meter-tracking") return { title: "Sayaç Takibi", subtitle: "Teknik departman aylık sayaç formu" };
   if (pathname === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
   if (pathname === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
   const operationalModule = operationalModules.find((module) => module.path === pathname);
@@ -6897,6 +6908,7 @@ function accessForPath(path: string): AccessId {
   if (path === "/" || path === "/dashboard" || path === "/login") return "dashboard";
   if (path === "/jobs" || path === "/jobs/new" || path === "/jobs/detail") return "jobs";
   if (path === "/maintenance") return "departmentCalendar";
+  if (path === "/meter-tracking") return "meterTracking";
   if (path === "/housekeeping") return "housekeeping";
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders" || path === "/notifications") return "reminders";
@@ -6925,6 +6937,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/jobs/new") return <JobFormPage {...context} />;
   if (currentPath === "/jobs/detail") return <JobDetailPage {...context} />;
   if (currentPath === "/maintenance") return <CalendarPage {...context} />;
+  if (currentPath === "/meter-tracking") return <MeterTrackingPage {...context} />;
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
   if (currentPath.startsWith("/calendar")) return <CalendarPage {...context} />;
   if (currentPath === "/shift-panels") return <ShiftPanelsPage {...context} />;
@@ -8331,6 +8344,44 @@ function JobFormPage({
   const allowedDepartments = isOutgoingRequest
     ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
     : jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
+  const [floorPlanFloors, setFloorPlanFloors] = useState<HotelFloorRecord[]>([]);
+  const [selectedFloorLevel, setSelectedFloorLevel] = useState("");
+  const floorOptions = useMemo(() => sortHotelFloors(floorPlanFloors), [floorPlanFloors]);
+  const selectedFloor = floorOptions.find((floor) => String(floor.level) === selectedFloorLevel) ?? floorOptions[0];
+  const selectedFloorAreas = selectedFloor?.areas ?? [];
+  const selectedLocationValue = selectedFloor
+    ? selectedFloorAreas.find((area) => (
+      jobDraft.location === hotelLocationLabel(selectedFloor, area) || jobDraft.room === area.label
+    ))?.label ?? ""
+    : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFloorPlan = async () => {
+      try {
+        const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan");
+        if (!cancelled) setFloorPlanFloors(sortHotelFloors(response.floors));
+      } catch {
+        if (!cancelled) setFloorPlanFloors([]);
+      }
+    };
+    void loadFloorPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!floorOptions.length) {
+      setSelectedFloorLevel("");
+      return;
+    }
+    const matchingFloor = floorOptions.find((floor) => floor.areas.some((area) => (
+      jobDraft.location === hotelLocationLabel(floor, area) || jobDraft.room === area.label
+    )));
+    const nextLevel = String((matchingFloor ?? selectedFloor ?? floorOptions[0]).level);
+    if (selectedFloorLevel !== nextLevel) setSelectedFloorLevel(nextLevel);
+  }, [floorOptions, jobDraft.location, jobDraft.room, selectedFloor, selectedFloorLevel]);
 
   useEffect(() => {
     const requestedType = queryParams.get("type") as JobType | null;
@@ -8470,16 +8521,55 @@ function JobFormPage({
               </div>
             </div>
 
-            <div className="form-row ui-section-sm">
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Oda Numarası</label>
-                <input className="form-control" value={jobDraft.room} onChange={(event) => setJobDraft((draft) => ({ ...draft, room: event.target.value }))} placeholder="örn: 101, 205" />
+            {floorOptions.length ? (
+              <div className="form-row ui-section-sm">
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Kat</label>
+                  <select
+                    className="form-control"
+                    value={selectedFloorLevel}
+                    onChange={(event) => {
+                      setSelectedFloorLevel(event.target.value);
+                      setJobDraft((draft) => ({ ...draft, room: "", location: "" }));
+                    }}
+                  >
+                    {floorOptions.map((floor) => (
+                      <option key={floor.level} value={String(floor.level)}>
+                        {floor.level > 0 ? `+${floor.level}` : floor.level === 0 ? "0 / L" : floor.level} - {floor.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Lokasyon</label>
+                  <select
+                    className="form-control"
+                    value={selectedLocationValue}
+                    onChange={(event) => {
+                      const area = selectedFloorAreas.find((item) => item.label === event.target.value);
+                      setJobDraft((draft) => ({
+                        ...draft,
+                        room: area?.kind === "ROOM" ? area.label : "",
+                        location: area && selectedFloor ? hotelLocationLabel(selectedFloor, area) : ""
+                      }));
+                    }}
+                    disabled={!selectedFloorAreas.length}
+                  >
+                    <option value="">{selectedFloorAreas.length ? "Lokasyon seçin" : "Bu katta lokasyon yok"}</option>
+                    {selectedFloorAreas.map((area) => (
+                      <option key={area.id || area.label} value={area.label}>{area.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Konum</label>
-                <input className="form-control" value={jobDraft.location} onChange={(event) => setJobDraft((draft) => ({ ...draft, location: event.target.value }))} placeholder="örn: 2. Kat, Lobi, Restoran" />
+            ) : (
+              <div className="form-row ui-section-sm">
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Lokasyon</label>
+                  <input className="form-control" value={jobDraft.location || jobDraft.room} onChange={(event) => setJobDraft((draft) => ({ ...draft, room: "", location: event.target.value }))} placeholder="örn: 2. Kat / Lobi" />
+                </div>
               </div>
-            </div>
+            )}
 
             {!isOutgoingRequest && isPlannedJob && (
               <div className="form-row ui-section-sm">
@@ -8801,7 +8891,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
               <Info label="Departman" value={departmentLabelFor(job.departmentId)} />
               <Info label="Atanan" value={job.assignee || (isDepartmentPoolJob(job) ? departmentPoolLabel(job.departmentId, departmentLabelFor) : "-")} />
                 {isWorkIncidentPoolType(job) && <Info label="Ekip" value={participantNames || "-"} />}
-                <Info label="Oda / Konum" value={job.room ? `Oda ${job.room} / ${job.location}` : job.location || "-"} />
+                <Info label="Lokasyon" value={job.location || (job.room ? `Oda ${job.room}` : "-")} />
                 {canUseAccess(session, "featureGuestImpact") && <Info label="Misafir Etkisi" value={job.guestImpact ? "Evet" : "Hayır"} />}
                 {canUseAccess(session, "featureSlaEscalation") && <Info label="SLA Durumu" value={job.slaRisk ? "Riskli / eskalasyon adayı" : "Normal"} />}
                 <Info label="Oluşturan" value={job.createdBy} />
@@ -10404,7 +10494,7 @@ function DepartmentTablesPage({ departmentLabelFor, departmentTables, navigate, 
 
   const addDraftColumn = () => {
     setDraft((current) => (
-      current.columns.length >= 24 ? current : { ...current, columns: [...current.columns, emptyDepartmentTableColumn()] }
+      current.columns.length >= 40 ? current : { ...current, columns: [...current.columns, emptyDepartmentTableColumn()] }
     ));
   };
 
@@ -10627,7 +10717,7 @@ function DepartmentTablesPage({ departmentLabelFor, departmentTables, navigate, 
               ))}
             </div>
             <div className="ui-cluster-end">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={addDraftColumn} disabled={draft.columns.length >= 24}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addDraftColumn} disabled={draft.columns.length >= 40}>
                 <Plus size={13} /> Kolon Ekle
               </button>
               {selectedTable && !creatingNew && (
@@ -11860,6 +11950,11 @@ function floorAreasFromText(text: string): HotelFloorAreaRecord[] {
     }));
 }
 
+function hotelLocationLabel(floor: Pick<HotelFloorRecord, "name" | "level">, area: Pick<HotelFloorAreaRecord, "label">) {
+  const floorLabel = floor.name?.trim() || defaultFloorName(floor.level);
+  return `${floorLabel} / ${area.label}`;
+}
+
 function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
   const [floors, setFloors] = useState<HotelFloorRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12058,10 +12153,9 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                 />
               </label>
               <div className="permission-preview-tags">
-                {floor.areas.slice(0, 16).map((area) => (
+                {floor.areas.map((area) => (
                   <span key={`${floor.level}-${area.label}`} className={`badge ${area.kind === "ROOM" ? "badge-completed" : "badge-pending"}`}>{area.label}</span>
                 ))}
-                {floor.areas.length > 16 && <span className="badge badge-inprogress">+{floor.areas.length - 16}</span>}
               </div>
             </div>
           </div>
