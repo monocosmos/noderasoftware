@@ -1,7 +1,6 @@
 "use client";
 
 import { ChangeEvent, FormEvent, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { io, type Socket } from "socket.io-client";
 import {
   AlertTriangle,
@@ -17,18 +16,13 @@ import {
   Download,
   FileText,
   Home,
-  ImageIcon,
   KeyRound,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
-  Maximize2,
   Menu,
   MessageSquareText,
-  Pause,
   PenLine,
-  Play,
-  PlayCircle,
   Plus,
   RefreshCcw,
   Save,
@@ -43,8 +37,6 @@ import {
   Upload,
   Users,
   Video,
-  Volume2,
-  VolumeX,
   Wrench,
   X,
   XCircle,
@@ -53,544 +45,80 @@ import {
 import { isKnownHotelAppPath, normalizeHotelAppPath } from "@/lib/hotel-routes";
 import { departments, getRole, type DepartmentId, type RoleId } from "@/lib/rbac";
 import { MeterTrackingPage } from "./meter-tracking-page";
-
-type JobType = "Job" | "Fault" | "PlannedMaintenance" | "PlannedHousekeeping";
-type Priority = "Urgent" | "High" | "Normal" | "Low";
-type JobStatus = "Pending" | "InProgress" | "Completed" | "Delayed" | "Cancelled";
-type ShellRuntime = "web" | "desktop" | "android";
-type ModuleId =
-  | "hotelPanel"
-  | "dashboard"
-  | "jobs"
-  | "maintenance"
-  | "periodicMaintenance"
-  | "meterTracking"
-  | "housekeeping"
-  | "departmentCalendar"
-  | "reminders"
-  | "shiftPanels"
-  | "users"
-  | "reports"
-  | "settings"
-  | "inventory"
-  | "roomStatus"
-  | "lostFound"
-  | "guestRequests"
-  | "operationDocuments"
-  | "departmentTables"
-  | "managementRequests"
-  | "trainingCertificates"
-  | "minibar"
-  | "equipmentAssignments"
-  | "announcements"
-  | "vipRequests";
-type DashboardPartId =
-  | "dashboardUrgentJobs"
-  | "dashboardFaultRecords"
-  | "dashboardDelayedJobs"
-  | "dashboardInProgressJobs"
-  | "dashboardPendingJobs"
-  | "dashboardWeeklyLoad"
-  | "dashboardPeriodicMaintenance"
-  | "dashboardDepartmentDistribution"
-  | "dashboardQuickActions"
-  | "dashboardRecentJobs";
-type FeatureAccessId =
-  | "featureSlaEscalation"
-  | "featureRoomHistory"
-  | "featureBeforeAfterPhotos"
-  | "featureAdvancedFilters"
-  | "featureGuestImpact"
-  | "featureAuditLogs"
-  | "featureDailyReport"
-  | "featureHotelFloorPlanning"
-  | "featureMeterTrackingEdit";
-type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
-type ModuleAccess = Record<AccessId, boolean>;
-type PageTransitionDirection = "none" | "forward" | "back";
-type LogoutRememberPrompt = {
-  mode: "api" | "local";
-  returnToPlatformLogin: boolean;
-};
-type ActiveRosterCell = {
-  departmentId: string;
-  userId: string;
-  date: string;
-  top: number;
-  left: number;
-};
-
-type HotelOpsAndroidBridge = {
-  app?: () => string;
-  runtime?: () => string;
-  version?: () => string;
-  versionCode?: () => number;
-  buildNumber?: () => number;
-  channel?: () => string;
-  getAuthToken?: () => string;
-  setAuthToken?: (token?: string) => void;
-  clearAuthToken?: () => void;
-  notifyAppUpdate?: (title?: string, body?: string) => void;
-  openDownloadUrl?: (url?: string) => boolean;
-  saveImageToGallery?: (dataUrl?: string, fileName?: string) => boolean;
-  saveMediaToGallery?: (dataUrl?: string, fileName?: string, mimeType?: string) => boolean;
-  startShift?: (employeeName?: string, departmentName?: string) => boolean;
-  endShift?: () => boolean;
-  isShiftActive?: () => boolean;
-  shiftStartedAt?: () => number;
-};
-
-type HotelOpsDesktopBridge = {
-  version?: () => string;
-  versionCode?: () => number;
-  notify?: (payload: { title: string; body: string; tag?: string; path?: string }) => Promise<boolean>;
-  openDownloadUrl?: (url?: string) => Promise<boolean>;
-};
-
-type HotelOpsShellWindow = Window & {
-  __HOTELOPS_SHELL__?: ShellRuntime;
-  __HOTELOPS_APP_VERSION__?: string;
-  __HOTELOPS_APP_VERSION_CODE__?: number | string;
-  __HOTELOPS_APP_BUILD__?: number | string;
-  __HOTELOPS_APP_CHANNEL__?: string;
-  HotelOpsAndroidShell?: HotelOpsAndroidBridge;
-  hotelOpsDesktopShell?: HotelOpsDesktopBridge;
-};
-
-type AppVersionPlatformManifest = {
-  latestVersion: string;
-  latestCode: number;
-  minimumCode?: number;
-  downloadUrl: string;
-  title: string;
-  message: string;
-};
-
-type AppVersionManifest = {
-  schema: number;
-  updatedAt: string;
-  checkIntervalMs?: number;
-  platforms: Partial<Record<"desktop" | "android" | "androidDirect" | "androidPlay", AppVersionPlatformManifest>>;
-};
-
-type ShellAppInfo = {
-  runtime: Extract<ShellRuntime, "desktop" | "android">;
-  channel?: "direct" | "play";
-  label: string;
-  version: string;
-  versionCode: number;
-  buildNumber?: number;
-};
-
-type AppUpdateNotice = {
-  runtime: ShellAppInfo["runtime"];
-  channel?: ShellAppInfo["channel"];
-  label: string;
-  currentVersion: string;
-  latestVersion: string;
-  latestCode: number;
-  minimumCode: number;
-  downloadUrl: string;
-  title: string;
-  message: string;
-  required: boolean;
-};
-
-type DemoUser = {
-  id: string;
-  accountId?: string;
-  hotelId?: string;
-  hotelCode?: string;
-  hotelName?: string;
-  username: string;
-  password: string;
-  fullName: string;
-  email: string;
-  roleId: RoleId;
-  departmentId: string;
-  moduleAccess?: Partial<ModuleAccess>;
-  shiftTrackingEnabled?: boolean;
-  active: boolean;
-  lastLogin: string;
-};
-
-type JobRecord = {
-  id: string;
-  title: string;
-  type: JobType;
-  departmentId: string;
-  priority: Priority;
-  status: JobStatus;
-  assignee: string;
-  assigneeId?: string;
-  room: string;
-  location: string;
-  due: string;
-  guestImpact?: boolean;
-  slaRisk?: boolean;
-  createdBy: string;
-  createdByUserId?: string;
-  createdByAccountId?: string;
-  createdByDepartmentId?: string;
-  description: string;
-  tags: string;
-  checklist: string[];
-  createdAt?: string;
-  updatedAt?: string;
-  completedAt?: string;
-  photos?: PhotoAttachment[];
-  comments?: JobComment[];
-  timeline?: JobTimelineItem[];
-  approvals?: JobApproval[];
-  participants?: DemoUser[];
-};
-
-type JobComment = {
-  id: string;
-  author: string;
-  body: string;
-  createdAt: string;
-};
-
-type JobTimelineItem = {
-  id: string;
-  status: string;
-  message: string;
-  createdAt: string;
-};
-
-type JobApproval = {
-  id: string;
-  approverId: string;
-  status: string;
-  note: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type PhotoQualityMode = "STANDARD" | "HD";
-type AttachmentMediaType = "PHOTO" | "VIDEO";
-
-type PhotoUploadVariant = {
-  name: string;
-  mimeType: string;
-  size: number;
-  dataUrl: string;
-  hasDataUrl?: boolean;
-  mediaType?: AttachmentMediaType;
-  durationSeconds?: number;
-  width?: number;
-  height?: number;
-  compressed?: boolean;
-  videoPosterDataUrl?: string;
-  originalDataUrl?: string;
-  originalName?: string;
-  originalMimeType?: string;
-};
-
-type PhotoAttachment = PhotoUploadVariant & {
-  id?: string;
-  clientId?: string;
-  phase?: "GENERAL" | "BEFORE" | "AFTER";
-  qualityMode?: PhotoQualityMode;
-  standardVariant?: PhotoUploadVariant;
-  hdVariant?: PhotoUploadVariant;
-  hdPreparing?: boolean;
-};
-
-type CalendarRecord = {
-  id?: string;
-  year?: number;
-  month?: number;
-  day: number;
-  title: string;
-  departmentId: string;
-  time: string;
-  priority?: Priority;
-  jobId?: string;
-  status?: JobStatus;
-};
-
-type JobDraft = Omit<JobRecord, "id" | "createdBy" | "status"> & {
-  initialStatus?: Extract<JobStatus, "Pending" | "Completed">;
-};
-
-type ReminderRecord = {
-  id: string;
-  title: string;
-  body: string;
-  photos: PhotoAttachment[];
-  remindAt: string;
-  departmentId: string;
-  createdBy: DemoUser;
-  assignedTo: DemoUser;
-  completedAt: string;
-  oneHourNotifiedAt: string;
-  dueNotifiedAt: string;
-};
-
-type ReminderDraft = {
-  title: string;
-  body: string;
-  remindAt: string;
-  assignedToId: string;
-  photos: PhotoAttachment[];
-};
-
-type ManagementRequestRecord = {
-  id: string;
-  title: string;
-  body: string;
-  status: ManagementRequestStatus | string;
-  createdBy: DemoUser;
-  recipient: DemoUser;
-  relatedUser?: DemoUser | null;
-  readAt: string;
-  readBy?: DemoUser | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type ManagementRequestStatus = "OPEN" | "PENDING" | "ACCEPTED" | "REJECTED";
-
-function isActiveManagementRequestStatus(status: string) {
-  return status === "OPEN" || status === "PENDING";
-}
-
-function isClosedManagementRequestStatus(status: string) {
-  return status === "ACCEPTED" || status === "REJECTED";
-}
-
-type ManagementRequestDraft = {
-  title: string;
-  body: string;
-  recipientId: string;
-  relatedUserId: string;
-};
-
-type OperationDocumentFile = {
-  name: string;
-  mimeType: string;
-  size: number;
-  dataUrl: string;
-};
-
-type OperationDocumentRead = {
-  user: DemoUser;
-  readAt: string;
-};
-
-type OperationDocumentRecord = {
-  id: string;
-  operationDefinition: string;
-  operationDate: string;
-  description: string;
-  document: OperationDocumentFile;
-  createdBy: DemoUser;
-  readAt: string;
-  readBy: OperationDocumentRead[];
-  unreadUsers: DemoUser[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-type OperationDocumentDraft = {
-  operationDefinition: string;
-  operationDate: string;
-  description: string;
-  document: OperationDocumentFile | null;
-};
-
-type DepartmentTableColumn = {
-  id: string;
-  label: string;
-  type: "text" | "number" | "date" | "time" | "status";
-};
-
-type DepartmentTableRow = {
-  id: string;
-  values: Record<string, string>;
-  note: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type DepartmentTableRecord = {
-  id: string;
-  departmentId: string;
-  departmentName: string;
-  slug: string;
-  title: string;
-  description: string;
-  columns: DepartmentTableColumn[];
-  showInMenu: boolean;
-  enabled: boolean;
-  canConfigure: boolean;
-  canEditRows: boolean;
-  rows: DepartmentTableRow[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-type DepartmentTableDraft = {
-  title: string;
-  description: string;
-  columns: DepartmentTableColumn[];
-  showInMenu: boolean;
-};
-
-type HotelFloorAreaRecord = {
-  id: string;
-  label: string;
-  kind: "ROOM" | "AREA";
-  sortOrder: number;
-};
-
-type HotelFloorRecord = {
-  id: string;
-  level: number;
-  name: string;
-  sortOrder: number;
-  areas: HotelFloorAreaRecord[];
-};
-
-type NotificationRecord = {
-  id: string;
-  title: string;
-  body: string;
-  channel: string;
-  path?: string;
-  readAt: string;
-  createdAt: string;
-};
-
-type ShiftRecord = {
-  id: string;
-  startedAt: string;
-  endedAt: string;
-};
-
-type ShiftPanelEntryRecord = {
-  id: string;
-  date: string;
-  shiftName: string;
-  staffingNote: string;
-  summary: string;
-  openIssues: string;
-  handoverNote: string;
-  updatedAt: string;
-  updatedByName: string;
-};
-
-type ShiftPanelCellRecord = {
-  id: string;
-  userId: string;
-  date: string;
-  code: string;
-  startTime: string;
-  endTime: string;
-  note: string;
-  color: string;
-  updatedAt: string;
-};
-
-type ShiftPanelRecord = {
-  id: string;
-  departmentId: string;
-  departmentName: string;
-  enabled: boolean;
-  canEdit: boolean;
-  editorUserIds: string[];
-  editors: DemoUser[];
-  presets: ShiftRosterPreset[];
-  colorTemplates: ShiftRosterColorTemplate[];
-  staff: DemoUser[];
-  cells: ShiftPanelCellRecord[];
-  entry: ShiftPanelEntryRecord | null;
-};
-
-type ShiftPanelCellDraft = {
-  code: string;
-  startTime: string;
-  endTime: string;
-  note: string;
-  color: string;
-};
-
-type ShiftPanelConfigDraft = {
-  enabled: boolean;
-  editorUserIds: string[];
-};
-
-type CredentialNoticeItem = {
-  label: string;
-  username: string;
-  password: string;
-  accountId?: string;
-};
-
-type CredentialNotice = {
-  id: string;
-  title: string;
-  description: string;
-  items: CredentialNoticeItem[];
-};
-
-type DepartmentRecord = {
-  id: string;
-  departmentId: string;
-  code: string;
-  name: string;
-  createdAt: string;
-};
-
-type WorkOrderPolicyRecord = {
-  departmentId: string;
-  assignmentAuthorityUserIds: string[];
-  deleteAuthorityUserIds: string[];
-  delayAuthorityUserIds: string[];
-  users: DemoUser[];
-  canConfigure: boolean;
-};
-
-type HotelDepartmentRecord = DepartmentRecord & {
-  users: DemoUser[];
-};
-
-type HotelRecord = {
-  id: string;
-  publicId: string;
-  name: string;
-  code: string;
-  timezone: string;
-  createdAt: string;
-  updatedAt: string;
-  counts: {
-    departments: number;
-    users: number;
-    reminders: number;
-    managementRequests: number;
-    operationDocuments: number;
-  };
-  departments: HotelDepartmentRecord[];
-};
-
-type HotelDraft = {
-  name: string;
-  timezone: string;
-};
-
-type UserDraft = {
-  editId: string;
-  fullName: string;
-  username: string;
-  email: string;
-  password: string;
-  roleId: RoleId;
-  departmentId: string;
-  shiftTrackingEnabled: boolean;
-  moduleAccess: ModuleAccess;
-};
+import { AccessDenied, EmptyState, Info } from "./hotel-ops/ui-common";
+import { JobNoteComposer } from "./hotel-ops/jobs";
+import {
+  AppDownloadCards,
+  AppUpdateCard,
+  BrandLogo,
+  NoderaBrandFooter,
+  RequiredAppUpdateScreen,
+  SidebarShellMeta
+} from "./hotel-ops/branding";
+import {
+  type AccessId,
+  type ActiveRosterCell,
+  type AppUpdateNotice,
+  type AppVersionManifest,
+  type AppVersionPlatformManifest,
+  type CalendarRecord,
+  type CredentialNotice,
+  type DashboardPartId,
+  type DemoUser,
+  type DepartmentRecord,
+  type DepartmentTableColumn,
+  type DepartmentTableDraft,
+  type DepartmentTableRecord,
+  type DepartmentTableRow,
+  type FeatureAccessId,
+  type HotelDraft,
+  type HotelFloorAreaRecord,
+  type HotelFloorRecord,
+  type HotelOpsShellWindow,
+  type HotelRecord,
+  type JobDraft,
+  type JobRecord,
+  type JobStatus,
+  type JobType,
+  type LogoutRememberPrompt,
+  type ManagementRequestDraft,
+  type ManagementRequestRecord,
+  type ManagementRequestStatus,
+  type ModuleAccess,
+  type ModuleId,
+  type NotificationRecord,
+  type OperationDocumentDraft,
+  type OperationDocumentRecord,
+  type PageTransitionDirection,
+  type PhotoAttachment,
+  type Priority,
+  type ReminderDraft,
+  type ReminderRecord,
+  type ShellAppInfo,
+  type ShellRuntime,
+  type ShiftPanelCellDraft,
+  type ShiftPanelCellRecord,
+  type ShiftPanelConfigDraft,
+  type ShiftPanelRecord,
+  type ShiftRecord,
+  type UserDraft,
+  type WorkOrderPolicyRecord,
+  isActiveManagementRequestStatus,
+  isClosedManagementRequestStatus
+} from "./hotel-ops/types";
+import {
+  MediaPreview,
+  PhotoLightbox,
+  PhotoPicker,
+  fileSizeLabel,
+  fileToOperationDocument,
+  hasPendingPhotoProcessing,
+  isVideoAttachment,
+  jobNeedsMediaPayload,
+  operationDocumentAccept,
+  photosUploadPayload,
+  stripJobStoragePayload
+} from "./hotel-ops/media";
 
 const STORAGE_SESSION = "hotelops.classic.session";
 const STORAGE_USERS = "hotelops.classic.users";
@@ -610,7 +138,6 @@ const HOTEL_TIMEZONE_OPTIONS = [
   "Europe/Paris",
   "UTC"
 ] as const;
-const BRAND_LOGO_SRC = "/brand/nodera-logo.png";
 const PLATFORM_ADMIN_USERNAME = "NODERADMIN";
 const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/notifications"] as const;
 const ALERT_AUTO_DISMISS_SECONDS = 5;
@@ -1517,1029 +1044,6 @@ async function apiRequestWithRetry<T>(path: string, options: ApiRequestOptions =
   throw lastError;
 }
 
-const PHOTO_STANDARD_TARGET_BYTES = 900 * 1024;
-const PHOTO_STANDARD_MAX_SIDE = 1440;
-const PHOTO_STANDARD_MIN_SIDE = 720;
-const PHOTO_HD_TARGET_BYTES = 1_000_000;
-const PHOTO_HD_MAX_SIDE = 2048;
-const PHOTO_HD_MIN_SIDE = 720;
-const PHOTO_STANDARD_QUALITY_STEPS = [0.72, 0.64, 0.56, 0.48, 0.4, 0.34];
-const PHOTO_HD_QUALITY_STEPS = [0.82, 0.76, 0.7, 0.64, 0.58, 0.52, 0.46, 0.4, 0.34, 0.28, 0.22, 0.18];
-const VIDEO_MAX_DURATION_SECONDS = 60;
-const VIDEO_MAX_BYTES = 25 * 1024 * 1024;
-const VIDEO_TARGET_BYTES = Math.floor(VIDEO_MAX_BYTES * 0.94);
-const VIDEO_MAX_LONG_SIDE = 1280;
-const VIDEO_MAX_SHORT_SIDE = 720;
-const VIDEO_PROCESSING_MESSAGE = "Video sıkıştırılıyor...";
-const VIDEO_MIME_CANDIDATES = [
-  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-  "video/mp4;codecs=avc1.4D401E,mp4a.40.2",
-  "video/mp4;codecs=avc1.64001F,mp4a.40.2",
-  "video/mp4"
-];
-const VIDEO_COMPRESSION_ATTEMPTS = [
-  { maxLongSide: 1280, maxShortSide: 720, fps: 30, bitrateFactor: 0.86 },
-  { maxLongSide: 960, maxShortSide: 540, fps: 24, bitrateFactor: 0.62 },
-  { maxLongSide: 854, maxShortSide: 480, fps: 24, bitrateFactor: 0.46 },
-  { maxLongSide: 640, maxShortSide: 360, fps: 20, bitrateFactor: 0.32 }
-];
-
-type PhotoCompressionProfile = {
-  targetBytes: number;
-  maxSide: number;
-  minSide: number;
-  qualitySteps: number[];
-};
-
-type VideoMetadata = {
-  durationSeconds: number;
-  width: number;
-  height: number;
-};
-
-type VideoCompressionAttempt = {
-  maxLongSide: number;
-  maxShortSide: number;
-  fps: number;
-  bitrateFactor: number;
-};
-
-type HTMLVideoElementWithCapture = HTMLVideoElement & {
-  captureStream?: () => MediaStream;
-  mozCaptureStream?: () => MediaStream;
-};
-
-const photoCompressionProfiles: Record<PhotoQualityMode, PhotoCompressionProfile> = {
-  STANDARD: {
-    targetBytes: PHOTO_STANDARD_TARGET_BYTES,
-    maxSide: PHOTO_STANDARD_MAX_SIDE,
-    minSide: PHOTO_STANDARD_MIN_SIDE,
-    qualitySteps: PHOTO_STANDARD_QUALITY_STEPS
-  },
-  HD: {
-    targetBytes: PHOTO_HD_TARGET_BYTES,
-    maxSide: PHOTO_HD_MAX_SIDE,
-    minSide: PHOTO_HD_MIN_SIDE,
-    qualitySteps: PHOTO_HD_QUALITY_STEPS
-  }
-};
-
-function dataUrlByteSize(dataUrl: string) {
-  const base64 = dataUrl.split(",", 2)[1] ?? "";
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
-}
-
-function isVideoAttachment(photo: PhotoAttachment | null | undefined) {
-  return photo?.mediaType === "VIDEO" || photo?.mimeType.startsWith("video/") === true;
-}
-
-function isVideoFile(file: File) {
-  return file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm)$/i.test(file.name);
-}
-
-function isImageFile(file: File) {
-  return file.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
-}
-
-function compressedPhotoName(name: string) {
-  const fallback = name || `foto-${Date.now()}.jpg`;
-  return fallback.includes(".") ? fallback.replace(/\.[^.]+$/, ".jpg") : `${fallback}.jpg`;
-}
-
-function compressedVideoName(name: string, mimeType: string) {
-  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
-  const fallback = name || `video-${Date.now()}.${extension}`;
-  return fallback.includes(".") ? fallback.replace(/\.[^.]+$/, `.${extension}`) : `${fallback}.${extension}`;
-}
-
-function videoMimeTypeForFile(file: File) {
-  const mimeType = file.type.trim();
-  if (mimeType) return mimeType;
-  if (/\.(mp4|m4v)$/i.test(file.name)) return "video/mp4";
-  if (/\.webm$/i.test(file.name)) return "video/webm";
-  if (/\.mov$/i.test(file.name)) return "video/quicktime";
-  return "video/mp4";
-}
-
-function safeMediaMimeType(mimeType: string, fallback = "application/octet-stream") {
-  const value = mimeType.trim().toLowerCase();
-  if (!value) return fallback;
-  if (value.startsWith("video/mp4")) return "video/mp4";
-  if (value.startsWith("video/webm")) return "video/webm";
-  if (value.startsWith("video/quicktime")) return "video/quicktime";
-  if (value.startsWith("image/jpeg") || value.startsWith("image/jpg")) return "image/jpeg";
-  if (value.startsWith("image/png")) return "image/png";
-  if (value.startsWith("image/webp")) return "image/webp";
-  return value.split(";")[0] || fallback;
-}
-
-function dataUrlBase64Payload(dataUrl: string) {
-  const value = dataUrl.trim();
-  const marker = ";base64,";
-  const markerIndex = value.toLowerCase().lastIndexOf(marker);
-  if (markerIndex >= 0) return value.slice(markerIndex + marker.length);
-  const commaIndex = value.indexOf(",");
-  return commaIndex >= 0 ? value.slice(commaIndex + 1) : "";
-}
-
-function normalizeDataUrl(dataUrl: string, mimeType: string) {
-  if (!dataUrl.startsWith("data:")) return dataUrl;
-  const payload = dataUrlBase64Payload(dataUrl);
-  if (!payload) return dataUrl;
-  return `data:${safeMediaMimeType(mimeType)};base64,${payload}`;
-}
-
-function fileToPhotoVariant(file: File): Promise<PhotoUploadVariant> {
-  return new Promise((resolve, reject) => {
-    const mimeType = safeMediaMimeType(file.type || "image/jpeg", "image/jpeg");
-    const reader = new FileReader();
-    reader.onload = () => resolve({
-      name: file.name || `foto-${Date.now()}.jpg`,
-      mimeType,
-      size: file.size,
-      dataUrl: normalizeDataUrl(String(reader.result ?? ""), mimeType),
-      mediaType: "PHOTO"
-    });
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-function loadImage(file: File): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new window.Image();
-    const objectUrl = URL.createObjectURL(file);
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("IMAGE_DECODE_FAILED"));
-    };
-    image.src = objectUrl;
-  });
-}
-
-function canvasForImage(image: HTMLImageElement, maxSide: number) {
-  const sourceWidth = image.naturalWidth || image.width;
-  const sourceHeight = image.naturalHeight || image.height;
-  const ratio = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
-  const width = Math.max(1, Math.round(sourceWidth * ratio));
-  const height = Math.max(1, Math.round(sourceHeight * ratio));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d", { alpha: false });
-  if (!context) throw new Error("CANVAS_CONTEXT_FAILED");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-  return canvas;
-}
-
-async function compressImage(file: File, mode: PhotoQualityMode = "STANDARD"): Promise<PhotoUploadVariant> {
-  const profile = photoCompressionProfiles[mode];
-
-  try {
-    const image = await loadImage(file);
-    const sourceLongSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
-    let maxSide = Math.min(profile.maxSide, sourceLongSide);
-    let best: { dataUrl: string; size: number } | null = null;
-    let shouldContinue = true;
-
-    while (shouldContinue) {
-      const canvas = canvasForImage(image, maxSide);
-
-      for (const quality of profile.qualitySteps) {
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
-        const size = dataUrlByteSize(dataUrl);
-        if (!best || size < best.size) {
-          best = { dataUrl, size };
-        }
-        if (size <= profile.targetBytes) {
-          return {
-            name: compressedPhotoName(file.name),
-            mimeType: "image/jpeg",
-            size,
-            dataUrl,
-            mediaType: "PHOTO"
-          };
-        }
-      }
-
-      if (Math.max(canvas.width, canvas.height) <= profile.minSide) break;
-      maxSide = Math.max(profile.minSide, Math.round(maxSide * 0.82));
-      shouldContinue = maxSide >= 1;
-    }
-
-    if (best) {
-      return {
-        name: compressedPhotoName(file.name),
-        mimeType: "image/jpeg",
-        size: best.size,
-        dataUrl: best.dataUrl,
-        mediaType: "PHOTO"
-      };
-    }
-  } catch {
-    return fileToPhotoVariant(file);
-  }
-
-  return fileToPhotoVariant(file);
-}
-
-function supportedVideoMimeType() {
-  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
-  const video = document.createElement("video");
-  return VIDEO_MIME_CANDIDATES.find((mimeType) => (
-    MediaRecorder.isTypeSupported(mimeType) && video.canPlayType(mimeType) !== ""
-  )) ?? "";
-}
-
-function loadVideoMetadata(file: File): Promise<VideoMetadata> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
-    const objectUrl = URL.createObjectURL(file);
-    video.preload = "metadata";
-    video.playsInline = true;
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(objectUrl);
-      const durationSeconds = video.duration;
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || !width || !height) {
-        reject(new Error("VIDEO_METADATA_FAILED"));
-        return;
-      }
-      resolve({ durationSeconds, width, height });
-    };
-    video.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("VIDEO_METADATA_FAILED"));
-    };
-    video.src = objectUrl;
-  });
-}
-
-function outputVideoDimensions(metadata: VideoMetadata, attempt: VideoCompressionAttempt) {
-  const sourceLongSide = Math.max(metadata.width, metadata.height);
-  const sourceShortSide = Math.min(metadata.width, metadata.height);
-  const ratio = Math.min(
-    1,
-    attempt.maxLongSide / sourceLongSide,
-    attempt.maxShortSide / sourceShortSide,
-    VIDEO_MAX_LONG_SIDE / sourceLongSide,
-    VIDEO_MAX_SHORT_SIDE / sourceShortSide
-  );
-  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
-  return {
-    width: even(metadata.width * ratio),
-    height: even(metadata.height * ratio)
-  };
-}
-
-function videoPosterFromFile(file: File, metadata: VideoMetadata): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file);
-    const video = document.createElement("video");
-    const posterDimensions = outputVideoDimensions(metadata, {
-      maxLongSide: 640,
-      maxShortSide: 360,
-      fps: 1,
-      bitrateFactor: 1
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = posterDimensions.width;
-    canvas.height = posterDimensions.height;
-    const context = canvas.getContext("2d", { alpha: false });
-    let settled = false;
-    let timeout = 0;
-
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeout);
-      URL.revokeObjectURL(objectUrl);
-      callback();
-    };
-
-    const capture = () => {
-      if (!context) {
-        finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
-        return;
-      }
-      try {
-        context.fillStyle = "#020617";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
-        finish(() => resolve(dataUrl));
-      } catch {
-        finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
-      }
-    };
-
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = "auto";
-    video.onloadedmetadata = () => {
-      const targetTime = Math.min(1, Math.max(0, metadata.durationSeconds - 0.1));
-      if (targetTime > 0.05) {
-        video.currentTime = targetTime;
-      } else {
-        capture();
-      }
-    };
-    video.onseeked = capture;
-    video.onloadeddata = () => {
-      if (video.currentTime <= 0.05 && metadata.durationSeconds <= 0.2) capture();
-    };
-    video.onerror = () => finish(() => reject(new Error("VIDEO_POSTER_FAILED")));
-    timeout = window.setTimeout(() => finish(() => reject(new Error("VIDEO_POSTER_FAILED"))), 5000);
-    video.src = objectUrl;
-    video.load();
-  });
-}
-
-function blobToDataUrl(blob: Blob, mimeType = blob.type): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(normalizeDataUrl(String(reader.result ?? ""), mimeType || blob.type));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
-function captureStreamFromVideo(video: HTMLVideoElement) {
-  const captureVideo = video as HTMLVideoElementWithCapture;
-  return captureVideo.captureStream?.() ?? captureVideo.mozCaptureStream?.() ?? null;
-}
-
-async function playVideoForCompression(video: HTMLVideoElement) {
-  try {
-    await video.play();
-  } catch {
-    video.muted = true;
-    await video.play();
-  }
-}
-
-async function recordCompressedVideo(file: File, metadata: VideoMetadata, attempt: VideoCompressionAttempt, mimeType: string) {
-  const objectUrl = URL.createObjectURL(file);
-  const video = document.createElement("video");
-  const dimensions = outputVideoDimensions(metadata, attempt);
-  const canvas = document.createElement("canvas");
-  canvas.width = dimensions.width;
-  canvas.height = dimensions.height;
-  const context = canvas.getContext("2d", { alpha: false });
-  if (!context) {
-    URL.revokeObjectURL(objectUrl);
-    throw new Error("VIDEO_COMPRESSION_UNSUPPORTED");
-  }
-
-  const canvasStream = canvas.captureStream?.(attempt.fps);
-  if (!canvasStream) {
-    URL.revokeObjectURL(objectUrl);
-    throw new Error("VIDEO_COMPRESSION_UNSUPPORTED");
-  }
-
-  video.preload = "auto";
-  video.playsInline = true;
-  video.volume = 0;
-
-  await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve();
-    video.onerror = () => reject(new Error("VIDEO_METADATA_FAILED"));
-    video.src = objectUrl;
-    video.load();
-  });
-
-  const sourceStream = captureStreamFromVideo(video);
-  const outputStream = new MediaStream([
-    ...canvasStream.getVideoTracks(),
-    ...(sourceStream?.getAudioTracks() ?? [])
-  ]);
-  const durationSeconds = Math.max(1, metadata.durationSeconds);
-  const videoBitsPerSecond = Math.max(
-    280_000,
-    Math.min(4_000_000, Math.floor(((VIDEO_TARGET_BYTES * 8) / durationSeconds) * attempt.bitrateFactor))
-  );
-  const chunks: Blob[] = [];
-  let animationFrame = 0;
-
-  const drawFrame = () => {
-    if (!video.paused && !video.ended) {
-      context.fillStyle = "#000000";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    }
-    animationFrame = window.requestAnimationFrame(drawFrame);
-  };
-
-  try {
-    const recorderOptions: MediaRecorderOptions = {
-      videoBitsPerSecond
-    };
-    if (mimeType) recorderOptions.mimeType = mimeType;
-    const recorder = new MediaRecorder(outputStream, recorderOptions);
-    const recorded = new Promise<Blob>((resolve, reject) => {
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-      recorder.onerror = () => reject(new Error("VIDEO_COMPRESSION_FAILED"));
-      recorder.onstop = () => {
-        const outputType = recorder.mimeType || mimeType || chunks[0]?.type || "video/webm";
-        resolve(new Blob(chunks, { type: outputType }));
-      };
-      video.onended = () => {
-        if (recorder.state !== "inactive") recorder.stop();
-      };
-    });
-
-    recorder.start(1000);
-    await playVideoForCompression(video);
-    drawFrame();
-    const timeout = window.setTimeout(() => {
-      if (recorder.state !== "inactive") recorder.stop();
-    }, Math.ceil((metadata.durationSeconds + 4) * 1000));
-    const blob = await recorded;
-    window.clearTimeout(timeout);
-    return { blob, width: dimensions.width, height: dimensions.height };
-  } finally {
-    window.cancelAnimationFrame(animationFrame);
-    outputStream.getTracks().forEach((track) => track.stop());
-    sourceStream?.getTracks().forEach((track) => track.stop());
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-async function videoFileToVariant(file: File, metadata?: VideoMetadata, posterDataUrl?: string): Promise<PhotoUploadVariant> {
-  const videoMetadata = metadata ?? await loadVideoMetadata(file);
-  if (videoMetadata.durationSeconds > VIDEO_MAX_DURATION_SECONDS) {
-    throw new Error("VIDEO_DURATION_TOO_LONG");
-  }
-  if (file.size > VIDEO_MAX_BYTES) {
-    throw new Error("VIDEO_TOO_LARGE");
-  }
-
-  const mimeType = safeMediaMimeType(videoMimeTypeForFile(file), "video/mp4");
-  if (!mimeType.toLowerCase().startsWith("video/mp4")) {
-    throw new Error("VIDEO_MP4_REQUIRED");
-  }
-
-  const dataUrl = await blobToDataUrl(file, mimeType);
-  const name = file.name?.trim() || `hotelops-video-${Date.now()}.mp4`;
-  const videoPosterDataUrl = posterDataUrl ?? await videoPosterFromFile(file, videoMetadata).catch(() => "");
-
-  return {
-    name: compressedVideoName(name, mimeType),
-    mimeType,
-    size: file.size,
-    dataUrl,
-    mediaType: "VIDEO",
-    durationSeconds: videoMetadata.durationSeconds,
-    width: videoMetadata.width,
-    height: videoMetadata.height,
-    compressed: false,
-    videoPosterDataUrl: videoPosterDataUrl || undefined,
-    originalDataUrl: dataUrl,
-    originalName: name,
-    originalMimeType: mimeType
-  };
-}
-
-async function compressVideo(file: File): Promise<PhotoUploadVariant> {
-  const metadata = await loadVideoMetadata(file);
-  if (metadata.durationSeconds > VIDEO_MAX_DURATION_SECONDS) {
-    throw new Error("VIDEO_DURATION_TOO_LONG");
-  }
-  const videoPosterDataUrl = await videoPosterFromFile(file, metadata).catch(() => "");
-  const originalMimeType = safeMediaMimeType(videoMimeTypeForFile(file), "video/mp4");
-  const originalDataUrlPromise = blobToDataUrl(file, originalMimeType);
-
-  if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
-    return videoFileToVariant(file, metadata, videoPosterDataUrl);
-  }
-
-  const mimeType = supportedVideoMimeType();
-  if (!mimeType) {
-    return videoFileToVariant(file, metadata, videoPosterDataUrl);
-  }
-
-  let lastError: unknown = null;
-  for (const attempt of VIDEO_COMPRESSION_ATTEMPTS) {
-    try {
-      const output = await recordCompressedVideo(file, metadata, attempt, mimeType);
-      if (output.blob.size > 0 && output.blob.size <= VIDEO_MAX_BYTES) {
-        const outputType = safeMediaMimeType(output.blob.type || mimeType, "video/mp4");
-        const outputName = compressedVideoName(file.name, outputType);
-        const outputFile = new File([output.blob], outputName, { type: outputType });
-        await loadVideoMetadata(outputFile);
-        const dataUrl = await blobToDataUrl(output.blob, outputType);
-        const originalDataUrl = await originalDataUrlPromise;
-        return {
-          name: outputName,
-          mimeType: outputType,
-          size: output.blob.size,
-          dataUrl,
-          mediaType: "VIDEO",
-          durationSeconds: metadata.durationSeconds,
-          width: output.width,
-          height: output.height,
-          compressed: true,
-          videoPosterDataUrl: videoPosterDataUrl || undefined,
-          originalDataUrl,
-          originalName: file.name?.trim() || outputName,
-          originalMimeType
-        };
-      }
-      lastError = new Error("VIDEO_TOO_LARGE");
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  try {
-    return await videoFileToVariant(file, metadata, videoPosterDataUrl);
-  } catch {
-    // Keep the compression-specific failure when original upload is not usable.
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("VIDEO_COMPRESSION_FAILED");
-}
-
-function mediaUploadErrorMessage(error: unknown) {
-  const code = error instanceof Error ? error.message : "";
-  if (code === "VIDEO_DURATION_TOO_LONG") return "Video en fazla 1 dakika olabilir.";
-  if (code === "VIDEO_TOO_LARGE") return "Video 25 MB altına sıkıştırılamadı.";
-  if (code === "VIDEO_METADATA_FAILED") return "Video okunamadı.";
-  if (code === "VIDEO_MP4_REQUIRED") return "Video MP4 formatında olmalıdır.";
-  if (code === "VIDEO_COMPRESSION_UNSUPPORTED") return "Bu cihazda uyumlu MP4 video sıkıştırma desteklenmiyor.";
-  return "Medya hazırlanamadı.";
-}
-
-type PhotoSelection = {
-  photo: PhotoAttachment;
-  sourceFile: File;
-};
-
-function newPhotoClientId() {
-  return `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function photoFromVariant(variant: PhotoUploadVariant, qualityMode: PhotoQualityMode, clientId = newPhotoClientId()): PhotoAttachment {
-  return {
-    ...variant,
-    clientId,
-    qualityMode,
-    standardVariant: qualityMode === "STANDARD" ? variant : undefined,
-    hdVariant: qualityMode === "HD" ? variant : undefined
-  };
-}
-
-function applyPhotoVariant(photo: PhotoAttachment, variant: PhotoUploadVariant, qualityMode: PhotoQualityMode): PhotoAttachment {
-  return {
-    ...photo,
-    ...variant,
-    qualityMode,
-    standardVariant: qualityMode === "STANDARD" ? variant : photo.standardVariant,
-    hdVariant: qualityMode === "HD" ? variant : photo.hdVariant,
-    hdPreparing: false
-  };
-}
-
-function currentPhotoVariant(photo: PhotoAttachment): PhotoUploadVariant {
-  return {
-    name: photo.name,
-    mimeType: photo.mimeType,
-    size: photo.size,
-    dataUrl: photo.dataUrl,
-    mediaType: photo.mediaType,
-    durationSeconds: photo.durationSeconds,
-    width: photo.width,
-    height: photo.height,
-    compressed: photo.compressed,
-    videoPosterDataUrl: photo.videoPosterDataUrl,
-    originalDataUrl: photo.originalDataUrl,
-    originalName: photo.originalName,
-    originalMimeType: photo.originalMimeType
-  };
-}
-
-async function filesToPhotoSelections(files: FileList | null) {
-  const selected = Array.from(files ?? [])
-    .filter((file) => isImageFile(file) || isVideoFile(file))
-    .slice(0, 6);
-  const selections: PhotoSelection[] = [];
-
-  for (const file of selected) {
-    if (isVideoFile(file)) {
-      const videoVariant = await compressVideo(file);
-      selections.push({ photo: photoFromVariant(videoVariant, "STANDARD"), sourceFile: file });
-    } else {
-      const standardVariant = await compressImage(file, "STANDARD");
-      selections.push({ photo: photoFromVariant(standardVariant, "STANDARD"), sourceFile: file });
-    }
-  }
-
-  return selections;
-}
-
-function photoUploadPayload(photo: PhotoAttachment): PhotoAttachment {
-  return {
-    name: photo.name,
-    mimeType: photo.mimeType,
-    size: photo.size,
-    dataUrl: photo.dataUrl,
-    phase: photo.phase ?? "GENERAL",
-    mediaType: isVideoAttachment(photo) ? "VIDEO" : "PHOTO",
-    durationSeconds: photo.durationSeconds,
-    width: photo.width,
-    height: photo.height,
-    compressed: photo.compressed
-  };
-}
-
-function photosUploadPayload(photos: PhotoAttachment[] = []) {
-  return photos.map(photoUploadPayload);
-}
-
-function hasPendingPhotoProcessing(photos: PhotoAttachment[] = []) {
-  return photos.some((photo) => photo.hdPreparing);
-}
-
-const operationDocumentAccept = ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx";
-const operationDocumentExtensions = new Set(["pdf", "xls", "xlsx", "doc", "docx", "ppt", "pptx"]);
-
-function isAllowedOperationDocumentFile(file: File) {
-  const extension = file.name.toLowerCase().split(".").pop() ?? "";
-  return operationDocumentExtensions.has(extension);
-}
-
-function fileSizeLabel(size: number) {
-  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
-  return `${size} B`;
-}
-
-function photoDownloadName(photo: PhotoAttachment) {
-  if (isVideoAttachment(photo)) {
-    const fallback = `hotelops-video-${Date.now()}.webm`;
-    const name = (photo.originalName || photo.name || fallback).trim();
-    if (/\.(mp4|webm|mov|m4v)$/i.test(name)) return name;
-    const mimeType = photo.originalMimeType || photo.mimeType;
-    const extension = mimeType.includes("mp4") ? "mp4" : mimeType.includes("quicktime") ? "mov" : "webm";
-    return `${name || "hotelops-video"}.${extension}`;
-  }
-
-  const fallback = `hotelops-foto-${Date.now()}.jpg`;
-  const name = (photo.name || fallback).trim();
-  if (/\.(jpe?g|png|webp|heic|heif)$/i.test(name)) return name;
-  const extension = photo.mimeType === "image/png" ? "png" : photo.mimeType === "image/webp" ? "webp" : "jpg";
-  return `${name || "hotelops-foto"}.${extension}`;
-}
-
-function videoPlaybackSrc(photo: PhotoAttachment) {
-  const source = photo.originalDataUrl || photo.dataUrl;
-  return source ? normalizeDataUrl(source, photo.originalMimeType || photo.mimeType || "video/mp4") : "";
-}
-
-function mediaSaveDataUrl(photo: PhotoAttachment) {
-  if (isVideoAttachment(photo)) return videoPlaybackSrc(photo);
-  return photo.dataUrl ? normalizeDataUrl(photo.dataUrl, photo.mimeType || "image/jpeg") : "";
-}
-
-function mediaSaveMimeType(photo: PhotoAttachment) {
-  return safeMediaMimeType(
-    isVideoAttachment(photo) ? (photo.originalMimeType || photo.mimeType || "video/mp4") : (photo.mimeType || "image/jpeg"),
-    isVideoAttachment(photo) ? "video/mp4" : "image/jpeg"
-  );
-}
-
-function mediaNeedsPayload(photo: PhotoAttachment) {
-  return Boolean(photo.hasDataUrl && !mediaSaveDataUrl(photo));
-}
-
-function jobNeedsMediaPayload(job: JobRecord | undefined) {
-  return Boolean(job?.photos?.some(mediaNeedsPayload));
-}
-
-function stripPhotoStoragePayload(photo: PhotoAttachment): PhotoAttachment {
-  if (!photo.dataUrl && !photo.originalDataUrl && !photo.standardVariant && !photo.hdVariant) return photo;
-  return {
-    ...photo,
-    dataUrl: "",
-    originalDataUrl: undefined,
-    standardVariant: undefined,
-    hdVariant: undefined
-  };
-}
-
-function stripJobStoragePayload(job: JobRecord): JobRecord {
-  return job.photos?.length
-    ? { ...job, photos: job.photos.map(stripPhotoStoragePayload) }
-    : job;
-}
-
-function MediaPreview({ photo, width, height, className }: { photo: PhotoAttachment; width: number; height: number; className?: string }) {
-  if (isVideoAttachment(photo)) {
-    const src = videoPlaybackSrc(photo);
-    return (
-      <span className={["video-preview-frame", className].filter(Boolean).join(" ")}>
-        {src ? (
-          <video
-            className="video-preview-media"
-            src={src}
-            poster={photo.videoPosterDataUrl}
-            width={width}
-            height={height}
-            muted
-            playsInline
-            preload="metadata"
-          />
-        ) : (
-          <span className="media-preview-placeholder"><Video size={30} /> Video</span>
-        )}
-        <span className="video-preview-play" aria-hidden="true">
-          <PlayCircle size={38} />
-        </span>
-      </span>
-    );
-  }
-
-  if (!photo.dataUrl) {
-    return (
-      <span className={["video-preview-frame", className].filter(Boolean).join(" ")}>
-        <span className="media-preview-placeholder"><ImageIcon size={30} /> Fotoğraf</span>
-      </span>
-    );
-  }
-
-  return <Image className={className} src={photo.dataUrl} alt={photo.name} width={width} height={height} unoptimized />;
-}
-
-function formatVideoTime(seconds: number) {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
-  const totalSeconds = Math.floor(seconds);
-  const minutes = Math.floor(totalSeconds / 60);
-  const remainingSeconds = totalSeconds % 60;
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-}
-
-type FullscreenTarget = HTMLElement & {
-  webkitRequestFullscreen?: () => Promise<void> | void;
-};
-
-type FullscreenDocument = Document & {
-  webkitFullscreenElement?: Element | null;
-  webkitExitFullscreen?: () => Promise<void> | void;
-};
-
-function LightboxVideoPlayer({ src, poster, title }: { src: string; poster?: string; title: string }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-
-  useEffect(() => {
-    setIsPlaying(false);
-    setDuration(0);
-    setCurrentTime(0);
-  }, [src]);
-
-  const updateMetadata = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    setDuration(Number.isFinite(video.duration) ? video.duration : 0);
-    setCurrentTime(Number.isFinite(video.currentTime) ? video.currentTime : 0);
-    setIsMuted(video.muted);
-  };
-
-  const togglePlayback = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused || video.ended) {
-      void video.play().catch(() => setIsPlaying(false));
-      return;
-    }
-    video.pause();
-  };
-
-  const handleSeek = (event: ChangeEvent<HTMLInputElement>) => {
-    const video = videoRef.current;
-    const nextTime = Number(event.currentTarget.value);
-    setCurrentTime(nextTime);
-    if (video && Number.isFinite(nextTime)) video.currentTime = nextTime;
-  };
-
-  const toggleMute = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = !video.muted;
-    setIsMuted(video.muted);
-  };
-
-  const toggleFullscreen = () => {
-    const element = frameRef.current as FullscreenTarget | null;
-    if (!element) return;
-    const fullscreenDocument = document as FullscreenDocument;
-    const fullscreenElement = document.fullscreenElement || fullscreenDocument.webkitFullscreenElement;
-    if (fullscreenElement) {
-      void (document.exitFullscreen?.() || fullscreenDocument.webkitExitFullscreen?.());
-      return;
-    }
-    void (element.requestFullscreen?.() || element.webkitRequestFullscreen?.());
-  };
-
-  const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
-  const progressStyle = { "--video-progress": `${progress}%` } as CSSProperties;
-
-  return (
-    <div className="lightbox-video-player" ref={frameRef}>
-      <video
-        ref={videoRef}
-        className="photo-lightbox-video"
-        src={src}
-        poster={poster}
-        playsInline
-        preload="metadata"
-        onClick={togglePlayback}
-        onLoadedMetadata={updateMetadata}
-        onDurationChange={updateMetadata}
-        onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-        onEnded={() => setIsPlaying(false)}
-      />
-      <button
-        type="button"
-        className={`lightbox-video-center ${isPlaying ? "is-playing" : ""}`}
-        onClick={togglePlayback}
-        aria-label={isPlaying ? "Duraklat" : "Oynat"}
-      >
-        {isPlaying ? <Pause size={30} /> : <Play size={32} fill="currentColor" />}
-      </button>
-      <div className="lightbox-video-controls" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="lightbox-video-control" onClick={togglePlayback} aria-label={isPlaying ? "Duraklat" : "Oynat"}>
-          {isPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}
-        </button>
-        <div className="lightbox-video-timeline">
-          <input
-            type="range"
-            min={0}
-            max={duration || 0}
-            step="0.05"
-            value={Math.min(currentTime, duration || currentTime)}
-            onChange={handleSeek}
-            style={progressStyle}
-            aria-label={`${title} video süresi`}
-          />
-          <span>{formatVideoTime(currentTime)} / {formatVideoTime(duration)}</span>
-        </div>
-        <button type="button" className="lightbox-video-control" onClick={toggleMute} aria-label={isMuted ? "Sesi aç" : "Sesi kapat"}>
-          {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-        </button>
-        <button type="button" className="lightbox-video-control" onClick={toggleFullscreen} aria-label="Tam ekran">
-          <Maximize2 size={18} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PhotoLightbox({ photo, onClose }: { photo: PhotoAttachment | null; onClose: () => void }) {
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed" | "unsupported">("idle");
-
-  useEffect(() => {
-    if (!photo) return;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [photo, onClose]);
-
-  useEffect(() => {
-    setSaveStatus("idle");
-  }, [photo?.dataUrl, photo?.originalDataUrl]);
-
-  const handleSave = () => {
-    if (!photo) return;
-    const fileName = photoDownloadName(photo);
-    const shell = (window as HotelOpsShellWindow).HotelOpsAndroidShell;
-    const dataUrl = mediaSaveDataUrl(photo);
-    const mimeType = mediaSaveMimeType(photo);
-    const isAndroidShell = shell?.runtime?.() === "android";
-
-    if (!dataUrl) {
-      setSaveStatus("failed");
-      return;
-    }
-
-    if (isVideoAttachment(photo) && isAndroidShell && !shell?.saveMediaToGallery) {
-      setSaveStatus("unsupported");
-      return;
-    }
-
-    if (shell?.saveMediaToGallery) {
-      const saved = shell.saveMediaToGallery(dataUrl, fileName, mimeType);
-      setSaveStatus(saved ? "saved" : "failed");
-      return;
-    }
-
-    if (!isVideoAttachment(photo) && shell?.saveImageToGallery) {
-      const saved = shell.saveImageToGallery(dataUrl, fileName);
-      setSaveStatus(saved ? "saved" : "failed");
-      return;
-    }
-
-    try {
-      const link = document.createElement("a");
-      link.href = dataUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setSaveStatus("saved");
-    } catch {
-      setSaveStatus("failed");
-    }
-  };
-
-  if (!photo) return null;
-  const lightboxSrc = mediaSaveDataUrl(photo);
-  const isVideo = isVideoAttachment(photo);
-  const fallbackTitle = isVideo ? "Video" : "Fotoğraf";
-  const mediaTitle = photo.name || fallbackTitle;
-
-  return (
-    <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label={isVideo ? "Video önizleme" : "Fotoğraf önizleme"} onClick={onClose}>
-      <button type="button" className="photo-lightbox-close" onClick={onClose} aria-label={isVideo ? "Videoyu kapat" : "Fotoğrafı kapat"}>
-        <X size={20} />
-      </button>
-      <div className={`photo-lightbox-frame ${isVideo ? "is-video" : ""}`} onClick={(event) => event.stopPropagation()}>
-        {isVideo && lightboxSrc ? (
-          <LightboxVideoPlayer src={lightboxSrc} poster={photo.videoPosterDataUrl} title={mediaTitle} />
-        ) : isVideo ? (
-          <div className="photo-lightbox-placeholder"><Video size={34} /> Video yükleniyor...</div>
-        ) : lightboxSrc ? (
-          <Image src={lightboxSrc} alt={mediaTitle} width={1280} height={960} unoptimized />
-        ) : (
-          <div className="photo-lightbox-placeholder"><ImageIcon size={34} /> Medya yükleniyor...</div>
-        )}
-        <div className="photo-lightbox-footer">
-          <div className="photo-lightbox-caption">
-            <span>{mediaTitle}</span>
-            <span>{fileSizeLabel(photo.size)}</span>
-          </div>
-          <div className="photo-lightbox-actions">
-            {saveStatus !== "idle" ? (
-              <span className={`photo-save-status ${saveStatus}`}>
-                {saveStatus === "saved" ? "Kaydedildi" : saveStatus === "unsupported" ? "Uygulamayı güncelleyin" : "Kaydedilemedi"}
-              </span>
-            ) : null}
-            <button type="button" className="photo-lightbox-save" onClick={handleSave}>
-              <Save size={16} /> Kaydet
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function fileToOperationDocument(file: File): Promise<OperationDocumentFile> {
-  return new Promise((resolve, reject) => {
-    if (!isAllowedOperationDocumentFile(file)) {
-      reject(new Error("UNSUPPORTED_DOCUMENT_TYPE"));
-      return;
-    }
-    if (file.size > 8_000_000) {
-      reject(new Error("DOCUMENT_TOO_LARGE"));
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => resolve({
-      name: file.name,
-      mimeType: file.type || "application/octet-stream",
-      size: file.size,
-      dataUrl: String(reader.result ?? "")
-    });
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 const departmentOptions: Array<{ id: DepartmentId; label: string }> = [
   { id: "executive", label: "Genel Yönetim" },
   { id: "hr", label: "İnsan Kaynakları" },
@@ -3006,55 +1510,6 @@ function initials(name: string) {
     .toLocaleUpperCase("tr-TR");
 }
 
-function BrandLogo() {
-  return <Image className="brand-logo-img" src={BRAND_LOGO_SRC} alt="Nodera Software" width={64} height={64} draggable={false} priority unoptimized />;
-}
-
-function NoderaBrandFooter() {
-  return null;
-}
-
-function SidebarShellMeta({
-  appUpdateNotice,
-  onAppUpdate,
-  shellAppInfo
-}: {
-  appUpdateNotice: AppUpdateNotice | null;
-  onAppUpdate: (notice: AppUpdateNotice) => void;
-  shellAppInfo: ShellAppInfo | null;
-}) {
-  const showBrandSite = !shellAppInfo || shellAppInfo.runtime === "desktop";
-
-  return (
-    <div className="sidebar-meta">
-      {showBrandSite ? <div className="sidebar-brand-site">www.noderasoftware.com</div> : null}
-      {shellAppInfo ? (
-        <button
-          type="button"
-          className={`sidebar-app-version ${appUpdateNotice ? "outdated" : ""}`}
-          onClick={() => appUpdateNotice && onAppUpdate(appUpdateNotice)}
-          disabled={!appUpdateNotice}
-        >
-          {appUpdateNotice ? <span className="sidebar-app-version-badge">Güncelleme</span> : null}
-          <span>{shellAppInfo.label} v{shellAppInfo.version}</span>
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function AndroidLogo() {
-  return (
-    <svg className="download-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7.7 7.4 6.1 4.7a.7.7 0 0 1 1.2-.7l1.7 2.9a7.1 7.1 0 0 1 6 0L16.7 4a.7.7 0 1 1 1.2.7l-1.6 2.7A6.4 6.4 0 0 1 19 12H5a6.4 6.4 0 0 1 2.7-4.6Z" />
-      <path d="M5 13h14v5.2c0 1-.8 1.8-1.8 1.8H6.8c-1 0-1.8-.8-1.8-1.8V13Z" />
-      <path d="M3.2 13.5c0-.7.6-1.2 1.2-1.2s1.2.5 1.2 1.2v4.1c0 .7-.6 1.2-1.2 1.2s-1.2-.5-1.2-1.2v-4.1Zm15.2 0c0-.7.6-1.2 1.2-1.2s1.2.5 1.2 1.2v4.1c0 .7-.6 1.2-1.2 1.2s-1.2-.5-1.2-1.2v-4.1ZM8.2 20h2v2.1c0 .7-.4 1.1-1 1.1s-1-.4-1-1.1V20Zm5.6 0h2v2.1c0 .7-.4 1.1-1 1.1s-1-.4-1-1.1V20Z" />
-      <circle cx="9" cy="9.8" r=".8" fill="#fff" />
-      <circle cx="15" cy="9.8" r=".8" fill="#fff" />
-    </svg>
-  );
-}
-
 function operationalRecordFromSeed(module: OperationalModuleConfig, record: { title: string; meta: string; status: string }, index: number): OperationalRecord {
   const urgent = record.status.includes("Kritik") || record.status.includes("Acil") || record.status.includes("Uyarı") || record.status.includes("SLA");
   const high = urgent || record.status.includes("Geciken") || record.status.includes("Eksik") || record.status.includes("Onay");
@@ -3122,251 +1577,6 @@ function roomApprovalStepClass(currentStage: OperationalRecord["approvalStage"],
   if (currentStage === step) return "active";
   if (currentStage && order[currentStage] > order[step]) return "done";
   return "";
-}
-
-function WindowsLogo() {
-  return (
-    <svg className="download-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3.5 5.3 11 4.2v7.1H3.5v-6Zm8.6-1.2 8.4-1.2v8.4h-8.4V4.1ZM3.5 12.7H11v7.1l-7.5-1.1v-6Zm8.6 0h8.4v8.4l-8.4-1.2v-7.2Z" />
-    </svg>
-  );
-}
-
-function AppleLogo() {
-  return (
-    <svg className="download-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M16.6 12.4c0-2 1.6-3 1.7-3.1-1-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7-.7 0-1.7-.7-2.7-.7-1.4 0-2.7.8-3.4 2.1-1.5 2.6-.4 6.4 1 8.5.7 1 1.6 2.2 2.7 2.1 1.1 0 1.5-.7 2.8-.7s1.7.7 2.9.7c1.2 0 2-1 2.7-2.1.8-1.2 1.1-2.3 1.1-2.4 0 0-2.9-1.1-2.9-3.5Z" />
-      <path d="M14.6 6.4c.6-.7 1-1.7.9-2.8-.9 0-1.9.6-2.5 1.3-.6.7-1 1.7-.9 2.7.9.1 1.9-.5 2.5-1.2Z" />
-    </svg>
-  );
-}
-
-function LinuxLogo() {
-  return (
-    <svg className="download-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 2.2c-2.1 0-3.5 1.8-3.5 4.5 0 1.2.2 2.2.5 3-.9.9-1.4 2.2-1.4 3.6v2.4l-2 2.1c-.5.5-.5 1.3 0 1.8.5.5 1.3.5 1.8 0l1.3-1.3c.7 1.9 1.9 3.1 3.3 3.1s2.6-1.2 3.3-3.1l1.3 1.3c.5.5 1.3.5 1.8 0 .5-.5.5-1.3 0-1.8l-2-2.1v-2.4c0-1.4-.5-2.7-1.4-3.6.3-.8.5-1.8.5-3 0-2.7-1.4-4.5-3.5-4.5Zm-1.2 5.2c-.4 0-.7-.4-.7-.8s.3-.8.7-.8.7.4.7.8-.3.8-.7.8Zm2.4 0c-.4 0-.7-.4-.7-.8s.3-.8.7-.8.7.4.7.8-.3.8-.7.8Z" />
-    </svg>
-  );
-}
-
-const appDownloadGroups = [
-  {
-    id: "windows",
-    label: "Windows",
-    icon: WindowsLogo,
-    items: [
-      {
-        href: "/downloads/HotelOps-Setup-V1-x64.exe",
-        icon: WindowsLogo,
-        label: "Windows 64bit",
-        meta: "Kurulum",
-        download: true
-      },
-      {
-        href: "/downloads/HotelOps-Portable-V1-x64.exe",
-        icon: WindowsLogo,
-        label: "Portable 64bit",
-        meta: "Kurulumsuz",
-        download: true
-      },
-      {
-        href: "/downloads/HotelOps-Setup-V1-arm64.exe",
-        icon: WindowsLogo,
-        label: "Windows ARM64",
-        meta: "Kurulum",
-        download: true
-      },
-      {
-        href: "/downloads/HotelOps-Portable-V1-arm64.exe",
-        icon: WindowsLogo,
-        label: "Portable ARM64",
-        meta: "Kurulumsuz",
-        download: true
-      }
-    ]
-  },
-  {
-    id: "android",
-    label: "Android",
-    icon: AndroidLogo,
-    items: [
-      {
-        href: "/downloads/HotelOps-Android-V1.apk",
-        icon: AndroidLogo,
-        label: "Android APK",
-        meta: "Mobil",
-        download: true
-      },
-      {
-        href: "",
-        icon: AndroidLogo,
-        label: "Play Store",
-        meta: "Yakında"
-      }
-    ]
-  },
-  {
-    id: "linux",
-    label: "Linux",
-    icon: LinuxLogo,
-    items: [
-      {
-        href: "/downloads/HotelOps-Linux-V1-x64.tar.gz",
-        icon: LinuxLogo,
-        label: "Linux 64bit",
-        meta: "tar.gz",
-        download: true
-      },
-      {
-        href: "/downloads/HotelOps-Linux-V1-arm64.tar.gz",
-        icon: LinuxLogo,
-        label: "Linux ARM64",
-        meta: "tar.gz",
-        download: true
-      }
-    ]
-  },
-  {
-    id: "apple",
-    label: "Apple",
-    icon: AppleLogo,
-    items: [
-      {
-        href: "/downloads/HotelOps-Mac-V1-arm64.dmg",
-        icon: AppleLogo,
-        label: "Mac ARM64",
-        meta: "Apple Silicon",
-        download: true
-      },
-      {
-        href: "/downloads/HotelOps-Mac-V1-x64.dmg",
-        icon: AppleLogo,
-        label: "Mac Intel",
-        meta: "DMG",
-        download: true
-      },
-      {
-        href: "",
-        icon: AppleLogo,
-        label: "iPhone",
-        meta: "Yakında"
-      }
-    ]
-  }
-];
-
-function AppDownloadCards({ className = "app-download-grid" }: { className?: string }) {
-  const [activeGroupId, setActiveGroupId] = useState(appDownloadGroups[0].id);
-  const activeGroup = appDownloadGroups.find((group) => group.id === activeGroupId) ?? appDownloadGroups[0];
-
-  return (
-    <div className={`${className} app-download-panel`}>
-      <div className="download-group-tabs" role="tablist" aria-label="Uygulama indirme platformları">
-        {appDownloadGroups.map((group) => {
-          const Icon = group.icon;
-          const active = group.id === activeGroup.id;
-          return (
-            <button
-              key={group.id}
-              type="button"
-              className={`download-group-tab ${active ? "active" : ""}`}
-              onClick={() => setActiveGroupId(group.id)}
-              role="tab"
-              aria-selected={active}
-            >
-              <span className="download-card-icon"><Icon /></span>
-              <strong>{group.label}</strong>
-            </button>
-          );
-        })}
-      </div>
-      <div className="download-group-items" role="tabpanel">
-      {activeGroup.items.map((item) => {
-        const Icon = item.icon;
-        const content = (
-          <>
-            <span className="download-card-icon"><Icon /></span>
-            <strong>{item.label}</strong>
-            <span>{item.meta}</span>
-          </>
-        );
-
-        if (!item.href) {
-          return (
-            <span key={item.label} className="download-card download-card-disabled" aria-disabled="true">
-              {content}
-            </span>
-          );
-        }
-
-        return (
-          <a key={item.href} className="download-card" href={item.href} download={item.download ? true : undefined}>
-            {content}
-          </a>
-        );
-      })}
-      </div>
-    </div>
-  );
-}
-
-function AppUpdateCard({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate: (notice: AppUpdateNotice) => void }) {
-  return (
-    <div className="app-update-card" role="status">
-      <div className="app-update-icon">
-        <AlertTriangle size={23} />
-      </div>
-      <div className="app-update-copy">
-        <span className="app-update-kicker">Güncelleme</span>
-        <strong>{notice.title}</strong>
-        <span>{notice.message || `${notice.label} uygulaması için yeni güncelleme hazır.`}</span>
-      </div>
-      <button type="button" className="btn btn-danger app-update-btn" onClick={() => onUpdate(notice)}>
-        Güncelle
-      </button>
-    </div>
-  );
-}
-
-function RequiredAppUpdateScreen({ notice, onUpdate }: { notice: AppUpdateNotice; onUpdate: (notice: AppUpdateNotice) => void }) {
-  const details = notice.runtime === "android"
-    ? "Yeni Android APK ayri paket adiyla kurulur. Kurulumdan sonra yeni Nodera HotelOps uygulamasini acin; eski uygulama cihazda kalirsa calismaz."
-    : "Windows uygulamasinin eski surumu artik kullanilamaz. Yeni kurulum dosyasini indirip kurun.";
-
-  return (
-    <main className="classic-app maintenance-mode-page">
-      <section className="maintenance-mode-panel" role="alert" aria-live="assertive">
-        <div className="maintenance-mode-topbar">
-          <div className="maintenance-mode-brand">
-            <span className="logo-mark logo-mark-image maintenance-mode-logo"><BrandLogo /></span>
-            <span>Nodera Sistem</span>
-          </div>
-          <div className="maintenance-mode-badge">
-            <AlertTriangle size={16} />
-            Zorunlu guncelleme
-          </div>
-        </div>
-        <div className="maintenance-mode-body">
-          <div className="maintenance-mode-icon">
-            <AlertTriangle size={34} />
-          </div>
-          <div>
-            <p className="maintenance-mode-eyebrow">Uygulama guncel degil</p>
-            <h1>{notice.title}</h1>
-            <p className="maintenance-mode-copy">{notice.message}</p>
-            <p className="maintenance-mode-copy">{details}</p>
-          </div>
-        </div>
-        <div className="maintenance-mode-status">
-          <span>Mevcut: {notice.label} v{notice.currentVersion}</span>
-          <span>Gerekli: v{notice.latestVersion}</span>
-        </div>
-        <button type="button" className="btn btn-danger app-update-btn" onClick={() => onUpdate(notice)}>
-          Guncelle
-        </button>
-      </section>
-    </main>
-  );
 }
 
 function formatDateTime(value: string) {
@@ -4501,7 +2711,6 @@ export function HotelOpsSystem() {
   const [isOnline, setIsOnline] = useState(true);
   const [alert, setAlertMessage] = useState<string>("");
   const [alertResetKey, setAlertResetKey] = useState(0);
-  const [alertSecondsRemaining, setAlertSecondsRemaining] = useState(ALERT_AUTO_DISMISS_SECONDS);
   const [credentialNotice, setCredentialNotice] = useState<CredentialNotice | null>(null);
   const [loginError, setLoginError] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
@@ -4541,7 +2750,6 @@ export function HotelOpsSystem() {
 
   const setAlert = useCallback((value: string) => {
     setAlertMessage(value);
-    setAlertSecondsRemaining(ALERT_AUTO_DISMISS_SECONDS);
     setAlertResetKey((current) => current + 1);
   }, []);
 
@@ -4615,18 +2823,8 @@ export function HotelOpsSystem() {
   useEffect(() => {
     if (!alert) return;
 
-    setAlertSecondsRemaining(ALERT_AUTO_DISMISS_SECONDS);
-    const deadline = Date.now() + ALERT_AUTO_DISMISS_SECONDS * 1000;
-    const intervalId = window.setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      setAlertSecondsRemaining(remaining);
-      if (remaining <= 0) {
-        window.clearInterval(intervalId);
-        setAlertMessage("");
-      }
-    }, 250);
-
-    return () => window.clearInterval(intervalId);
+    const timeoutId = window.setTimeout(() => setAlertMessage(""), ALERT_AUTO_DISMISS_SECONDS * 1000);
+    return () => window.clearTimeout(timeoutId);
   }, [alert, alertResetKey]);
 
   useEffect(() => {
@@ -5911,7 +4109,6 @@ export function HotelOpsSystem() {
     return (
       <PlatformAdminShell
         alert={alert}
-        alertSecondsRemaining={alertSecondsRemaining}
         credentialNotice={credentialNotice}
         dismissAlert={dismissAlert}
         dismissCredentialNotice={() => setCredentialNotice(null)}
@@ -5933,7 +4130,6 @@ export function HotelOpsSystem() {
     <main className="classic-app">
       <FloatingAlert
         alert={alert}
-        alertSecondsRemaining={alertSecondsRemaining}
         dismissAlert={dismissAlert}
       />
       <div className="layout-wrapper">
@@ -6437,7 +4633,6 @@ function PlatformAdminLoginScreen({
 
 function PlatformAdminShell({
   alert,
-  alertSecondsRemaining,
   children,
   credentialNotice,
   dismissAlert,
@@ -6446,7 +4641,6 @@ function PlatformAdminShell({
   maintenanceStatus
 }: {
   alert: string;
-  alertSecondsRemaining: number;
   children: ReactNode;
   credentialNotice: CredentialNotice | null;
   dismissAlert: () => void;
@@ -6458,7 +4652,6 @@ function PlatformAdminShell({
     <main className="classic-app platform-admin-shell">
       <FloatingAlert
         alert={alert}
-        alertSecondsRemaining={alertSecondsRemaining}
         dismissAlert={dismissAlert}
       />
       <header className="platform-admin-topbar">
@@ -6499,16 +4692,26 @@ function PlatformAdminShell({
 
 function FloatingAlert({
   alert,
-  alertSecondsRemaining,
   dismissAlert
 }: {
   alert: string;
-  alertSecondsRemaining: number;
   dismissAlert: () => void;
 }) {
   if (!alert) return null;
 
-  const isError = alert.includes("zorunlu") || alert.includes("zaten");
+  const isError = (
+    alert.includes("zorunlu") ||
+    alert.includes("zaten") ||
+    alert.includes("hata") ||
+    alert.includes("başarısız") ||
+    alert.includes("başlatılamadı") ||
+    alert.includes("alınamadı") ||
+    alert.includes("eklenemedi") ||
+    alert.includes("güncellenemedi") ||
+    alert.includes("kaydedilemedi") ||
+    alert.includes("oluşturulamadı") ||
+    alert.includes("silinemedi")
+  );
 
   return (
     <div className="floating-alert-layer" aria-live={isError ? "assertive" : "polite"}>
@@ -6517,9 +4720,6 @@ function FloatingAlert({
         role={isError ? "alert" : "status"}
       >
         <span className="alert-message">{alert}</span>
-        <span className="alert-countdown" aria-label={`${alertSecondsRemaining} saniye sonra kapanacak`}>
-          {alertSecondsRemaining} sn
-        </span>
         <button type="button" className="alert-close" onClick={dismissAlert} aria-label="Bildirimi kapat">
           <X size={14} />
         </button>
@@ -8158,184 +6358,6 @@ function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel, det
   );
 }
 
-function PhotoPicker({
-  phase = "GENERAL",
-  photos,
-  setPhotos
-}: {
-  phase?: "GENERAL" | "BEFORE" | "AFTER";
-  photos: PhotoAttachment[];
-  setPhotos: (updater: (photos: PhotoAttachment[]) => PhotoAttachment[]) => void;
-}) {
-  const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
-  const [processingMessage, setProcessingMessage] = useState("");
-  const sourceFilesRef = useRef<Map<string, File>>(new Map());
-
-  useEffect(() => {
-    const activeClientIds = new Set(photos.map((photo) => photo.clientId).filter(Boolean) as string[]);
-    for (const clientId of Array.from(sourceFilesRef.current.keys())) {
-      if (!activeClientIds.has(clientId)) {
-        sourceFilesRef.current.delete(clientId);
-      }
-    }
-  }, [photos]);
-
-  const photoKey = (photo: PhotoAttachment, index: number) => photo.clientId ?? photo.id ?? `${photo.name}-${index}`;
-
-  const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    setProcessingMessage("");
-    const hasVideo = Array.from(event.target.files ?? []).some(isVideoFile);
-    if (hasVideo) setProcessingMessage(VIDEO_PROCESSING_MESSAGE);
-    try {
-      const nextPhotos = (await filesToPhotoSelections(event.target.files)).map(({ photo, sourceFile }) => {
-        const nextPhoto = { ...photo, phase };
-        if (nextPhoto.clientId && !isVideoAttachment(nextPhoto)) {
-          sourceFilesRef.current.set(nextPhoto.clientId, sourceFile);
-        }
-        return nextPhoto;
-      });
-      if (nextPhotos.length) {
-        setPhotos((current) => [...current, ...nextPhotos].slice(0, 6));
-      }
-    } catch (error) {
-      setProcessingMessage(mediaUploadErrorMessage(error));
-      return;
-    } finally {
-      event.target.value = "";
-      if (hasVideo) {
-        window.setTimeout(() => setProcessingMessage((current) => current === VIDEO_PROCESSING_MESSAGE ? "" : current), 1500);
-      }
-    }
-  };
-
-  const handleReplaceFile = async (index: number, event: ChangeEvent<HTMLInputElement>) => {
-    setProcessingMessage("");
-    const hasVideo = Array.from(event.target.files ?? []).some(isVideoFile);
-    if (hasVideo) setProcessingMessage(VIDEO_PROCESSING_MESSAGE);
-    try {
-      const [selection] = await filesToPhotoSelections(event.target.files);
-      if (selection) {
-        const nextPhoto = { ...selection.photo, phase };
-        if (nextPhoto.clientId && !isVideoAttachment(nextPhoto)) {
-          sourceFilesRef.current.set(nextPhoto.clientId, selection.sourceFile);
-        }
-        setPhotos((current) => {
-          const previousPhoto = current[index];
-          if (previousPhoto?.clientId) sourceFilesRef.current.delete(previousPhoto.clientId);
-          return current.map((photo, itemIndex) => (itemIndex === index ? nextPhoto : photo));
-        });
-      }
-    } catch (error) {
-      setProcessingMessage(mediaUploadErrorMessage(error));
-      return;
-    } finally {
-      event.target.value = "";
-      if (hasVideo) {
-        window.setTimeout(() => setProcessingMessage((current) => current === VIDEO_PROCESSING_MESSAGE ? "" : current), 1500);
-      }
-    }
-  };
-
-  const handleHdToggle = async (photo: PhotoAttachment, checked: boolean) => {
-    const clientId = photo.clientId;
-    if (!clientId) return;
-
-    if (!checked) {
-      const standardVariant = photo.standardVariant ?? currentPhotoVariant(photo);
-      setPhotos((current) => current.map((item) => (
-        item.clientId === clientId ? applyPhotoVariant(item, standardVariant, "STANDARD") : item
-      )));
-      return;
-    }
-
-    if (photo.hdVariant) {
-      setPhotos((current) => current.map((item) => (
-        item.clientId === clientId ? applyPhotoVariant(item, photo.hdVariant!, "HD") : item
-      )));
-      return;
-    }
-
-    const sourceFile = sourceFilesRef.current.get(clientId);
-    if (!sourceFile) return;
-
-    setPhotos((current) => current.map((item) => (
-      item.clientId === clientId ? { ...item, qualityMode: "HD", hdPreparing: true } : item
-    )));
-
-    try {
-      const hdVariant = await compressImage(sourceFile, "HD");
-      setPhotos((current) => current.map((item) => {
-        if (item.clientId !== clientId) return item;
-        if (item.qualityMode !== "HD" && !item.hdPreparing) {
-          return { ...item, hdVariant, hdPreparing: false };
-        }
-        return applyPhotoVariant(item, hdVariant, "HD");
-      }));
-    } catch {
-      setPhotos((current) => current.map((item) => (
-        item.clientId === clientId ? { ...item, qualityMode: "STANDARD", hdPreparing: false } : item
-      )));
-    }
-  };
-
-  return (
-    <div className="photo-uploader">
-      <div className="photo-actions">
-        <label className="btn btn-secondary btn-sm photo-input-trigger" data-hotelops-media-picker="camera">
-          <Camera size={14} /> Kamera
-          <input className="native-photo-input" type="file" accept="image/*" capture="environment" data-hotelops-media-picker="camera" onChange={handleFiles} />
-        </label>
-        <label className="btn btn-secondary btn-sm photo-input-trigger" data-hotelops-media-picker="video">
-          <Video size={14} /> Video
-          <input className="native-photo-input" type="file" accept="video/*" capture="environment" data-hotelops-media-picker="video" onChange={handleFiles} />
-        </label>
-        <label className="btn btn-ghost btn-sm photo-input-trigger" data-hotelops-media-picker="gallery">
-          <ImageIcon size={14} /> Galeri / Dosya
-          <input className="native-photo-input" type="file" accept="image/*,video/*" multiple data-hotelops-media-picker="gallery" onChange={handleFiles} />
-        </label>
-      </div>
-      {processingMessage ? <div className="media-processing-status">{processingMessage}</div> : null}
-      {photos.length > 0 && (
-        <div className="photo-preview-grid">
-          {photos.map((photo, index) => (
-            <div className="photo-preview-item" key={photoKey(photo, index)}>
-              <div className="photo-preview">
-                <MediaPreview photo={photo} width={180} height={120} />
-              <button type="button" className="photo-open" onClick={() => setPreviewPhoto(photo)} aria-label={isVideoAttachment(photo) ? "Videoyu buyut" : "Fotoğrafı büyüt"}>
-                <Search size={12} />
-              </button>
-              <label className="photo-change">
-                {isVideoAttachment(photo) ? <Video size={12} /> : <ImageIcon size={12} />}
-                <input className="native-photo-input" type="file" accept="image/*,video/*" onChange={(event) => handleReplaceFile(index, event)} />
-              </label>
-                <button type="button" className="photo-remove" onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
-                  <X size={12} />
-                </button>
-              </div>
-              {isVideoAttachment(photo) ? (
-                <div className="photo-hd-toggle media-upload-meta">
-                  <span>Video</span>
-                  <span className="photo-quality-size">{fileSizeLabel(photo.size)}</span>
-                </div>
-              ) : <label className="photo-hd-toggle">
-                <input
-                  type="checkbox"
-                  checked={photo.qualityMode === "HD"}
-                  disabled={photo.hdPreparing}
-                  onChange={(event) => void handleHdToggle(photo, event.target.checked)}
-                />
-                <span>HD kalitede gönder</span>
-                <span className="photo-quality-size">{photo.hdPreparing ? "HD hazırlanıyor" : fileSizeLabel(photo.size)}</span>
-              </label>}
-            </div>
-          ))}
-        </div>
-      )}
-      <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
-    </div>
-  );
-}
-
 function JobFormPage({
   departmentLabelFor,
   departmentOptions,
@@ -8679,6 +6701,9 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const [beforePhotos, setBeforePhotos] = useState<PhotoAttachment[]>([]);
   const [afterPhotos, setAfterPhotos] = useState<PhotoAttachment[]>([]);
   const [previewPhoto, setPreviewPhoto] = useState<PhotoAttachment | null>(null);
+  const [noteComposerOpen, setNoteComposerOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [roomHistory, setRoomHistory] = useState<Array<{ code: string; title: string; status: JobStatus; priority: Priority; createdAt: string; assignee: string }>>([]);
   const needsMediaPayload = jobNeedsMediaPayload(job);
 
@@ -8826,21 +6851,38 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
     ));
   };
 
+  const openNoteComposer = () => {
+    setNoteDraft("");
+    setNoteComposerOpen(true);
+  };
+
+  const closeNoteComposer = () => {
+    if (noteSubmitting) return;
+    setNoteComposerOpen(false);
+    setNoteDraft("");
+  };
+
   const addComment = async () => {
-    const body = window.prompt("Not ekle");
-    if (!body?.trim()) return;
+    const body = noteDraft.trim();
+    if (!body) {
+      setAlert("Not alanı zorunludur.");
+      return;
+    }
+    setNoteSubmitting(true);
     try {
-      const created = await apiRequest<JobComment>(`/work-orders/${job.id}/comments`, {
+      const updated = await apiRequest<JobRecord>(`/work-orders/${job.id}/comments`, {
         method: "POST",
-        body: JSON.stringify({ body: body.trim() })
+        body: JSON.stringify({ body })
       });
-      setJobs((current) => current.map((item) => (
-        item.id === job.id ? { ...item, comments: [...(item.comments ?? []), created] } : item
-      )));
+      setJobs((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setNoteComposerOpen(false);
+      setNoteDraft("");
       setAlert("Not eklendi.");
       await refreshData();
     } catch {
       setAlert("Not eklenemedi.");
+    } finally {
+      setNoteSubmitting(false);
     }
   };
 
@@ -8874,7 +6916,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
           {canCompleteCurrentJob && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
           {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
           {canDelayCurrentJob && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
-          <button type="button" className="btn btn-secondary" onClick={addComment}><MessageSquareText size={15} /> Not Ekle</button>
+          <button type="button" className="btn btn-secondary" onClick={openNoteComposer}><MessageSquareText size={15} /> Not Ekle</button>
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
           <button type="button" className="btn btn-secondary" onClick={() => document.getElementById("job-detail-media")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Camera size={15} /> Medyayı Gör</button>
           {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={deleteJob}><Trash2 size={15} /> Sil</button>}
@@ -8925,7 +6967,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
                 <section className="job-detail-section">
                   <div className="job-detail-section-header">
                     <h3>Notlar ({comments.length})</h3>
-                    <button type="button" className="btn btn-outline btn-sm" onClick={addComment}>Not Ekle</button>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={openNoteComposer}>Not Ekle</button>
                   </div>
                   {comments.length ? comments.map((note) => (
                     <div className="note-item" key={note.id}>
@@ -9091,6 +7133,15 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
         </div>
       </div>
       <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
+      {noteComposerOpen && (
+        <JobNoteComposer
+          noteDraft={noteDraft}
+          noteSubmitting={noteSubmitting}
+          onChange={setNoteDraft}
+          onClose={closeNoteComposer}
+          onSubmit={addComment}
+        />
+      )}
     </>
   );
 }
@@ -12732,38 +10783,5 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
         </div>
       </div>
     </>
-  );
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="info-item">
-      <div className="info-label">{label}</div>
-      <div className="info-value">{value}</div>
-    </div>
-  );
-}
-
-function EmptyState({ description, title }: { description: string; title: string }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-icon"><ClipboardList size={24} /></div>
-      <h3>{title}</h3>
-      <p>{description}</p>
-    </div>
-  );
-}
-
-function AccessDenied({ message }: { message: string }) {
-  return (
-    <div className="card">
-      <div className="card-body">
-        <div className="empty-state">
-          <div className="empty-icon"><ShieldCheck size={24} /></div>
-          <h3>Yetki gerekli</h3>
-          <p>{message}</p>
-        </div>
-      </div>
-    </div>
   );
 }

@@ -2647,7 +2647,13 @@ function canClaimDepartmentWorkOrder(auth, workOrder) {
         !workOrder.assignedToId);
 }
 function canUpdateWorkOrderStatus(auth, workOrder, departmentId) {
-    return canManageWorkOrderStatus(auth, departmentId) || workOrder.assignedToId === auth.userId;
+    const createdByDepartmentId = workOrder.createdBy?.department?.code
+        ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+        : "";
+    return (canManageWorkOrderStatus(auth, departmentId) ||
+        workOrder.assignedToId === auth.userId ||
+        workOrder.createdById === auth.userId ||
+        createdByDepartmentId === auth.departmentId);
 }
 function serializeWorkOrderPolicy(departmentId, policy, users, auth) {
     return {
@@ -5306,7 +5312,10 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
                 hotelId: req.auth.hotelId,
                 deletedAt: null,
                 isActive: true,
-                departmentId: existing.departmentId
+                OR: [
+                    { id: req.auth.userId },
+                    { departmentId: existing.departmentId }
+                ]
             },
             select: { id: true }
         });
@@ -5412,8 +5421,10 @@ app.post("/work-orders/:code/comments", authenticate, requirePermission("work-or
         include: { author: true }
     });
     await audit(req, "Comment", comment.id, "CREATE", null, { body: comment.body }, workOrder.id);
-    io.to(departmentSocketRoom(req.auth.hotelId, departmentId)).emit("work-order.comment.created", { workOrderCode: workOrder.code, comment });
-    res.status(201).json(comment);
+    const updated = await prisma.workOrder.findUniqueOrThrow({ where: { code: workOrder.code }, include: workOrderInclude });
+    const serialized = serializeWorkOrder(updated);
+    io.to(departmentSocketRoom(req.auth.hotelId, departmentId)).emit("work-order.updated", serialized);
+    res.status(201).json(serialized);
 });
 app.post("/work-orders/:code/attachments", authenticate, requirePermission("work-orders:update"), requireModuleAccess("jobs"), requireFeatureAccess("featureBeforeAfterPhotos"), async (req, res) => {
     const payload = z.object({ photos: z.array(photoSchema).min(1).max(6) }).parse(req.body);
