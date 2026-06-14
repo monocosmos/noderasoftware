@@ -2593,6 +2593,12 @@ function jobDepartmentsForType(user: DemoUser, type: JobType, availableDepartmen
   return jobDepartmentsFor(user, availableDepartmentIds);
 }
 
+function incomingJobDepartmentsForType(user: DemoUser, type: JobType): string[] {
+  if (type === "PlannedMaintenance") return ["technical"];
+  if (type === "PlannedHousekeeping") return ["housekeeping"];
+  return [user.departmentId];
+}
+
 function requestableDepartmentsForType(user: DemoUser, type: JobType, availableDepartmentIds?: string[]): string[] {
   return jobDepartmentsForType(user, type, availableDepartmentIds).filter((departmentId) => departmentId !== user.departmentId);
 }
@@ -3464,7 +3470,7 @@ export function HotelOpsSystem() {
     const isOutgoingRequest = currentPath === "/jobs/new" && isOutgoingJobRequestView(queryParams);
     const allowedDepartments = isOutgoingRequest
       ? requestableDepartmentsForType(session, "Job", activeDepartmentOptions.map((department) => department.id))
-      : jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
+      : incomingJobDepartmentsForType(session, jobDraft.type);
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
@@ -3709,7 +3715,7 @@ export function HotelOpsSystem() {
     const isOutgoingRequest = currentPath === "/jobs/new" && isOutgoingJobRequestView(queryParams);
     const allowedDepartments = isOutgoingRequest
       ? requestableDepartmentsForType(session, "Job", activeDepartmentOptions.map((department) => department.id))
-      : jobDepartmentsForType(session, jobDraft.type, activeDepartmentOptions.map((department) => department.id));
+      : incomingJobDepartmentsForType(session, jobDraft.type);
     const departmentId = allowedDepartments.includes(jobDraft.departmentId)
       ? jobDraft.departmentId
       : allowedDepartments[0];
@@ -3720,7 +3726,15 @@ export function HotelOpsSystem() {
       const endpoint = jobDraft.initialStatus === "Completed" ? "/work-orders" : isPlannedJobType(jobDraft.type) ? "/calendar/work-orders" : "/work-orders";
       const created = await apiRequest<JobRecord>(endpoint, {
         method: "POST",
-        body: JSON.stringify({ ...jobDraft, assignee: "", assigneeId: "", status: jobDraft.initialStatus ?? "Pending", photos: photosUploadPayload(jobDraft.photos ?? []), departmentId })
+        body: JSON.stringify({
+          ...jobDraft,
+          assignee: "",
+          assigneeId: "",
+          status: jobDraft.initialStatus ?? "Pending",
+          photos: photosUploadPayload(jobDraft.photos ?? []),
+          departmentId,
+          requestMode: isOutgoingRequest ? "outgoing" : "incoming"
+        })
       });
       setJobs((current) => [created, ...current]);
       if (created.status !== "Completed") emitWorkOrderNotification(created);
@@ -5316,7 +5330,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
             {canCreateJob(session) ? (
               <>
                 {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate("/jobs/new")}>{newJobActionLabel()}</button>}
-                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?type=Job&departmentId=technical&priority=Urgent" : "/jobs/new?type=Job&priority=Urgent")}>{isHousekeepingUser ? "Tekniğe İş Aç" : "Acil İş Bildir"}</button>}
+                {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?view=outgoing&type=Job&departmentId=technical&priority=Urgent" : "/jobs/new?type=Job&priority=Urgent")}>{isHousekeepingUser ? "Tekniğe İş Aç" : "Acil İş Bildir"}</button>}
                 {session.departmentId === "technical" && canUseModule(session, "periodicMaintenance") && <button className="btn btn-warning btn-full" onClick={() => navigate("/jobs/new?type=PlannedMaintenance")}>Planlı Bakım Ekle</button>}
                 {session.departmentId === "housekeeping" && canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?type=PlannedHousekeeping")}>HK Planlı İş Ekle</button>}
               </>
@@ -6376,7 +6390,7 @@ function JobFormPage({
   const availableDepartmentIds = useMemo(() => departmentOptions.map((department) => department.id), [departmentOptions]);
   const allowedDepartments = isOutgoingRequest
     ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
-    : jobDepartmentsForType(session, jobDraft.type, availableDepartmentIds);
+    : incomingJobDepartmentsForType(session, jobDraft.type);
   const [floorPlanFloors, setFloorPlanFloors] = useState<HotelFloorRecord[]>([]);
   const [selectedFloorLevel, setSelectedFloorLevel] = useState("");
   const floorOptions = useMemo(() => sortHotelFloors(floorPlanFloors), [floorPlanFloors]);
@@ -6429,7 +6443,7 @@ function JobFormPage({
     if (type && ["Job", "Fault", "PlannedMaintenance", "PlannedHousekeeping"].includes(type)) {
       const availableTargetDepartments = isOutgoingRequest
         ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
-        : jobDepartmentsForType(session, type, availableDepartmentIds);
+        : incomingJobDepartmentsForType(session, type);
       const nextDepartmentId = availableTargetDepartments.includes(departmentId ?? "")
         ? departmentId!
         : availableTargetDepartments[0];
@@ -6489,7 +6503,7 @@ function JobFormPage({
                     onClick={() => setJobDraft((draft) => {
                       const departmentIds = isOutgoingRequest
                         ? requestableDepartmentsForType(session, "Job", availableDepartmentIds)
-                        : jobDepartmentsForType(session, type, availableDepartmentIds);
+                        : incomingJobDepartmentsForType(session, type);
                       const departmentId = departmentIds.includes(draft.departmentId)
                         ? draft.departmentId
                         : departmentIds[0];
@@ -6794,6 +6808,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
 
   const openHousekeepingJob = () => {
     const params = new URLSearchParams({
+      view: "outgoing",
       type: "Job",
       departmentId: "housekeeping",
       title: job.room ? `Oda ${job.room} HK işi` : `HK işi - ${job.title}`,

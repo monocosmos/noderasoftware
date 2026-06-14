@@ -870,12 +870,15 @@ function isPlannedWorkOrderType(type: string) {
   return type === "PlannedMaintenance" || type === "PlannedHousekeeping";
 }
 
-function canCreateWorkOrderForDepartment(auth: AuthContext, type: string, targetDepartmentId: string) {
+function canCreateWorkOrderForDepartment(auth: AuthContext, type: string, targetDepartmentId: string, requestMode: "incoming" | "outgoing" = "incoming") {
   if (type === "PlannedMaintenance") return auth.departmentId === "technical" && targetDepartmentId === "technical";
   if (type === "PlannedHousekeeping") return auth.departmentId === "housekeeping" && targetDepartmentId === "housekeeping";
-  if (type === "Fault") return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
-  if (type === "Job") {
-    return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
+  if (type === "Fault" || type === "Job") {
+    const canCreateTarget = canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
+    if (!canCreateTarget) return false;
+    return requestMode === "outgoing"
+      ? targetDepartmentId !== auth.departmentId
+      : targetDepartmentId === auth.departmentId;
   }
   return canCreateForDepartment(auth.roleId, auth.departmentId, targetDepartmentId);
 }
@@ -1837,7 +1840,8 @@ const workOrderSchema = z.object({
   description: z.string().optional().default(""),
   tags: z.string().optional().default(""),
   checklist: z.array(z.string()).optional().default([]),
-  photos: z.array(photoSchema).optional().default([])
+  photos: z.array(photoSchema).optional().default([]),
+  requestMode: z.enum(["incoming", "outgoing"]).optional().default("incoming")
 });
 
 const workOrderUpdateSchema = z.object({
@@ -5684,7 +5688,7 @@ app.get("/work-orders/:code", authenticate, requirePermission("work-orders:read"
 
 app.post("/work-orders", authenticate, requirePermission("work-orders:create"), requireModuleAccess("jobs"), async (req, res) => {
   const payload = workOrderSchema.parse(req.body);
-  if (!canCreateWorkOrderForDepartment(req.auth!, payload.type, payload.departmentId)) {
+  if (!canCreateWorkOrderForDepartment(req.auth!, payload.type, payload.departmentId, payload.requestMode)) {
     res.status(403).json({ error: "CANNOT_CREATE_FOR_DEPARTMENT" });
     return;
   }
