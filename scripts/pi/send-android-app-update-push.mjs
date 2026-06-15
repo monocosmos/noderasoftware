@@ -128,27 +128,32 @@ async function main() {
     return;
   }
 
-  const devices = await prisma.pushDevice.findMany({
-    where: {
-      platform: "ANDROID",
-      disabledAt: null,
-      user: { isActive: true, deletedAt: null }
-    },
-    include: { user: { select: { id: true, username: true } } }
-  });
+  const [activeUsers, devices] = await Promise.all([
+    prisma.user.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true, username: true }
+    }),
+    prisma.pushDevice.findMany({
+      where: {
+        platform: "ANDROID",
+        disabledAt: null,
+        user: { isActive: true, deletedAt: null }
+      },
+      include: { user: { select: { id: true, username: true } } }
+    })
+  ]);
 
   const staleDevices = devices.filter((device) => {
     const appBuild = extractBuild(device.appVersion);
     return appBuild === null || appBuild < latestCode;
   });
 
-  if (!staleDevices.length) {
-    if (devices.length) writeLastSentEventKey(eventKey);
-    console.log(`android-update-push-skip no-stale-devices latestCode=${latestCode} activeDevices=${devices.length} artifact=${artifactKey.slice(0, 12)}`);
+  if (!activeUsers.length) {
+    console.log(`android-update-push-skip no-active-users latestCode=${latestCode} activeDevices=${devices.length} artifact=${artifactKey.slice(0, 12)}`);
     return;
   }
 
-  const userIds = Array.from(new Set(staleDevices.map((device) => device.userId)));
+  const userIds = activeUsers.map((user) => user.id);
   const channelSuffix = apkArtifact?.sha256 ? `_${apkArtifact.sha256.slice(0, 12).toUpperCase()}` : "";
   const channel = `APP_UPDATE_${latestCode}${channelSuffix}`;
   const existingNotifications = await prisma.notification.findMany({
@@ -156,30 +161,42 @@ async function main() {
     orderBy: { createdAt: "desc" }
   });
   const existingUserIds = new Set(existingNotifications.map((notification) => notification.userId));
+  const notificationUserIds = force
+    ? userIds
+    : userIds.filter((userId) => !existingUserIds.has(userId));
   const targetDevices = force
     ? staleDevices
     : staleDevices.filter((device) => !existingUserIds.has(device.userId));
   const targetUserIds = Array.from(new Set(targetDevices.map((device) => device.userId)));
 
-  if (!targetDevices.length) {
+  if (dryRun) {
+    console.log(`android-update-push-dry-run activeUsers=${activeUsers.length} missingNotifications=${notificationUserIds.length} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} latestCode=${latestCode} artifact=${artifactKey.slice(0, 12)}`);
+    return;
+  }
+
+  if (!notificationUserIds.length && !targetDevices.length) {
     writeLastSentEventKey(eventKey);
-    console.log(`android-update-push-skip already-notified latestCode=${latestCode} staleDevices=${staleDevices.length} users=${userIds.length} artifact=${artifactKey.slice(0, 12)}`);
+    console.log(`android-update-push-skip already-notified latestCode=${latestCode} activeUsers=${activeUsers.length} staleDevices=${staleDevices.length} artifact=${artifactKey.slice(0, 12)}`);
     return;
   }
 
   const notificationsByUserId = new Map();
 
-  if (!dryRun) {
-    for (const userId of targetUserIds) {
-      const existing = await prisma.notification.findFirst({
-        where: { userId, channel, title, body },
-        orderBy: { createdAt: "desc" }
-      });
-      const notification = existing || await prisma.notification.create({
-        data: { userId, title, body, channel }
-      });
-      notificationsByUserId.set(userId, notification);
-    }
+  for (const userId of notificationUserIds) {
+    const existing = await prisma.notification.findFirst({
+      where: { userId, channel, title, body },
+      orderBy: { createdAt: "desc" }
+    });
+    const notification = existing || await prisma.notification.create({
+      data: { userId, title, body, channel }
+    });
+    notificationsByUserId.set(userId, notification);
+  }
+
+  if (!targetDevices.length) {
+    writeLastSentEventKey(eventKey);
+    console.log(`android-update-push-ok latestCode=${latestCode} activeUsers=${activeUsers.length} notifications=${notificationUserIds.length} staleDevices=${staleDevices.length} targetDevices=0 users=0 sent=0 invalid=0 artifact=${artifactKey.slice(0, 12)}`);
+    return;
   }
 
   const messaging = initializeFirebase();
@@ -216,11 +233,6 @@ async function main() {
     };
   });
 
-  if (dryRun) {
-    console.log(`android-update-push-dry-run staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} latestCode=${latestCode} artifact=${artifactKey.slice(0, 12)}`);
-    return;
-  }
-
   let successCount = 0;
   const invalidDeviceIds = [];
   const chunkSize = 500;
@@ -244,7 +256,7 @@ async function main() {
   }
 
   writeLastSentEventKey(eventKey);
-  console.log(`android-update-push-ok latestCode=${latestCode} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length} artifact=${artifactKey.slice(0, 12)}`);
+  console.log(`android-update-push-ok latestCode=${latestCode} activeUsers=${activeUsers.length} notifications=${notificationUserIds.length} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length} artifact=${artifactKey.slice(0, 12)}`);
 }
 
 main()

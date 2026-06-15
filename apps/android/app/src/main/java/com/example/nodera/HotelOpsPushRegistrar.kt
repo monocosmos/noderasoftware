@@ -46,6 +46,7 @@ object HotelOpsPushRegistrar {
                     .put("platform", "ANDROID")
                     .put("fcmToken", fcmToken)
                     .put("appVersion", HotelOpsAppVersion.NAME)
+                    .put("appBuild", HotelOpsAppVersion.UPDATE_CODE)
 
                 // Push token kaydi HTTPS API'ye yapilir; Firebase sadece cihaz
                 // tokenini verir, kullanici ve yetki bilgisi bizim backend'dedir.
