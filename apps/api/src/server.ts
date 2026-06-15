@@ -46,6 +46,8 @@ const androidSilentTransientChannel = "hotelops_silent_transient";
 const androidShiftReminderChannel = "hotelops_shift_reminder";
 const notificationChannelWorkOrderSound = "WORK_ORDER_SOUND";
 const notificationChannelWorkOrderSilent = "WORK_ORDER_SILENT";
+const notificationChannelOperationSound = "OPERATION_SOUND";
+const notificationChannelOperationSilent = "OPERATION_SILENT";
 const notificationChannelShiftStartReminder = "SHIFT_START_REMINDER";
 const shiftStartReminderRepeatMs = 5 * 60 * 1000;
 const shiftStartReminderGraceMs = Math.max(0, Number(process.env.SHIFT_START_REMINDER_GRACE_SECONDS ?? 0)) * 1000;
@@ -3284,8 +3286,66 @@ async function activeShiftUserIdSet(userIds: string[]) {
   return new Set(sessions.map((session) => session.userId));
 }
 
+async function scheduledShiftWindowUserIdSet(userIds: string[], now = new Date()) {
+  if (!userIds.length) return new Set<string>();
+  const cells = await prisma.shiftPanelCell.findMany({
+    where: {
+      userId: { in: userIds },
+      date: { in: shiftReminderCandidateDateKeys(now).map(dateKeyToShiftPanelDate) },
+      startTime: { not: "" },
+      panel: { enabled: true },
+      user: {
+        deletedAt: null,
+        isActive: true,
+        shiftTrackingEnabled: true
+      }
+    },
+    select: {
+      userId: true,
+      date: true,
+      startTime: true,
+      endTime: true
+    }
+  });
+
+  const activeUserIds = new Set<string>();
+  for (const cell of cells) {
+    const window = shiftWindowForCell(cell);
+    if (window && now >= window.start && now <= window.end) {
+      activeUserIds.add(cell.userId);
+    }
+  }
+  return activeUserIds;
+}
+
+async function notificationSoundUserIdSet(userIds: string[]) {
+  const uniqueUserIds = Array.from(new Set(userIds));
+  if (!uniqueUserIds.length) return new Set<string>();
+  const [startedShiftUserIds, scheduledShiftUserIds] = await Promise.all([
+    activeShiftUserIdSet(uniqueUserIds),
+    scheduledShiftWindowUserIdSet(uniqueUserIds)
+  ]);
+  return new Set([...startedShiftUserIds, ...scheduledShiftUserIds]);
+}
+
 function workOrderDetailPushPath(workOrderCode: string) {
   return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
+}
+
+async function shiftAwareNotificationPayloads(
+  users: Array<Pick<User, "id">>,
+  notificationText: { title: string; body: string },
+  channels: { sound: string; silent: string },
+  pushFields: NotificationPushFields = {}
+) {
+  const soundUserIds = await notificationSoundUserIdSet(users.map((user) => user.id));
+  return users.map((user) => ({
+    userId: user.id,
+    title: notificationText.title,
+    body: notificationText.body,
+    channel: soundUserIds.has(user.id) ? channels.sound : channels.silent,
+    ...pushFields
+  }));
 }
 
 async function workOrderNotificationPayloads(
@@ -3293,16 +3353,14 @@ async function workOrderNotificationPayloads(
   notificationText: { title: string; body: string },
   workOrderCode: string
 ) {
-  const activeShiftUserIds = await activeShiftUserIdSet(users.map((user) => user.id));
-  return users.map((user) => ({
-    userId: user.id,
-    title: notificationText.title,
-    body: notificationText.body,
-    channel: activeShiftUserIds.has(user.id) ? notificationChannelWorkOrderSound : notificationChannelWorkOrderSilent,
+  return shiftAwareNotificationPayloads(users, notificationText, {
+    sound: notificationChannelWorkOrderSound,
+    silent: notificationChannelWorkOrderSilent
+  }, {
     pushType: "work_order",
     pushPath: workOrderDetailPushPath(workOrderCode),
     pushTag: `work-order-${workOrderCode}`
-  }));
+  });
 }
 
 function localDateKey(date: Date) {
@@ -6285,13 +6343,24 @@ app.post("/management-requests", authenticate, requireModuleAccess("managementRe
     },
     include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } }
   });
-  await createNotificationsAndPush([recipient, relatedUser]
-    .filter((user): user is NonNullable<typeof relatedUser> => Boolean(user))
-    .map((user) => ({
-      userId: user.id,
+  const notificationUsers = [recipient, relatedUser]
+    .filter((user): user is NonNullable<typeof relatedUser> => Boolean(user));
+  await createNotificationsAndPush(await shiftAwareNotificationPayloads(
+    notificationUsers,
+    {
       title: "Yeni talep",
       body: `${created.title} - ${created.createdBy.fullName}`
-    })));
+    },
+    {
+      sound: notificationChannelOperationSound,
+      silent: notificationChannelOperationSilent
+    },
+    {
+      pushType: "management_request",
+      pushPath: "/modules/requests",
+      pushTag: `management-request-${created.id}`
+    }
+  ));
   await audit(req, "ManagementRequest", created.id, "CREATE", null, serializeManagementRequest(created));
   res.status(201).json(serializeManagementRequest(created));
 }));
