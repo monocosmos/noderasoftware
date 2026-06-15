@@ -2804,46 +2804,11 @@ async function activeShiftUserIdSet(userIds) {
     });
     return new Set(sessions.map((session) => session.userId));
 }
-async function scheduledShiftWindowUserIdSet(userIds, now = new Date()) {
-    if (!userIds.length)
-        return new Set();
-    const cells = await prisma.shiftPanelCell.findMany({
-        where: {
-            userId: { in: userIds },
-            date: { in: shiftReminderCandidateDateKeys(now).map(dateKeyToShiftPanelDate) },
-            startTime: { not: "" },
-            panel: { enabled: true },
-            user: {
-                deletedAt: null,
-                isActive: true,
-                shiftTrackingEnabled: true
-            }
-        },
-        select: {
-            userId: true,
-            date: true,
-            startTime: true,
-            endTime: true
-        }
-    });
-    const activeUserIds = new Set();
-    for (const cell of cells) {
-        const window = shiftWindowForCell(cell);
-        if (window && now >= window.start && now <= window.end) {
-            activeUserIds.add(cell.userId);
-        }
-    }
-    return activeUserIds;
-}
 async function notificationSoundUserIdSet(userIds) {
     const uniqueUserIds = Array.from(new Set(userIds));
     if (!uniqueUserIds.length)
         return new Set();
-    const [startedShiftUserIds, scheduledShiftUserIds] = await Promise.all([
-        activeShiftUserIdSet(uniqueUserIds),
-        scheduledShiftWindowUserIdSet(uniqueUserIds)
-    ]);
-    return new Set([...startedShiftUserIds, ...scheduledShiftUserIds]);
+    return activeShiftUserIdSet(uniqueUserIds);
 }
 function workOrderDetailPushPath(workOrderCode) {
     return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
@@ -2919,6 +2884,9 @@ function shiftStartReminderKey(cell, window) {
 function shiftWindowNeedsReminder(window, now) {
     return now.getTime() >= window.start.getTime() + shiftStartReminderGraceMs && now <= window.end;
 }
+function shiftWindowContains(window, now) {
+    return now >= window.start && now <= window.end;
+}
 async function createShiftStartReminder(cell, window, now) {
     const reminderKey = shiftStartReminderKey(cell, window);
     const title = "Vardiya girişini başlat";
@@ -2980,6 +2948,14 @@ async function cancelShiftStartReminderPush(userId) {
         createdAt: new Date().toISOString()
     });
 }
+async function cancelShiftStatusPush(userId) {
+    await sendAndroidDataPushToUser(userId, {
+        type: "shift_status_cancel",
+        channel: "SHIFT_STATUS",
+        persistent: "false",
+        createdAt: new Date().toISOString()
+    });
+}
 async function sendCurrentShiftStartReminder(userId, force = false) {
     const now = new Date();
     const activeShift = await prisma.shiftSession.findFirst({
@@ -3015,6 +2991,28 @@ async function sendCurrentShiftStartReminder(userId, force = false) {
     }
     return false;
 }
+async function closeOpenShiftsOutsideScheduledWindow(userIds, now) {
+    const uniqueUserIds = Array.from(new Set(userIds));
+    if (!uniqueUserIds.length)
+        return [];
+    const activeShifts = await prisma.shiftSession.findMany({
+        where: {
+            userId: { in: uniqueUserIds },
+            endedAt: null
+        },
+        select: { id: true, userId: true }
+    });
+    if (!activeShifts.length)
+        return [];
+    await prisma.shiftSession.updateMany({
+        where: { id: { in: activeShifts.map((shift) => shift.id) } },
+        data: {
+            endedAt: now,
+            endIpAddress: "system:scheduled-shift-ended"
+        }
+    });
+    return Array.from(new Set(activeShifts.map((shift) => shift.userId)));
+}
 function scheduleShiftStartReminderAfterShiftEnd(userId) {
     setTimeout(() => {
         void sendCurrentShiftStartReminder(userId, true).catch((error) => {
@@ -3040,17 +3038,32 @@ async function processShiftStartReminders() {
             panel: { include: { department: true } }
         }
     });
-    if (!cells.length)
-        return;
+    const activeShifts = await prisma.shiftSession.findMany({
+        where: {
+            endedAt: null,
+            user: {
+                deletedAt: null,
+                isActive: true,
+                shiftTrackingEnabled: true
+            }
+        },
+        select: { userId: true }
+    });
     const userIds = Array.from(new Set(cells.map((cell) => cell.userId)));
-    const activeShiftUserIds = await activeShiftUserIdSet(userIds);
+    const activeShiftUserIds = new Set(activeShifts.map((shift) => shift.userId));
+    if (!cells.length && !activeShiftUserIds.size)
+        return;
     const validReminderKeys = new Set();
+    const currentWindowUserIds = new Set();
     for (const cell of cells) {
         const window = shiftWindowForCell(cell);
         if (!window)
             continue;
         const reminderKey = shiftStartReminderKey(cell, window);
         validReminderKeys.add(reminderKey);
+        if (shiftWindowContains(window, now)) {
+            currentWindowUserIds.add(cell.userId);
+        }
         if (!shiftWindowNeedsReminder(window, now)) {
             shiftStartReminderLastSentAt.delete(reminderKey);
             continue;
@@ -3068,6 +3081,23 @@ async function processShiftStartReminders() {
         if (now.getTime() - lastSentAt < shiftStartReminderRepeatMs)
             continue;
         await createShiftStartReminder(cell, window, now);
+    }
+    const outsideWindowActiveUserIds = Array.from(activeShiftUserIds)
+        .filter((userId) => !currentWindowUserIds.has(userId));
+    const closedShiftUserIds = await closeOpenShiftsOutsideScheduledWindow(outsideWindowActiveUserIds, now);
+    for (const userId of closedShiftUserIds) {
+        await Promise.all([
+            clearOpenShiftStartReminders(userId),
+            cancelShiftStartReminderPush(userId),
+            cancelShiftStatusPush(userId)
+        ]);
+    }
+    const reminderCancelUserIds = userIds.filter((userId) => !currentWindowUserIds.has(userId));
+    for (const userId of reminderCancelUserIds) {
+        const clearedCount = await clearOpenShiftStartReminders(userId);
+        if (clearedCount > 0) {
+            await cancelShiftStartReminderPush(userId);
+        }
     }
     const staleCutoff = now.getTime() - 36 * 60 * 60 * 1000;
     for (const [key, sentAt] of shiftStartReminderLastSentAt) {

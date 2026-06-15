@@ -47,6 +47,11 @@ class HotelOpsFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        if (messageType.equals("shift_status_cancel", ignoreCase = true)) {
+            HotelOpsShiftStatus.end(applicationContext)
+            return
+        }
+
         if (
             messageType.equals("shift_start_reminder", ignoreCase = true) ||
             channel.equals("SHIFT_START_REMINDER", ignoreCase = true) ||
