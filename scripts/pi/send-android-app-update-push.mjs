@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import admin from "firebase-admin";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
+import "../../apps/api/dist/load-env.js";
 import { prisma } from "../../apps/api/dist/prisma.js";
 
 const force = process.argv.includes("--force");
@@ -27,22 +29,48 @@ const statePath = process.env.HOTELOPS_ANDROID_UPDATE_PUSH_STATE
     ? "/opt/noderasoftware/.state/android-update-push-code"
     : ".state/android-update-push-code");
 
+const defaultApkFileName = "HotelOps-Android-V1.apk";
+const apkCandidates = [
+  process.env.HOTELOPS_ANDROID_APK_PATH,
+  "/opt/noderasoftware/apps/web/public/downloads/HotelOps-Android-V1.apk",
+  "/opt/noderasoftware/apps/web/out/downloads/HotelOps-Android-V1.apk",
+  "apps/web/public/downloads/HotelOps-Android-V1.apk",
+  "apps/web/out/downloads/HotelOps-Android-V1.apk"
+].filter(Boolean);
+
 function readFirstJson(candidates) {
   const path = candidates.find((candidate) => candidate && existsSync(candidate));
   if (!path) return null;
   return { path, json: JSON.parse(readFileSync(path, "utf8")) };
 }
 
-function readLastSentCode() {
-  if (force || !existsSync(statePath)) return 0;
-  const value = Number(readFileSync(statePath, "utf8").trim());
-  return Number.isFinite(value) ? value : 0;
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function writeLastSentCode(code) {
+function resolveApkArtifact(downloadUrl) {
+  const fileName = basename(String(downloadUrl || defaultApkFileName)) || defaultApkFileName;
+  const candidates = [
+    ...apkCandidates,
+    `/opt/noderasoftware/apps/web/public/downloads/${fileName}`,
+    `/opt/noderasoftware/apps/web/out/downloads/${fileName}`,
+    `apps/web/public/downloads/${fileName}`,
+    `apps/web/out/downloads/${fileName}`
+  ];
+  const path = candidates.find((candidate) => candidate && existsSync(candidate));
+  if (!path) return null;
+  return { path, sha256: sha256File(path) };
+}
+
+function readLastSentEventKey() {
+  if (force || !existsSync(statePath)) return "";
+  return readFileSync(statePath, "utf8").trim();
+}
+
+function writeLastSentEventKey(eventKey) {
   if (dryRun) return;
   mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, `${code}\n`, "utf8");
+  writeFileSync(statePath, `${eventKey}\n`, "utf8");
 }
 
 function extractBuild(appVersion) {
@@ -90,6 +118,15 @@ async function main() {
   const title = String(platform?.title || "Android uygulamasi guncel degil");
   const body = String(platform?.message || `HotelOps Android ${latestVersion} surumu hazir.`);
   const downloadUrl = String(platform?.downloadUrl || "/downloads/HotelOps-Android-V1.apk");
+  const apkArtifact = resolveApkArtifact(downloadUrl);
+  const artifactKey = apkArtifact?.sha256 || `manifest-${latestCode}-${latestVersion}`;
+  const eventKey = `${latestCode}:${artifactKey}`;
+  const lastSentEventKey = readLastSentEventKey();
+
+  if (!force && lastSentEventKey === eventKey) {
+    console.log(`android-update-push-skip event-already-sent latestCode=${latestCode} artifact=${artifactKey.slice(0, 12)}`);
+    return;
+  }
 
   const devices = await prisma.pushDevice.findMany({
     where: {
@@ -106,13 +143,14 @@ async function main() {
   });
 
   if (!staleDevices.length) {
-    if (devices.length) writeLastSentCode(latestCode);
-    console.log(`android-update-push-skip no-stale-devices latestCode=${latestCode} activeDevices=${devices.length}`);
+    if (devices.length) writeLastSentEventKey(eventKey);
+    console.log(`android-update-push-skip no-stale-devices latestCode=${latestCode} activeDevices=${devices.length} artifact=${artifactKey.slice(0, 12)}`);
     return;
   }
 
   const userIds = Array.from(new Set(staleDevices.map((device) => device.userId)));
-  const channel = `APP_UPDATE_${latestCode}`;
+  const channelSuffix = apkArtifact?.sha256 ? `_${apkArtifact.sha256.slice(0, 12).toUpperCase()}` : "";
+  const channel = `APP_UPDATE_${latestCode}${channelSuffix}`;
   const existingNotifications = await prisma.notification.findMany({
     where: { userId: { in: userIds }, channel },
     orderBy: { createdAt: "desc" }
@@ -124,8 +162,8 @@ async function main() {
   const targetUserIds = Array.from(new Set(targetDevices.map((device) => device.userId)));
 
   if (!targetDevices.length) {
-    writeLastSentCode(latestCode);
-    console.log(`android-update-push-skip already-notified latestCode=${latestCode} staleDevices=${staleDevices.length} users=${userIds.length}`);
+    writeLastSentEventKey(eventKey);
+    console.log(`android-update-push-skip already-notified latestCode=${latestCode} staleDevices=${staleDevices.length} users=${userIds.length} artifact=${artifactKey.slice(0, 12)}`);
     return;
   }
 
@@ -165,7 +203,8 @@ async function main() {
         body,
         latestVersion,
         latestCode: String(latestCode),
-        downloadUrl
+        downloadUrl,
+        artifactSha256: apkArtifact?.sha256 || ""
       },
       android: {
         priority: "high",
@@ -178,7 +217,7 @@ async function main() {
   });
 
   if (dryRun) {
-    console.log(`android-update-push-dry-run staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} latestCode=${latestCode}`);
+    console.log(`android-update-push-dry-run staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} latestCode=${latestCode} artifact=${artifactKey.slice(0, 12)}`);
     return;
   }
 
@@ -204,8 +243,8 @@ async function main() {
     });
   }
 
-  writeLastSentCode(latestCode);
-  console.log(`android-update-push-ok latestCode=${latestCode} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length}`);
+  writeLastSentEventKey(eventKey);
+  console.log(`android-update-push-ok latestCode=${latestCode} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length} artifact=${artifactKey.slice(0, 12)}`);
 }
 
 main()

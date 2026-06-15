@@ -174,4 +174,8 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 echo
+
+echo "==> Android update event bildirimi"
+runuser -u "${APP_USER}" -- node "${APP_DIR}/scripts/pi/send-android-app-update-push.mjs"
+
 echo "Deploy tamamlandi: ${BRANCH} -> ${APP_DIR}"
