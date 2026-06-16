@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import org.json.JSONObject
 
 class HotelOpsAndroidBridge(context: Context) {
     private val appContext = context.applicationContext
@@ -28,6 +29,20 @@ class HotelOpsAndroidBridge(context: Context) {
 
     @JavascriptInterface
     fun versionCode(): Int = HotelOpsAppVersion.UPDATE_CODE
+
+    @JavascriptInterface
+    fun pushRegisterStatus(): String {
+        val lastAttemptAt = prefs.getLong(HotelOpsPrefs.PUSH_REGISTER_LAST_ATTEMPT_AT, 0L)
+        val lastOkAt = prefs.getLong(HotelOpsPrefs.PUSH_REGISTER_LAST_OK_AT, 0L)
+        val status = prefs.getInt(HotelOpsPrefs.PUSH_REGISTER_LAST_STATUS, 0)
+        val error = prefs.getString(HotelOpsPrefs.PUSH_REGISTER_LAST_ERROR, "").orEmpty()
+        return JSONObject()
+            .put("lastAttemptAt", lastAttemptAt)
+            .put("lastOkAt", lastOkAt)
+            .put("status", status)
+            .put("error", error)
+            .toString()
+    }
 
     @JavascriptInterface
     fun getAuthToken(): String = prefs.getString(HotelOpsPrefs.AUTH_TOKEN, "").orEmpty()

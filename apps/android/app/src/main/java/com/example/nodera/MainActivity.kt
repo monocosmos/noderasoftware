@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
         HotelOpsNotifier.ensureChannels(this)
         HotelOpsShiftStatus.restore(this)
         HotelOpsPushRegistrar.sync(this)
+        connectionHandler.postDelayed({ HotelOpsPushRegistrar.sync(this) }, 5000)
 
         root = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -341,6 +342,8 @@ class MainActivity : ComponentActivity() {
                         showingConnectionError = false
                     }
                     injectHotelOpsShellBridge()
+                    HotelOpsPushRegistrar.sync(applicationContext)
+                    view?.postDelayed({ HotelOpsPushRegistrar.sync(applicationContext) }, 5000)
                 }
 
                 override fun onReceivedError(
@@ -741,6 +744,12 @@ class MainActivity : ComponentActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == notificationPermissionRequest) {
+            HotelOpsNotifier.ensureChannels(this)
+            HotelOpsPushRegistrar.sync(this)
+            return
+        }
 
         if (requestCode != cameraPermissionRequest) return
 

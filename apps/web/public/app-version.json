@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-06-16T01:46:13+03:00",
+  "updatedAt": "2026-06-16T07:58:00+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
@@ -12,17 +12,17 @@
       "message": "HotelOps Windows uygulamasinin yeni surumu hazir."
     },
     "android": {
-      "latestVersion": "1.0.16",
-      "latestCode": 2026061601,
-      "minimumCode": 2026061601,
+      "latestVersion": "1.0.17",
+      "latestCode": 2026061602,
+      "minimumCode": 2026061602,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android uygulamasi guncel degil",
       "message": "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
     },
     "androidDirect": {
-      "latestVersion": "1.0.16",
-      "latestCode": 2026061601,
-      "minimumCode": 2026061601,
+      "latestVersion": "1.0.17",
+      "latestCode": 2026061602,
+      "minimumCode": 2026061602,
       "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
       "title": "Android APK uygulamasi guncel degil",
       "message": "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
