@@ -18,8 +18,8 @@ android {
         minSdk = 23
         targetSdk = 36
         // versionName kullaniciya gorunen surumdur; versionCode teknik guncelleme sirasidir.
-        versionCode = 2026061606
-        versionName = "1.0.21"
+        versionCode = 2026061607
+        versionName = "1.0.22"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

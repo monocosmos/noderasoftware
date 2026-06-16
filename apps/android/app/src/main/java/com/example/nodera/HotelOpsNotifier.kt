@@ -11,8 +11,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 
 object HotelOpsNotifier {
-    const val CHANNEL_SOUND_TRANSIENT = "hotelops_sound_transient"
-    const val CHANNEL_SILENT_TRANSIENT = "hotelops_silent_transient"
+    const val CHANNEL_SOUND_TRANSIENT = "hotelops_sound_transient_v2"
+    const val CHANNEL_SILENT_TRANSIENT = "hotelops_silent_transient_v2"
     const val CHANNEL_SHIFT_STATUS = "hotelops_shift_status"
     const val CHANNEL_SHIFT_REMINDER = "hotelops_shift_reminder"
     const val CHANNEL_WORK_ORDERS = CHANNEL_SOUND_TRANSIENT
@@ -82,7 +82,14 @@ object HotelOpsNotifier {
             listOf(soundTransientChannel, silentTransientChannel, shiftStatusChannel, shiftReminderChannel)
         )
 
-        listOf("hotelops_work_orders", "hotelops_reminders", "hotelops_app_updates", "hotelops_service")
+        listOf(
+            "hotelops_sound_transient",
+            "hotelops_silent_transient",
+            "hotelops_work_orders",
+            "hotelops_reminders",
+            "hotelops_app_updates",
+            "hotelops_service"
+        )
             .forEach { notificationManager.deleteNotificationChannel(it) }
     }
 

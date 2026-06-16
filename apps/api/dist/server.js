@@ -31,8 +31,8 @@ const firebaseServiceAccountCandidates = [
 ].filter((value) => Boolean(value));
 let firebaseMessagingUnavailableLogged = false;
 let firebaseMessagingInstance;
-const androidSoundTransientChannel = "hotelops_sound_transient";
-const androidSilentTransientChannel = "hotelops_silent_transient";
+const androidSoundTransientChannel = "hotelops_sound_transient_v2";
+const androidSilentTransientChannel = "hotelops_silent_transient_v2";
 const androidShiftReminderChannel = "hotelops_shift_reminder";
 const notificationChannelWorkOrderSound = "WORK_ORDER_SOUND";
 const notificationChannelWorkOrderSilent = "WORK_ORDER_SILENT";
@@ -2812,7 +2812,7 @@ async function activeShiftUserIdSet(userIds) {
     });
     return new Set(sessions.map((session) => session.userId));
 }
-async function faultSoundPreferenceUserIdSet(userIds) {
+async function outsideShiftSoundPreferenceUserIdSet(userIds) {
     if (!userIds.length)
         return new Set();
     const users = await prisma.user.findMany({
@@ -2828,17 +2828,14 @@ async function notificationSoundUserIdSet(userIds, options = {}) {
     if (!uniqueUserIds.length)
         return new Set();
     const soundUserIds = await activeShiftUserIdSet(uniqueUserIds);
-    if (options.soundFaultsOutsideShift) {
-        const preferenceUserIds = await faultSoundPreferenceUserIdSet(uniqueUserIds);
+    if (options.useOutsideShiftSoundPreference) {
+        const preferenceUserIds = await outsideShiftSoundPreferenceUserIdSet(uniqueUserIds);
         preferenceUserIds.forEach((userId) => soundUserIds.add(userId));
     }
     return soundUserIds;
 }
 function workOrderDetailPushPath(workOrderCode) {
     return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
-}
-function isFaultWorkOrderType(type) {
-    return String(type ?? "").trim().toUpperCase() === "FAULT";
 }
 async function shiftAwareNotificationPayloads(users, notificationText, channels, pushFields = {}, soundOptions = {}) {
     const soundUserIds = await notificationSoundUserIdSet(users.map((user) => user.id), soundOptions);
@@ -2852,7 +2849,6 @@ async function shiftAwareNotificationPayloads(users, notificationText, channels,
 }
 async function workOrderNotificationPayloads(users, notificationText, workOrder) {
     const workOrderCode = typeof workOrder === "string" ? workOrder : workOrder.code;
-    const soundFaultsOutsideShift = typeof workOrder === "string" ? false : isFaultWorkOrderType(workOrder.type);
     return shiftAwareNotificationPayloads(users, notificationText, {
         sound: notificationChannelWorkOrderSound,
         silent: notificationChannelWorkOrderSilent
@@ -2861,7 +2857,7 @@ async function workOrderNotificationPayloads(users, notificationText, workOrder)
         pushPath: workOrderDetailPushPath(workOrderCode),
         pushTag: `work-order-${workOrderCode}`
     }, {
-        soundFaultsOutsideShift
+        useOutsideShiftSoundPreference: true
     });
 }
 function localDateKey(date) {
@@ -5782,6 +5778,8 @@ app.post("/management-requests", authenticate, requireModuleAccess("managementRe
         pushType: "management_request",
         pushPath: "/modules/requests",
         pushTag: `management-request-${created.id}`
+    }, {
+        useOutsideShiftSoundPreference: true
     }));
     await audit(req, "ManagementRequest", created.id, "CREATE", null, serializeManagementRequest(created));
     res.status(201).json(serializeManagementRequest(created));

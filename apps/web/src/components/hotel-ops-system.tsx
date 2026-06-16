@@ -10611,7 +10611,7 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
     void loadSettings(false);
   }, [isAndroid, loadSettings]);
 
-  async function updateFaultSoundPreference(value: boolean) {
+  async function updateOutsideShiftSoundPreference(value: boolean) {
     if (savingPreference) return;
     const previous = notificationPreferences;
     setNotificationPreferences({ soundFaultsOutsideShift: value });
@@ -10709,14 +10709,14 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
               type="checkbox"
               checked={notificationPreferences.soundFaultsOutsideShift}
               disabled={savingPreference}
-              onChange={(event) => void updateFaultSoundPreference(event.target.checked)}
+              onChange={(event) => void updateOutsideShiftSoundPreference(event.target.checked)}
             />
-            <span>vardiya dışındayken arıza bildirimlerini sesli gönder</span>
+            <span>vardiya dışındayken iş bildirimlerini sesli gönder</span>
           </label>
           <div className="ui-muted">
             {notificationPreferences.soundFaultsOutsideShift
-              ? "Arıza bildirimleri vardiya dışında da sesli."
-              : "Arıza bildirimleri vardiya dışında sessiz."}
+              ? "İş bildirimleri vardiya dışında da sesli."
+              : "İş bildirimleri vardiya dışında sessiz."}
           </div>
         </div>
       </div>

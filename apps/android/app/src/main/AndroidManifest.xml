@@ -20,7 +20,7 @@
         android:theme="@style/Theme.Nodera">
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="hotelops_sound_transient" />
+            android:value="hotelops_sound_transient_v2" />
 
         <service
             android:name=".HotelOpsFirebaseMessagingService"
