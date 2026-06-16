@@ -50,6 +50,20 @@ class HotelOpsAndroidBridge(context: Context) {
     fun getAuthToken(): String = prefs.getString(HotelOpsPrefs.AUTH_TOKEN, "").orEmpty()
 
     @JavascriptInterface
+    fun syncPushRegistration(token: String?): String {
+        val cleanToken = token?.trim().orEmpty()
+        if (cleanToken.isNotBlank()) {
+            prefs.edit()
+                .putString(HotelOpsPrefs.AUTH_TOKEN, cleanToken)
+                .apply()
+        }
+
+        HotelOpsNotifier.ensureChannels(appContext)
+        HotelOpsPushRegistrar.sync(appContext)
+        return pushRegisterStatus()
+    }
+
+    @JavascriptInterface
     fun setAuthToken(token: String?) {
         // Login sonrasi web tokeni kalici Android prefs'e yazilir. FCM kaydi bu
         // tokenla backend'e baglandigi icin oturum uygulama yeniden acilinca da korunur.

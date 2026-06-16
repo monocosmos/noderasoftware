@@ -829,7 +829,9 @@ class MainActivity : ComponentActivity() {
                     token = window.HotelOpsAndroidShell.getAuthToken() || "";
                     if (token) localStorage.setItem("hotelops.api.token", token);
                   }
-                  if (window.HotelOpsAndroidShell && window.HotelOpsAndroidShell.setAuthToken) {
+                  if (token && window.HotelOpsAndroidShell && window.HotelOpsAndroidShell.syncPushRegistration) {
+                    window.HotelOpsAndroidShell.syncPushRegistration(token);
+                  } else if (window.HotelOpsAndroidShell && window.HotelOpsAndroidShell.setAuthToken) {
                     window.HotelOpsAndroidShell.setAuthToken(token);
                   }
                 } catch (error) {}

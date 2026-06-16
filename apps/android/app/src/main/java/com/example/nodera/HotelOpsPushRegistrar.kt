@@ -23,6 +23,11 @@ object HotelOpsPushRegistrar {
             return
         }
 
+        val cachedFcmToken = prefs.getString(HotelOpsPrefs.FCM_TOKEN, "").orEmpty()
+        if (cachedFcmToken.isNotBlank()) {
+            register(appContext, authToken, cachedFcmToken)
+        }
+
         try {
             FirebaseApp.initializeApp(appContext)
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->

@@ -783,9 +783,30 @@ function clearNativeAuthToken() {
   }
 }
 
+function syncNativeAuthToken(token: string) {
+  if (typeof window === "undefined" || !token.trim()) return false;
+
+  try {
+    const androidShell = (window as HotelOpsShellWindow).HotelOpsAndroidShell;
+    if (androidShell?.syncPushRegistration) {
+      androidShell.syncPushRegistration(token);
+      return true;
+    }
+    if (androidShell?.setAuthToken) {
+      androidShell.setAuthToken(token);
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 function storeApiToken(token: string) {
   localStorage.setItem(STORAGE_TOKEN, token);
   sessionStorage.removeItem(SESSION_TOKEN);
+  syncNativeAuthToken(token);
   window.dispatchEvent(new CustomEvent("hotelops:auth-token-changed"));
 }
 
@@ -3129,6 +3150,28 @@ export function HotelOpsSystem() {
       retryIds.forEach((id) => window.clearTimeout(id));
     };
   }, [refreshLoginCacheState]);
+
+  useEffect(() => {
+    const syncTokenToAndroid = () => {
+      syncNativeAuthToken(storedApiToken());
+    };
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") syncTokenToAndroid();
+    };
+
+    syncTokenToAndroid();
+    window.addEventListener("hotelops:native-shell-ready", syncTokenToAndroid);
+    window.addEventListener("focus", syncTokenToAndroid);
+    window.addEventListener("pageshow", syncTokenToAndroid);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+
+    return () => {
+      window.removeEventListener("hotelops:native-shell-ready", syncTokenToAndroid);
+      window.removeEventListener("focus", syncTokenToAndroid);
+      window.removeEventListener("pageshow", syncTokenToAndroid);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -10543,6 +10586,7 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
       : "Bekliyor";
 
   const loadSettings = useCallback(async (showError = true) => {
+    syncNativeAuthToken(storedApiToken());
     setNativeStatus(readNativePushRegisterStatus());
     setLoadingSettings(true);
     try {
@@ -10593,6 +10637,7 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
   async function testNotificationService() {
     if (testingNotification) return;
     setTestingNotification(true);
+    const registrationRequested = syncNativeAuthToken(storedApiToken());
     let nativeOk = false;
     try {
       const shellWindow = window as HotelOpsShellWindow;
@@ -10606,6 +10651,10 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
     }
 
     try {
+      if (registrationRequested) {
+        await sleep(1800);
+        setNativeStatus(readNativePushRegisterStatus());
+      }
       const response = await apiRequest<{ ok: boolean; activeDeviceCount: number; notification: NotificationRecord }>("/app-settings/test-notification", {
         method: "POST"
       });

@@ -74,6 +74,7 @@ export type HotelOpsAndroidBridge = {
   buildNumber?: () => number;
   channel?: () => string;
   getAuthToken?: () => string;
+  syncPushRegistration?: (token?: string) => string;
   setAuthToken?: (token?: string) => void;
   clearAuthToken?: () => void;
   pushRegisterStatus?: () => string;
