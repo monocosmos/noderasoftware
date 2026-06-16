@@ -6690,7 +6690,7 @@ function JobFormPage({
                   >
                     {floorOptions.map((floor) => (
                       <option key={floor.level} value={String(floor.level)}>
-                        {floor.level > 0 ? `+${floor.level}` : floor.level === 0 ? "0 / L" : floor.level} - {floor.name}
+                        {floor.name?.trim() || defaultFloorName(floor.level)}
                       </option>
                     ))}
                   </select>
