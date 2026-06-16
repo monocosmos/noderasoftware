@@ -1989,12 +1989,14 @@ const operationDocumentSchema = z.object({
   document: operationDocumentFileSchema
 });
 
+const maxAndroidVersionCode = 2_147_483_647;
+
 const pushDeviceSchema = z.object({
   platform: z.enum(["ANDROID", "IOS", "WINDOWS", "WEB"]).optional().default("ANDROID"),
   fcmToken: z.string().trim().min(20).max(4096),
   deviceId: z.string().trim().max(160).optional().default(""),
   appVersion: z.string().trim().max(80).optional().default(""),
-  appBuild: z.number().int().min(0).max(999_999_999).optional()
+  appBuild: z.number().int().min(0).max(maxAndroidVersionCode).optional()
 });
 
 function serializeCalendarEvent(event: Prisma.CalendarEventGetPayload<{ include: { department: true } }>) {
