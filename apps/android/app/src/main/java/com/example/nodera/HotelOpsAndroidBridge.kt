@@ -4,12 +4,14 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.app.NotificationManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
 
 class HotelOpsAndroidBridge(context: Context) {
@@ -101,6 +103,32 @@ class HotelOpsAndroidBridge(context: Context) {
             title?.takeIf { it.isNotBlank() } ?: "HotelOps guncellemesi var",
             body?.takeIf { it.isNotBlank() } ?: "Android uygulamasinin yeni surumu hazir."
         )
+    }
+
+    @JavascriptInterface
+    fun notifyTest(title: String?, body: String?): Boolean {
+        HotelOpsNotifier.ensureChannels(appContext)
+        if (!NotificationManagerCompat.from(appContext).areNotificationsEnabled()) {
+            Toast.makeText(appContext, "Android bildirim izni kapali.", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = appContext.getSystemService(NotificationManager::class.java)
+            val channel = manager.getNotificationChannel(HotelOpsNotifier.CHANNEL_SOUND_TRANSIENT)
+            if (channel?.importance == NotificationManager.IMPORTANCE_NONE) {
+                Toast.makeText(appContext, "HotelOps bildirim kanali kapali.", Toast.LENGTH_SHORT).show()
+                return false
+            }
+        }
+        HotelOpsNotifier.showOperationNotification(
+            appContext,
+            "hotelops-test-${System.currentTimeMillis()}",
+            title?.takeIf { it.isNotBlank() } ?: "Bildirim servisi testi",
+            body?.takeIf { it.isNotBlank() } ?: "HotelOps Android bildirimi calisiyor.",
+            false,
+            "/app-settings"
+        )
+        return true
     }
 
     @JavascriptInterface

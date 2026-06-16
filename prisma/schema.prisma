@@ -217,6 +217,7 @@ model User {
   fullName                    String
   locale                      String                  @default("tr")
   moduleAccessJson            String                  @default("{}")
+  notificationPreferencesJson String                  @default("{}")
   shiftTrackingEnabled        Boolean                 @default(true)
   twoFactorEnabled            Boolean                 @default(false)
   isActive                    Boolean                 @default(true)

@@ -1237,6 +1237,20 @@ function mapStatusToDb(status) {
     };
     return map[status] ?? "REPORTED";
 }
+const defaultNotificationPreferences = {
+    soundFaultsOutsideShift: false
+};
+function parseNotificationPreferences(value) {
+    try {
+        const parsed = JSON.parse(value || "{}");
+        return {
+            soundFaultsOutsideShift: parsed.soundFaultsOutsideShift === true
+        };
+    }
+    catch {
+        return { ...defaultNotificationPreferences };
+    }
+}
 function serializeUser(user) {
     let moduleAccess = {};
     try {
@@ -1258,6 +1272,7 @@ function serializeUser(user) {
         roleId: user.role.code,
         departmentId: clientDepartmentIdFromCode(user.department.code),
         moduleAccess,
+        notificationPreferences: parseNotificationPreferences(user.notificationPreferencesJson),
         shiftTrackingEnabled: user.shiftTrackingEnabled,
         active: user.isActive,
         lastLogin: formatLastLogin(user.lastLoginAt)
@@ -1405,6 +1420,9 @@ const userSchema = z.object({
     departmentId: z.string().min(1),
     shiftTrackingEnabled: z.boolean().optional().default(true),
     moduleAccess: z.record(z.boolean()).optional()
+});
+const appSettingsSchema = z.object({
+    soundFaultsOutsideShift: z.boolean()
 });
 const shiftPanelConfigSchema = z.object({
     enabled: z.boolean(),
@@ -2143,6 +2161,7 @@ function syncStateCacheKey(req) {
         auth.roleId,
         auth.departmentId,
         user.moduleAccessJson,
+        user.notificationPreferencesJson,
         appDataEventVersion
     ].join(":");
 }
@@ -2792,17 +2811,36 @@ async function activeShiftUserIdSet(userIds) {
     });
     return new Set(sessions.map((session) => session.userId));
 }
-async function notificationSoundUserIdSet(userIds) {
+async function faultSoundPreferenceUserIdSet(userIds) {
+    if (!userIds.length)
+        return new Set();
+    const users = await prisma.user.findMany({
+        where: { id: { in: userIds }, deletedAt: null, isActive: true },
+        select: { id: true, notificationPreferencesJson: true }
+    });
+    return new Set(users
+        .filter((user) => parseNotificationPreferences(user.notificationPreferencesJson).soundFaultsOutsideShift)
+        .map((user) => user.id));
+}
+async function notificationSoundUserIdSet(userIds, options = {}) {
     const uniqueUserIds = Array.from(new Set(userIds));
     if (!uniqueUserIds.length)
         return new Set();
-    return activeShiftUserIdSet(uniqueUserIds);
+    const soundUserIds = await activeShiftUserIdSet(uniqueUserIds);
+    if (options.soundFaultsOutsideShift) {
+        const preferenceUserIds = await faultSoundPreferenceUserIdSet(uniqueUserIds);
+        preferenceUserIds.forEach((userId) => soundUserIds.add(userId));
+    }
+    return soundUserIds;
 }
 function workOrderDetailPushPath(workOrderCode) {
     return `/jobs/detail?id=${encodeURIComponent(workOrderCode)}`;
 }
-async function shiftAwareNotificationPayloads(users, notificationText, channels, pushFields = {}) {
-    const soundUserIds = await notificationSoundUserIdSet(users.map((user) => user.id));
+function isFaultWorkOrderType(type) {
+    return String(type ?? "").trim().toUpperCase() === "FAULT";
+}
+async function shiftAwareNotificationPayloads(users, notificationText, channels, pushFields = {}, soundOptions = {}) {
+    const soundUserIds = await notificationSoundUserIdSet(users.map((user) => user.id), soundOptions);
     return users.map((user) => ({
         userId: user.id,
         title: notificationText.title,
@@ -2811,7 +2849,9 @@ async function shiftAwareNotificationPayloads(users, notificationText, channels,
         ...pushFields
     }));
 }
-async function workOrderNotificationPayloads(users, notificationText, workOrderCode) {
+async function workOrderNotificationPayloads(users, notificationText, workOrder) {
+    const workOrderCode = typeof workOrder === "string" ? workOrder : workOrder.code;
+    const soundFaultsOutsideShift = typeof workOrder === "string" ? false : isFaultWorkOrderType(workOrder.type);
     return shiftAwareNotificationPayloads(users, notificationText, {
         sound: notificationChannelWorkOrderSound,
         silent: notificationChannelWorkOrderSilent
@@ -2819,6 +2859,8 @@ async function workOrderNotificationPayloads(users, notificationText, workOrderC
         pushType: "work_order",
         pushPath: workOrderDetailPushPath(workOrderCode),
         pushTag: `work-order-${workOrderCode}`
+    }, {
+        soundFaultsOutsideShift
     });
 }
 function localDateKey(date) {
@@ -3958,6 +4000,77 @@ app.post("/push-devices", authenticate, asyncHandler(async (req, res) => {
         }
     });
     res.json({ ok: true, id: device.id });
+}));
+app.get("/app-settings", authenticate, asyncHandler(async (req, res) => {
+    const androidPushDevices = await prisma.pushDevice.findMany({
+        where: {
+            userId: req.auth.userId,
+            platform: "ANDROID"
+        },
+        select: {
+            id: true,
+            appVersion: true,
+            userAgent: true,
+            createdAt: true,
+            lastSeenAt: true,
+            disabledAt: true
+        },
+        orderBy: { lastSeenAt: "desc" },
+        take: 10
+    });
+    res.json({
+        notificationPreferences: parseNotificationPreferences(req.user.notificationPreferencesJson),
+        androidPushDevices: androidPushDevices.map((device) => ({
+            id: device.id,
+            appVersion: device.appVersion ?? "",
+            userAgent: device.userAgent ?? "",
+            createdAt: device.createdAt.toISOString(),
+            lastSeenAt: device.lastSeenAt.toISOString(),
+            disabledAt: device.disabledAt?.toISOString() ?? ""
+        }))
+    });
+}));
+app.patch("/app-settings", authenticate, asyncHandler(async (req, res) => {
+    const payload = appSettingsSchema.partial().parse(req.body);
+    const notificationPreferences = {
+        ...parseNotificationPreferences(req.user.notificationPreferencesJson),
+        ...payload
+    };
+    const updated = await prisma.user.update({
+        where: { id: req.auth.userId },
+        data: { notificationPreferencesJson: JSON.stringify(notificationPreferences) },
+        include: userInclude
+    });
+    invalidateAuthCacheForUser(updated.id);
+    invalidateSyncStateCache();
+    res.json({
+        ok: true,
+        user: serializeUser(updated),
+        notificationPreferences
+    });
+}));
+app.post("/app-settings/test-notification", authenticate, asyncHandler(async (req, res) => {
+    const activeDeviceCount = await prisma.pushDevice.count({
+        where: {
+            userId: req.auth.userId,
+            platform: "ANDROID",
+            disabledAt: null
+        }
+    });
+    const notification = await createNotificationAndPush({
+        userId: req.auth.userId,
+        title: "Bildirim servisi testi",
+        body: "HotelOps Android bildirim testi basarili.",
+        channel: notificationChannelOperationSound,
+        pushType: "android_test",
+        pushPath: "/app-settings",
+        pushTag: `android-test-${req.auth.userId}-${Date.now()}`
+    });
+    res.status(201).json({
+        ok: true,
+        activeDeviceCount,
+        notification: serializeNotification(notification)
+    });
 }));
 app.get("/shifts/current", authenticate, asyncHandler(async (req, res) => {
     if (!req.user.shiftTrackingEnabled) {
@@ -5152,7 +5265,7 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
     if (initialStatus !== "Completed") {
         const notificationText = workOrderNotificationText(created);
         const notificationUsers = await departmentNotificationUsers(req.auth, payload.departmentId);
-        await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created.code));
+        await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created));
         io.to(departmentSocketRoom(req.auth.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
     }
     res.status(201).json(serializeWorkOrder(created));
@@ -5222,7 +5335,7 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
     await audit(req, "WorkOrder", created.code, "CALENDAR_CREATE", null, serializeWorkOrder(created), created.id);
     const notificationText = workOrderNotificationText(created);
     const notificationUsers = await departmentNotificationUsers(req.auth, payload.departmentId);
-    await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created.code));
+    await createNotificationsAndPush(await workOrderNotificationPayloads(notificationUsers, notificationText, created));
     io.to(departmentSocketRoom(req.auth.hotelId, payload.departmentId)).emit("work-order.created", serializeWorkOrder(created));
     res.status(201).json(serializeWorkOrder(created));
 });
@@ -5270,7 +5383,7 @@ app.post("/work-orders/:code/claim", authenticate, requirePermission("work-order
         await createNotificationsAndPush(await workOrderNotificationPayloads([{ id: existing.createdById }], {
             title: `${departmentName(departmentId)} işi aldı`,
             body: `${updated.code} - ${updated.title} işi ${req.user.fullName} tarafından alındı.`
-        }, updated.code));
+        }, updated));
     }
     io.to(departmentSocketRoom(req.auth.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
     res.json(serializeWorkOrder(updated));
@@ -5425,13 +5538,13 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
         await createNotificationsAndPush(await workOrderNotificationPayloads([{ id: updated.assignedToId }], {
             title: "Yeni iş atandı",
             body: `${updated.code} - ${updated.title} size atandı.`
-        }, updated.code));
+        }, updated));
     }
     if (payload.status === "Completed" && existing.createdById !== req.auth.userId) {
         await createNotificationsAndPush(await workOrderNotificationPayloads([{ id: existing.createdById }], {
             title: "İş tamamlandı",
             body: `${updated.code} - ${updated.title} tamamlandı.`
-        }, updated.code));
+        }, updated));
     }
     io.to(departmentSocketRoom(req.auth.hotelId, departmentId)).emit("work-order.updated", serializeWorkOrder(updated));
     res.json(serializeWorkOrder(updated));

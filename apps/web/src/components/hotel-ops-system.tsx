@@ -86,6 +86,7 @@ import {
   type ManagementRequestStatus,
   type ModuleAccess,
   type ModuleId,
+  type NotificationPreferences,
   type NotificationRecord,
   type OperationDocumentDraft,
   type OperationDocumentRecord,
@@ -176,6 +177,27 @@ type BootstrapResponse = {
   activeShift: ShiftRecord | null;
   maintenance?: MaintenanceStatus;
   sync?: SyncStateResponse;
+};
+
+type AndroidPushDeviceStatus = {
+  id: string;
+  appVersion: string;
+  userAgent: string;
+  createdAt: string;
+  lastSeenAt: string;
+  disabledAt: string;
+};
+
+type AppSettingsResponse = {
+  notificationPreferences: NotificationPreferences;
+  androidPushDevices: AndroidPushDeviceStatus[];
+};
+
+type NativePushRegisterStatus = {
+  lastAttemptAt: number;
+  lastOkAt: number;
+  status: number;
+  error: string;
 };
 
 type SyncStateResponse = {
@@ -389,6 +411,24 @@ function toShellNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function readNativePushRegisterStatus(): NativePushRegisterStatus | null {
+  if (typeof window === "undefined") return null;
+  const shellWindow = window as HotelOpsShellWindow;
+  const rawStatus = callShellString(() => shellWindow.HotelOpsAndroidShell?.pushRegisterStatus?.() || "");
+  if (!rawStatus) return null;
+  try {
+    const parsed = JSON.parse(rawStatus) as Partial<NativePushRegisterStatus>;
+    return {
+      lastAttemptAt: toShellNumber(parsed.lastAttemptAt),
+      lastOkAt: toShellNumber(parsed.lastOkAt),
+      status: toShellNumber(parsed.status),
+      error: String(parsed.error || "")
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readAndroidUserAgentInfo(userAgent: string) {
   const updateCode = toShellNumber(userAgent.match(/NoderaHotelOpsAndroid\/(\d+)/i)?.[1]);
   const version = userAgent.match(/HotelOpsAndroidVersion\/([^\s]+)/i)?.[1] || "";
@@ -429,6 +469,15 @@ function detectShellRuntime(): ShellRuntime {
   if (shellWindow.hotelOpsDesktopShell) return "desktop";
 
   return "web";
+}
+
+function isAndroidAppRuntime(info?: ShellAppInfo | null) {
+  if (info?.runtime === "android") return true;
+  if (typeof window === "undefined") return false;
+  const shellWindow = window as HotelOpsShellWindow;
+  if (shellWindow.__HOTELOPS_SHELL__ === "android") return true;
+  if (hasHotelOpsAndroidBridge(shellWindow)) return true;
+  return /NoderaHotelOpsAndroid|HotelOpsAndroid/i.test(navigator.userAgent || "");
 }
 
 function readShellAppInfo(): ShellAppInfo | null {
@@ -4105,6 +4154,7 @@ export function HotelOpsSystem() {
 
   const pageTitle = getPageTitle(path);
   const unreadNotificationCount = notifications.filter((notification) => !notification.readAt).length;
+  const androidShellActive = isAndroidAppRuntime(shellAppInfo);
 
   if (platformPanelRequest && !isPlatformAdminUser(session)) {
     return (
@@ -4171,6 +4221,16 @@ export function HotelOpsSystem() {
             visibleJobs={visibleJobs}
           />
           <div className="sidebar-footer">
+            {androidShellActive ? (
+              <button className="sidebar-user" onClick={() => navigate("/app-settings")}>
+                <div className="avatar"><Settings size={16} /></div>
+                <div className="user-info">
+                  <div className="user-name">Uygulama Ayarları</div>
+                  <div className="user-role">Android</div>
+                </div>
+                <ChevronRight size={14} color="rgba(255,255,255,.45)" />
+              </button>
+            ) : null}
             <button className="sidebar-user" onClick={() => navigate("/settings")}>
               <div className="avatar">{initials(session.fullName)}</div>
               <div className="user-info">
@@ -4239,6 +4299,7 @@ export function HotelOpsSystem() {
                 reminderRecipients,
                 reminders,
                 session,
+                shellAppInfo,
                 departmentWorkPolicy,
                 setAlert,
                 showCredentialNotice,
@@ -5042,6 +5103,7 @@ function getPageTitle(path: string) {
   if (pathname === "/notifications") return { title: "Bildirimler", subtitle: "" };
   if (pathname === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
   if (pathname === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
+  if (pathname === "/app-settings") return { title: "Uygulama Ayarları", subtitle: "" };
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (pathname === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
   if (pathname === "/meter-tracking") return { title: "Sayaç Takibi", subtitle: "Teknik departman aylık sayaç formu" };
@@ -5089,6 +5151,7 @@ type RenderContext = {
   reminderRecipients: DemoUser[];
   reminders: ReminderRecord[];
   session: DemoUser;
+  shellAppInfo: ShellAppInfo | null;
   departmentWorkPolicy: WorkOrderPolicyRecord | null;
   setAlert: (value: string) => void;
   showCredentialNotice: (notice: Omit<CredentialNotice, "id">) => void;
@@ -5141,6 +5204,7 @@ function accessForPath(path: string): AccessId {
   if (path === "/department-tables") return "departmentTables";
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
+  if (path === "/app-settings") return "dashboard";
   if (path === "/settings") return "settings";
   if (path === "/hotelpanel") return "settings";
   if (path === "/modules/requests") return "managementRequests";
@@ -5171,6 +5235,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
   if (currentPath === "/notifications") return <NotificationsPage {...context} />;
+  if (currentPath === "/app-settings") return <AndroidAppSettingsPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
   if (currentPath === "/hotel-floor-planning") return <HotelFloorPlanningPage {...context} />;
@@ -10449,6 +10514,161 @@ function DepartmentManagementCard({
             </div>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotifications, shellAppInfo }: RenderContext) {
+  const isAndroid = isAndroidAppRuntime(shellAppInfo);
+  const initialSoundPreference = Boolean(session.notificationPreferences?.soundFaultsOutsideShift);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({
+    soundFaultsOutsideShift: initialSoundPreference
+  });
+  const [androidPushDevices, setAndroidPushDevices] = useState<AndroidPushDeviceStatus[]>([]);
+  const [nativeStatus, setNativeStatus] = useState<NativePushRegisterStatus | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [savingPreference, setSavingPreference] = useState(false);
+  const [testingNotification, setTestingNotification] = useState(false);
+
+  const activeDeviceCount = androidPushDevices.filter((device) => !device.disabledAt).length;
+  const latestDevice = androidPushDevices[0];
+
+  const nativeStatusTime = (value: number) => value > 0 ? formatDateTime(new Date(value).toISOString()) : "-";
+  const nativeStatusLabel = nativeStatus?.lastOkAt
+    ? "Kayıtlı"
+    : nativeStatus?.lastAttemptAt
+      ? "Denenmiş"
+      : "Bekliyor";
+
+  const loadSettings = useCallback(async (showError = true) => {
+    setNativeStatus(readNativePushRegisterStatus());
+    setLoadingSettings(true);
+    try {
+      const response = await apiRequest<AppSettingsResponse>("/app-settings");
+      setNotificationPreferences({
+        soundFaultsOutsideShift: Boolean(response.notificationPreferences?.soundFaultsOutsideShift)
+      });
+      setAndroidPushDevices(response.androidPushDevices ?? []);
+    } catch {
+      if (showError) setAlert("Uygulama ayarları yüklenemedi.");
+    } finally {
+      setLoadingSettings(false);
+    }
+  }, [setAlert]);
+
+  useEffect(() => {
+    setNotificationPreferences({ soundFaultsOutsideShift: initialSoundPreference });
+  }, [initialSoundPreference, session.id]);
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    void loadSettings(false);
+  }, [isAndroid, loadSettings]);
+
+  async function updateFaultSoundPreference(value: boolean) {
+    if (savingPreference) return;
+    const previous = notificationPreferences;
+    setNotificationPreferences({ soundFaultsOutsideShift: value });
+    setSavingPreference(true);
+    try {
+      const response = await apiRequest<{ ok: boolean; user: DemoUser; notificationPreferences: NotificationPreferences }>("/app-settings", {
+        method: "PATCH",
+        body: JSON.stringify({ soundFaultsOutsideShift: value })
+      });
+      setNotificationPreferences({
+        soundFaultsOutsideShift: Boolean(response.notificationPreferences.soundFaultsOutsideShift)
+      });
+      setAlert("Uygulama ayarları kaydedildi.");
+      await refreshData();
+    } catch {
+      setNotificationPreferences(previous);
+      setAlert("Uygulama ayarları kaydedilemedi.");
+    } finally {
+      setSavingPreference(false);
+    }
+  }
+
+  async function testNotificationService() {
+    if (testingNotification) return;
+    setTestingNotification(true);
+    let nativeOk = false;
+    try {
+      const shellWindow = window as HotelOpsShellWindow;
+      nativeOk = shellWindow.HotelOpsAndroidShell?.notifyTest?.(
+        "Bildirim servisi testi",
+        "HotelOps Android bildirimi çalışıyor."
+      ) === true;
+      setNativeStatus(readNativePushRegisterStatus());
+    } catch {
+      nativeOk = false;
+    }
+
+    try {
+      const response = await apiRequest<{ ok: boolean; activeDeviceCount: number; notification: NotificationRecord }>("/app-settings/test-notification", {
+        method: "POST"
+      });
+      setNotifications((items) => [
+        response.notification,
+        ...items.filter((item) => item.id !== response.notification.id)
+      ].slice(0, 20));
+      setAlert(response.activeDeviceCount > 0
+        ? "Test bildirimi gönderildi."
+        : nativeOk
+          ? "Yerel test bildirimi gösterildi; sunucuda aktif Android cihaz kaydı yok."
+          : "Sunucuda aktif Android cihaz kaydı yok.");
+      await loadSettings(false);
+    } catch {
+      setAlert(nativeOk
+        ? "Yerel test bildirimi gösterildi; sunucu testi tamamlanamadı."
+        : "Bildirim testi tamamlanamadı.");
+    } finally {
+      setTestingNotification(false);
+    }
+  }
+
+  if (!isAndroid) {
+    return <AccessDenied message="Bu sayfa sadece Android uygulamada kullanılır." />;
+  }
+
+  return (
+    <div className="two-column-grid">
+      <div className="card">
+        <div className="card-header"><span className="card-title"><Bell size={15} /> Bildirim servisi</span></div>
+        <div className="card-body ui-list-stack">
+          <Info label="Uygulama" value={shellAppInfo ? `${shellAppInfo.label} ${shellAppInfo.version} (${shellAppInfo.versionCode})` : "Android"} />
+          <Info label="Native kayıt" value={nativeStatusLabel} />
+          <Info label="Son başarılı kayıt" value={nativeStatus ? nativeStatusTime(nativeStatus.lastOkAt) : "-"} />
+          <Info label="Son deneme" value={nativeStatus ? nativeStatusTime(nativeStatus.lastAttemptAt) : "-"} />
+          <Info label="Sunucu cihaz kaydı" value={loadingSettings ? "Yükleniyor" : `${activeDeviceCount} aktif`} />
+          {latestDevice ? (
+            <Info label="Son cihaz" value={`${latestDevice.appVersion || "Sürüm yok"} - ${formatDateTime(latestDevice.lastSeenAt)}`} />
+          ) : null}
+          {nativeStatus?.error ? <div className="ui-muted">Son hata: {nativeStatus.error}</div> : null}
+          <button type="button" className="btn btn-primary btn-full" disabled={testingNotification} aria-busy={testingNotification} onClick={testNotificationService}>
+            <Bell size={15} /> {testingNotification ? "Test gönderiliyor" : "Bildirim servisini test et"}
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><span className="card-title"><Settings size={15} /> Bildirim ayarları</span></div>
+        <div className="card-body ui-list-stack">
+          <label className="permission-toggle-row">
+            <input
+              type="checkbox"
+              checked={notificationPreferences.soundFaultsOutsideShift}
+              disabled={savingPreference}
+              onChange={(event) => void updateFaultSoundPreference(event.target.checked)}
+            />
+            <span>vardiya dışındayken arıza bildirimlerini sesli gönder</span>
+          </label>
+          <div className="ui-muted">
+            {notificationPreferences.soundFaultsOutsideShift
+              ? "Arıza bildirimleri vardiya dışında da sesli."
+              : "Arıza bildirimleri vardiya dışında sessiz."}
+          </div>
         </div>
       </div>
     </div>

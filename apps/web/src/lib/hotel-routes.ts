@@ -29,6 +29,7 @@ export const hotelRouteSlugs = [
   ["hotel", "reports"],
   ["hotel", "users"],
   ["hotel", "hotelpanel"],
+  ["hotel", "app-settings"],
   ["hotel", "settings"]
 ] as const;
 
@@ -62,6 +63,7 @@ export const legacyHotelRouteSlugs = [
   ["reports"],
   ["users"],
   ["hotelpanel"],
+  ["app-settings"],
   ["settings"]
 ] as const;
 

@@ -76,6 +76,8 @@ export type HotelOpsAndroidBridge = {
   getAuthToken?: () => string;
   setAuthToken?: (token?: string) => void;
   clearAuthToken?: () => void;
+  pushRegisterStatus?: () => string;
+  notifyTest?: (title?: string, body?: string) => boolean;
   notifyAppUpdate?: (title?: string, body?: string) => void;
   openDownloadUrl?: (url?: string) => boolean;
   saveImageToGallery?: (dataUrl?: string, fileName?: string) => boolean;
@@ -142,6 +144,10 @@ export type AppUpdateNotice = {
   required: boolean;
 };
 
+export type NotificationPreferences = {
+  soundFaultsOutsideShift: boolean;
+};
+
 export type DemoUser = {
   id: string;
   accountId?: string;
@@ -155,6 +161,7 @@ export type DemoUser = {
   roleId: RoleId;
   departmentId: string;
   moduleAccess?: Partial<ModuleAccess>;
+  notificationPreferences?: Partial<NotificationPreferences>;
   shiftTrackingEnabled?: boolean;
   active: boolean;
   lastLogin: string;
