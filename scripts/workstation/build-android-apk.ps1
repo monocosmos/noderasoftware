@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $androidDir = Join-Path $root "apps\android"
+$googleServicesPath = Join-Path $androidDir "app\google-services.json"
 $defaultOutputApk = Join-Path $root "apps\web\public\downloads\HotelOps-Android-V1.apk"
 $keystorePath = Join-Path $root "secrets\hotelops-android-release.jks"
 $privatePropsPath = Join-Path $root "secrets\android-keystore.properties"
@@ -192,6 +193,10 @@ function Ensure-AndroidLocalProperties {
 
 if (-not (Test-Path -LiteralPath $androidDir)) {
   throw "Android kaynak klasoru bulunamadi: $androidDir"
+}
+
+if (-not (Test-Path -LiteralPath $googleServicesPath)) {
+  throw "Android Firebase config bulunamadi: $googleServicesPath. Push token uretmeyen APK yayinlamamak icin build durduruldu. Once scripts\workstation\install-firebase-push-files.ps1 ile google-services.json yerlestirin."
 }
 
 if (-not (Test-Path -LiteralPath $keystorePath)) {
