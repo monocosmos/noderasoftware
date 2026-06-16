@@ -199,6 +199,80 @@ NODE
   Add-Failure "Aktif Android push cihazlari okunamadi: $($_.Exception.Message)"
 }
 
+try {
+  $dataOnlyDryRun = Invoke-RemoteBash @'
+set -Eeuo pipefail
+cd /opt/noderasoftware
+sudo -u hotelops node --input-type=module <<'NODE'
+import { existsSync, readFileSync } from "node:fs";
+import admin from "firebase-admin";
+import { prisma } from "./apps/api/dist/prisma.js";
+
+const candidates = [
+  process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+  "/opt/noderasoftware/secrets/firebase-service-account.json",
+  "/opt/noderasoftware-private/firebase/noderafirebase-firebase-adminsdk-fbsvc-d7fd3b1a37.json"
+].filter(Boolean);
+const servicePath = candidates.find((candidate) => existsSync(candidate));
+if (!servicePath) {
+  console.log(JSON.stringify({ ok: false, reason: "missing-service-account" }));
+  process.exit(2);
+}
+if (!admin.apps.length) {
+  admin.initializeApp({ credential: admin.credential.cert(JSON.parse(readFileSync(servicePath, "utf8"))) });
+}
+const devices = await prisma.pushDevice.findMany({
+  where: { disabledAt: null, platform: "ANDROID" },
+  include: { user: { select: { username: true } } },
+  orderBy: { lastSeenAt: "desc" }
+});
+const messages = devices.map((device) => ({
+  token: device.fcmToken,
+  data: {
+    type: "app_update",
+    channel: "APP_UPDATE",
+    delivery: "sound",
+    androidChannelId: "hotelops_sound_transient",
+    notificationId: "dry-run",
+    title: "HotelOps test",
+    body: "Android data-only push dry-run",
+    latestVersion: "dry-run",
+    latestCode: "0",
+    downloadUrl: "/downloads/HotelOps-Android-V1.apk",
+    artifactSha256: "dry-run"
+  },
+  android: { priority: "high", ttl: 300000, collapseKey: "hotelops-data-only-dry-run" }
+}));
+const result = messages.length
+  ? await admin.messaging().sendEach(messages, true)
+  : { successCount: 0, failureCount: 0, responses: [] };
+console.log(JSON.stringify({
+  ok: result.failureCount === 0,
+  targetDevices: devices.length,
+  successCount: result.successCount,
+  failureCount: result.failureCount,
+  failures: result.responses
+    .map((response, index) => response.success ? null : ({
+      username: devices[index]?.user?.username,
+      code: response.error?.code || "",
+      message: response.error?.message || ""
+    }))
+    .filter(Boolean)
+}));
+await prisma.$disconnect();
+NODE
+'@
+  $jsonLine = ($dataOnlyDryRun | Where-Object { $_ -match '^\{' } | Select-Object -Last 1)
+  $result = if ($jsonLine) { $jsonLine | ConvertFrom-Json } else { $null }
+  if ($result -and $result.ok) {
+    Add-Pass "Android data-only high-priority FCM dry-run basarili: $($result.successCount)/$($result.targetDevices)"
+  } else {
+    Add-Failure "Android data-only FCM dry-run basarisiz: $jsonLine"
+  }
+} catch {
+  Add-Failure "Android data-only FCM dry-run calismadi: $($_.Exception.Message)"
+}
+
 if ($failures.Count -gt 0) {
   Write-Host ""
   Write-Host "Android push pipeline testi BASARISIZ: $($failures.Count) hata" -ForegroundColor Red
