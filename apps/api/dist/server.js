@@ -443,7 +443,7 @@ function androidNotificationDelivery(channel) {
     return {
         channelId: silent ? androidSilentTransientChannel : androidSoundTransientChannel,
         delivery: silent ? "silent" : "sound",
-        priority: silent ? "normal" : "high",
+        priority: "high",
         persistent: false
     };
 }
@@ -2432,18 +2432,6 @@ async function sendPushNotifications(notifications, pushDataByNotificationId = n
             const extraPushData = pushDataByNotificationId.get(notification.id) ?? {};
             const notificationTag = extraPushData.tag || (delivery.persistent ? `${notification.channel}-${notification.userId}` : "");
             const collapseTag = delivery.persistent ? notificationTag : "";
-            const androidNotification = {
-                channelId: delivery.channelId
-            };
-            if (delivery.delivery === "sound") {
-                androidNotification.sound = "default";
-            }
-            if (notificationTag) {
-                androidNotification.tag = notificationTag;
-            }
-            if (delivery.persistent) {
-                androidNotification.sticky = true;
-            }
             const data = {
                 notificationId: notification.id,
                 title: notification.title,
@@ -2461,16 +2449,6 @@ async function sendPushNotifications(notifications, pushDataByNotificationId = n
                 data,
                 android: androidConfigForDelivery(delivery, collapseTag)
             };
-            if (!delivery.persistent) {
-                message.notification = {
-                    title: notification.title,
-                    body: notification.body
-                };
-                message.android = {
-                    ...message.android,
-                    notification: androidNotification
-                };
-            }
             messageDevices.push(device);
             messages.push(message);
         }
@@ -2484,6 +2462,16 @@ async function sendPushNotifications(notifications, pushDataByNotificationId = n
             const invalidDeviceIds = result.responses
                 .map((response, index) => (!response.success && isInvalidPushTokenError(response.error) ? chunkDevices[index].id : ""))
                 .filter(Boolean);
+            const failureCodes = result.responses
+                .filter((response) => !response.success)
+                .map((response) => String(response.error?.code || response.error?.message || "unknown"));
+            if (failureCodes.length) {
+                console.warn("Android push delivery returned failures.", {
+                    successCount: result.successCount,
+                    failureCount: result.failureCount,
+                    failureCodes: Array.from(new Set(failureCodes))
+                });
+            }
             if (invalidDeviceIds.length) {
                 await prisma.pushDevice.updateMany({
                     where: { id: { in: invalidDeviceIds } },

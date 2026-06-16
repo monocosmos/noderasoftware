@@ -544,7 +544,7 @@ function androidNotificationDelivery(channel: string) {
   return {
     channelId: silent ? androidSilentTransientChannel : androidSoundTransientChannel,
     delivery: silent ? "silent" : "sound",
-    priority: silent ? "normal" : "high",
+    priority: "high",
     persistent: false
   } as const;
 }
@@ -2849,18 +2849,6 @@ async function sendPushNotifications(
       const extraPushData = pushDataByNotificationId.get(notification.id) ?? {};
       const notificationTag = extraPushData.tag || (delivery.persistent ? `${notification.channel}-${notification.userId}` : "");
       const collapseTag = delivery.persistent ? notificationTag : "";
-      const androidNotification: admin.messaging.AndroidNotification = {
-        channelId: delivery.channelId
-      };
-      if (delivery.delivery === "sound") {
-        androidNotification.sound = "default";
-      }
-      if (notificationTag) {
-        androidNotification.tag = notificationTag;
-      }
-      if (delivery.persistent) {
-        androidNotification.sticky = true;
-      }
 
       const data = {
         notificationId: notification.id,
@@ -2880,17 +2868,6 @@ async function sendPushNotifications(
         android: androidConfigForDelivery(delivery, collapseTag)
       };
 
-      if (!delivery.persistent) {
-        message.notification = {
-          title: notification.title,
-          body: notification.body
-        };
-        message.android = {
-          ...message.android,
-          notification: androidNotification
-        };
-      }
-
       messageDevices.push(device);
       messages.push(message);
     }
@@ -2905,6 +2882,16 @@ async function sendPushNotifications(
       const invalidDeviceIds = result.responses
         .map((response, index) => (!response.success && isInvalidPushTokenError(response.error) ? chunkDevices[index].id : ""))
         .filter(Boolean);
+      const failureCodes = result.responses
+        .filter((response) => !response.success)
+        .map((response) => String(response.error?.code || response.error?.message || "unknown"));
+      if (failureCodes.length) {
+        console.warn("Android push delivery returned failures.", {
+          successCount: result.successCount,
+          failureCount: result.failureCount,
+          failureCodes: Array.from(new Set(failureCodes))
+        });
+      }
       if (invalidDeviceIds.length) {
         await prisma.pushDevice.updateMany({
           where: { id: { in: invalidDeviceIds } },

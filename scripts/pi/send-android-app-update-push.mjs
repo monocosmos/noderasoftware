@@ -209,7 +209,6 @@ async function main() {
     const notification = notificationsByUserId.get(device.userId);
     return {
       token: device.fcmToken,
-      notification: { title, body },
       data: {
         type: "app_update",
         channel: "APP_UPDATE",
@@ -225,23 +224,27 @@ async function main() {
       },
       android: {
         priority: "high",
-        notification: {
-          channelId: "hotelops_sound_transient",
-          sound: "default"
-        }
+        ttl: 86_400_000,
+        collapseKey: `app-update-${latestCode}`
       }
     };
   });
 
   let successCount = 0;
+  let failureCount = 0;
   const invalidDeviceIds = [];
+  const failureCodes = new Set();
   const chunkSize = 500;
   for (let offset = 0; offset < messages.length; offset += chunkSize) {
     const chunk = messages.slice(offset, offset + chunkSize);
     const chunkDevices = targetDevices.slice(offset, offset + chunkSize);
     const result = await messaging.sendEach(chunk);
     successCount += result.successCount;
+    failureCount += result.failureCount;
     for (const [index, response] of result.responses.entries()) {
+      if (!response.success) {
+        failureCodes.add(String(response.error?.code || response.error?.message || "unknown"));
+      }
       if (!response.success && isInvalidPushTokenError(response.error)) {
         invalidDeviceIds.push(chunkDevices[index].id);
       }
@@ -256,7 +259,8 @@ async function main() {
   }
 
   writeLastSentEventKey(eventKey);
-  console.log(`android-update-push-ok latestCode=${latestCode} activeUsers=${activeUsers.length} notifications=${notificationUserIds.length} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length} artifact=${artifactKey.slice(0, 12)}`);
+  const failureSuffix = failureCount ? ` failures=${failureCount} failureCodes=${Array.from(failureCodes).join(",")}` : "";
+  console.log(`android-update-push-ok latestCode=${latestCode} activeUsers=${activeUsers.length} notifications=${notificationUserIds.length} staleDevices=${staleDevices.length} targetDevices=${targetDevices.length} users=${targetUserIds.length} sent=${successCount} invalid=${invalidDeviceIds.length}${failureSuffix} artifact=${artifactKey.slice(0, 12)}`);
 }
 
 main()
