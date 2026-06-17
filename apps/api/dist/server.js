@@ -2623,6 +2623,11 @@ async function canDeleteAssignedDepartmentWorkOrder(auth, workOrder) {
     const departmentId = department?.code ? clientDepartmentIdFromCode(department.code) : "";
     if (!departmentId || auth.departmentId !== departmentId || !isWorkIncidentPoolType(workOrder.type))
         return false;
+    const originDepartmentId = workOrder.createdBy?.department?.code
+        ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+        : "";
+    if (originDepartmentId && originDepartmentId !== departmentId)
+        return false;
     if (canManageWorkOrderStatus(auth, departmentId))
         return true;
     if (workOrder.assignedToId !== auth.userId)
@@ -5363,11 +5368,10 @@ app.post("/work-orders/:code/claim", authenticate, requirePermission("work-order
         where: { code: existing.code },
         data: {
             assignedToId: req.auth.userId,
-            status: "ACCEPTED",
             timeline: {
                 create: {
                     actorId: req.auth.userId,
-                    status: "ACCEPTED",
+                    status: existing.status,
                     message: `${departmentName(departmentId)} iş-ariza havuzundan işi aldı.`,
                     metadata: { claimedById: req.auth.userId }
                 }

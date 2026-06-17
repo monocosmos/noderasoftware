@@ -417,6 +417,8 @@
   justify-content: center;
   padding: 20px;
   background: rgba(15, 23, 42, .58);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 .app-modal-overlay-locked {
@@ -3038,6 +3040,20 @@ textarea.form-control {
   box-shadow: 0 0 0 1px rgba(220, 38, 38, .08);
 }
 
+.jobs-view-tab-delayed {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+  font-weight: 900;
+}
+
+.jobs-view-tab-delayed.active {
+  border-color: #f97316;
+  background: #ffedd5;
+  color: #9a3412;
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, .12);
+}
+
 .jobs-pool-tabs {
   display: flex;
   gap: 8px;
@@ -4482,6 +4498,11 @@ textarea.form-control {
   border-bottom: 1px solid var(--classic-border);
 }
 
+.cal-days-header.view-day {
+  grid-template-columns: 1fr;
+  min-width: 260px;
+}
+
 .cal-day-header {
   padding: 8px;
   text-align: center;
@@ -4497,6 +4518,16 @@ textarea.form-control {
   grid-template-columns: repeat(7, 1fr);
   min-width: 760px;
   min-height: 500px;
+}
+
+.cal-body.view-week {
+  min-height: 220px;
+}
+
+.cal-body.view-day {
+  grid-template-columns: 1fr;
+  min-width: 260px;
+  min-height: 220px;
 }
 
 .cal-cell {
@@ -4949,6 +4980,68 @@ textarea.form-control {
   line-height: 1.45;
 }
 
+.delete-confirm-modal {
+  width: min(100%, 480px);
+}
+
+.delete-confirm-icon {
+  background: var(--classic-urgent-bg);
+  color: var(--classic-urgent);
+}
+
+.delete-confirm-body {
+  display: grid;
+  gap: 14px;
+}
+
+.delete-confirm-summary {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius-lg);
+  background: var(--classic-bg);
+}
+
+.delete-confirm-summary div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.delete-confirm-summary span {
+  color: var(--classic-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.delete-confirm-summary strong {
+  min-width: 0;
+  color: var(--classic-text);
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.delete-confirm-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: var(--classic-radius-lg);
+  background: var(--classic-urgent-bg);
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.delete-confirm-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 @media (max-width: 640px) {
   .floating-alert-layer {
     top: calc(var(--classic-safe-top) + 76px);
@@ -4976,6 +5069,29 @@ textarea.form-control {
 
   .note-composer-modal .app-modal-actions {
     padding-bottom: calc(18px + var(--classic-safe-bottom));
+  }
+
+  .delete-confirm-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .delete-confirm-modal {
+    width: 100%;
+    max-height: min(82dvh, 560px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .delete-confirm-modal .app-modal-actions {
+    padding-bottom: calc(18px + var(--classic-safe-bottom));
+  }
+
+  .delete-confirm-summary div {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }
 

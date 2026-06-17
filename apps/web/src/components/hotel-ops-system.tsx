@@ -66,10 +66,7 @@ import {
   type DashboardPartId,
   type DemoUser,
   type DepartmentRecord,
-  type DepartmentTableColumn,
-  type DepartmentTableDraft,
   type DepartmentTableRecord,
-  type DepartmentTableRow,
   type FeatureAccessId,
   type HotelDraft,
   type HotelFloorAreaRecord,
@@ -1141,7 +1138,6 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
   { id: "operationDocuments", label: "Operasyon Belgeleri", group: "Yönetim" },
-  { id: "departmentTables", label: "Departman Tabloları", group: "Yönetim" },
   { id: "trainingCertificates", label: "Eğitim ve Sertifika", group: "Yönetim" },
   { id: "minibar", label: "Mini Bar", group: "Yönetim" },
   { id: "equipmentAssignments", label: "Zimmet / Ekipman", group: "Yönetim" },
@@ -1907,7 +1903,7 @@ function newJobActionLabel() {
 }
 
 function isOutgoingJobRequestView(queryParams: URLSearchParams) {
-  return queryParams.get("view") === "outgoing";
+  return queryParams.get("view")?.startsWith("outgoing") ?? false;
 }
 
 function newJobButtonLabel(isOutgoingRequest: boolean) {
@@ -2027,84 +2023,6 @@ function canManageJobStatus(user: DemoUser, job: Pick<JobRecord, "departmentId">
   return statusManagerRoles.has(user.roleId) && user.departmentId === job.departmentId;
 }
 
-const departmentTableColumnTypeOptions: Array<{ id: DepartmentTableColumn["type"]; label: string }> = [
-  { id: "text", label: "Metin" },
-  { id: "number", label: "Sayı" },
-  { id: "date", label: "Tarih" },
-  { id: "time", label: "Saat" },
-  { id: "status", label: "Durum" }
-];
-
-function departmentTableColumnTypeLabel(type: DepartmentTableColumn["type"]) {
-  return departmentTableColumnTypeOptions.find((option) => option.id === type)?.label ?? "Metin";
-}
-
-function emptyDepartmentTableColumn(): DepartmentTableColumn {
-  return { id: "", label: "", type: "text" };
-}
-
-function departmentTableDefaultColumns(departmentId: string): DepartmentTableColumn[] {
-  if (departmentId === "technical") {
-    return [
-      { id: "", label: "Tarih", type: "date" },
-      { id: "", label: "Sayaç", type: "text" },
-      { id: "", label: "Değer", type: "number" },
-      { id: "", label: "Not", type: "text" }
-    ];
-  }
-  if (departmentId === "housekeeping") {
-    return [
-      { id: "", label: "Oda", type: "text" },
-      { id: "", label: "Kat", type: "text" },
-      { id: "", label: "Durum", type: "status" },
-      { id: "", label: "Personel", type: "text" }
-    ];
-  }
-  if (departmentId === "fnb") {
-    return [
-      { id: "", label: "Oda", type: "text" },
-      { id: "", label: "Ürün", type: "text" },
-      { id: "", label: "Adet", type: "number" },
-      { id: "", label: "Durum", type: "status" }
-    ];
-  }
-  return [
-    { id: "", label: "Tarih", type: "date" },
-    { id: "", label: "Başlık", type: "text" },
-    { id: "", label: "Durum", type: "status" }
-  ];
-}
-
-function departmentTableDefaultTitle(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
-  if (departmentId === "technical") return "Enerji Veri Tablosu";
-  if (departmentId === "housekeeping") return "Oda Temizlik Listesi";
-  if (departmentId === "fnb") return "Minibar Tablosu";
-  return `${departmentLabelFor(departmentId)} Listesi`;
-}
-
-function departmentTableDraftFromRecord(table: DepartmentTableRecord | null, session: DemoUser, departmentLabelFor: (departmentId: string) => string): DepartmentTableDraft {
-  return {
-    title: table?.title ?? departmentTableDefaultTitle(session.departmentId, departmentLabelFor),
-    description: table?.description ?? "",
-    columns: table?.columns.length ? table.columns : departmentTableDefaultColumns(session.departmentId),
-    showInMenu: table?.showInMenu ?? true
-  };
-}
-
-function sanitizedDepartmentTableColumns(columns: DepartmentTableColumn[]) {
-  return columns
-    .map((column) => ({ id: column.id, label: column.label.trim(), type: column.type || "text" }))
-    .filter((column) => column.label)
-    .slice(0, 40);
-}
-
-function departmentTableInputType(type: DepartmentTableColumn["type"]) {
-  if (type === "number") return "number";
-  if (type === "date") return "date";
-  if (type === "time") return "time";
-  return "text";
-}
-
 function isOpenJob(job: Pick<JobRecord, "status">) {
   return job.status !== "Completed" && job.status !== "Cancelled";
 }
@@ -2113,8 +2031,8 @@ function isWorkIncidentPoolType(job: Pick<JobRecord, "type">) {
   return job.type === "Job" || job.type === "Fault";
 }
 
-function isDepartmentPoolJob(job: Pick<JobRecord, "assignee" | "status" | "type">) {
-  return isWorkIncidentPoolType(job) && !job.assignee && isOpenJob(job);
+function isDepartmentPoolJob(job: Pick<JobRecord, "status" | "type">) {
+  return isWorkIncidentPoolType(job) && isOpenJob(job);
 }
 
 function departmentPoolLabel(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
@@ -2122,7 +2040,7 @@ function departmentPoolLabel(departmentId: string, departmentLabelFor: (departme
 }
 
 function canClaimDepartmentJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "departmentId" | "status" | "type">) {
-  return user.departmentId === job.departmentId && isDepartmentPoolJob(job);
+  return user.departmentId === job.departmentId && isDepartmentPoolJob(job) && !job.assignee;
 }
 
 function canAssignJob(user: DemoUser, job: Pick<JobRecord, "departmentId">, policy: WorkOrderPolicyRecord | null) {
@@ -2145,8 +2063,9 @@ function canCompleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assig
   );
 }
 
-function canDeleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "departmentId" | "type">, policy: WorkOrderPolicyRecord | null) {
+function canDeleteJob(user: DemoUser, job: Pick<JobRecord, "assignee" | "assigneeId" | "createdByDepartmentId" | "departmentId" | "type">, policy: WorkOrderPolicyRecord | null) {
   if (!isWorkIncidentPoolType(job) || user.departmentId !== job.departmentId) return false;
+  if (job.createdByDepartmentId && job.createdByDepartmentId !== job.departmentId) return false;
   if (canManageJobStatus(user, job)) return true;
   const isAssignedToUser = job.assigneeId === user.id || (!job.assigneeId && job.assignee === user.fullName);
   return isAssignedToUser && Boolean(policy?.deleteAuthorityUserIds.includes(user.id));
@@ -4260,7 +4179,6 @@ export function HotelOpsSystem() {
             managementRequests={managementRequests}
             notifications={notifications}
             operationDocuments={operationDocuments}
-            departmentTables={departmentTables}
             visibleJobs={visibleJobs}
           />
           <div className="sidebar-footer">
@@ -4671,6 +4589,90 @@ function LogoutRememberModal({
   );
 }
 
+function DeleteJobConfirmModal({
+  busy,
+  departmentName,
+  job,
+  locationLabel,
+  onCancel,
+  onConfirm
+}: {
+  busy: boolean;
+  departmentName: string;
+  job: JobRecord;
+  locationLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  return (
+    <div className="app-modal-overlay delete-confirm-overlay" role="presentation" onClick={busy ? undefined : onCancel}>
+      <section
+        className="app-modal delete-confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deleteJobConfirmTitle"
+        aria-describedby="deleteJobConfirmCopy"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="app-modal-header">
+          <div className="app-modal-title-row">
+            <span className="app-modal-title-icon delete-confirm-icon">
+              <Trash2 size={18} />
+            </span>
+            <div>
+              <div className="app-modal-eyebrow">Silme onayı</div>
+              <h2 id="deleteJobConfirmTitle" className="app-modal-title">İş kaydı silinsin mi?</h2>
+            </div>
+          </div>
+          <button type="button" className="app-modal-close" onClick={onCancel} aria-label="Pencereyi kapat" disabled={busy}>
+            <X size={18} />
+          </button>
+        </div>
+        <div className="app-modal-body delete-confirm-body">
+          <p id="deleteJobConfirmCopy" className="app-modal-copy">
+            Bu kayıt aktif iş listesinden kaldırılacak. Onaydan sonra detay ekranından çıkıp listeye dönersiniz.
+          </p>
+          <div className="delete-confirm-summary" aria-label="Silinecek iş özeti">
+            <div>
+              <span>İş kaydı</span>
+              <strong>{job.title}</strong>
+            </div>
+            <div>
+              <span>Departman</span>
+              <strong>{departmentName}</strong>
+            </div>
+            <div>
+              <span>Lokasyon</span>
+              <strong>{locationLabel}</strong>
+            </div>
+          </div>
+          <div className="delete-confirm-warning" role="note">
+            <AlertTriangle size={15} />
+            <span>Bu işlem yalnızca yetkili kullanıcılar için uygulanır ve kayıt sistem akışından kaldırılır.</span>
+          </div>
+        </div>
+        <div className="app-modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy}>
+            Vazgeç
+          </button>
+          <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={busy}>
+            <Trash2 size={15} /> {busy ? "Siliniyor" : "Kaydı Sil"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PlatformAdminLoginScreen({
   activeHotelUser,
   error,
@@ -4878,7 +4880,6 @@ function CredentialNoticeCard({ notice, onClose }: { notice: CredentialNotice | 
 function SidebarNav({
   currentPath,
   departmentLabelFor,
-  departmentTables,
   managementRequests,
   navigate,
   notifications,
@@ -4888,7 +4889,6 @@ function SidebarNav({
 }: {
   currentPath: string;
   departmentLabelFor: (departmentId: string) => string;
-  departmentTables: DepartmentTableRecord[];
   managementRequests: ManagementRequestRecord[];
   navigate: (path: string) => void;
   notifications: NotificationRecord[];
@@ -4909,7 +4909,6 @@ function SidebarNav({
   const requestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status)).length;
   const unreadRequestCount = managementRequests.filter((request) => (request.recipient.id === session.id || request.relatedUser?.id === session.id) && isActiveManagementRequestStatus(request.status) && !request.readAt).length;
   const unreadDocumentCount = operationDocuments.filter((document) => !document.readAt).length;
-  const visibleDepartmentTables = departmentTables.filter((table) => table.enabled && table.showInMenu);
   const today = new Date().toDateString();
   const todayPlannedJobCount = activeJobs.filter((job) => {
     if (!isPlannedJobType(job.type) || !job.due) return false;
@@ -4961,10 +4960,6 @@ function SidebarNav({
       items: [
         entry("requests", "managementRequests", "/modules/requests", "Talepler", MessageSquareText, requestCount, "müdür şef genel müdür"),
         entry("operation-documents", "operationDocuments", "/modules/operation-documents", "Operasyon Belgeleri", FileText, unreadDocumentCount, "satış fnb pdf excel office operasyon okundu"),
-        entry("department-tables-home", "departmentTables", "/department-tables", "Departman Tabloları", ClipboardCheck, visibleDepartmentTables.length, "excel tablo liste"),
-        ...visibleDepartmentTables.map((table) => (
-          entry(`department-table-${table.id}`, "departmentTables", `/department-tables?table=${encodeURIComponent(table.id)}`, table.title, ClipboardList, table.rows.length, `${table.departmentName} excel tablo liste`)
-        )),
         entry("guest", "guestRequests", "/modules/guest-requests", "Misafir Talebi", MessageSquareText, undefined, "şikayet istek"),
         ...(!prioritizeRoomStatus ? [roomStatusEntry] : []),
         entry("lost", "lostFound", "/modules/lost-found", "Kayıp Eşya", Search, undefined, "eşya"),
@@ -5145,7 +5140,6 @@ function getPageTitle(path: string) {
   if (pathname === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (pathname === "/notifications") return { title: "Bildirimler", subtitle: "" };
   if (pathname === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
-  if (pathname === "/department-tables") return { title: "Departman Tabloları", subtitle: "Departman listeleri ve Excel çıktısı" };
   if (pathname === "/app-settings") return { title: "Uygulama Ayarları", subtitle: "" };
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (pathname === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
@@ -5244,7 +5238,6 @@ function accessForPath(path: string): AccessId {
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders" || path === "/notifications") return "reminders";
   if (path === "/shift-panels") return "shiftPanels";
-  if (path === "/department-tables") return "departmentTables";
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
   if (path === "/app-settings") return "dashboard";
@@ -5273,7 +5266,6 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
   if (currentPath.startsWith("/calendar")) return <CalendarPage {...context} />;
   if (currentPath === "/shift-panels") return <ShiftPanelsPage {...context} />;
-  if (currentPath === "/department-tables") return <DepartmentTablesPage {...context} />;
   if (currentPath === "/users") return <UsersPage {...context} />;
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
@@ -6311,13 +6303,23 @@ function OperationDocumentsPage({
 function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, filteredJobs, filters, navigate, queryParams, session, setFilters, visibleJobs }: RenderContext) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
-  const quickView = queryParams.get("view");
+  const requestedView = queryParams.get("view");
+  const quickView = requestedView === "outgoing-completed"
+    ? "completed"
+    : requestedView === "outgoing-delayed"
+      ? "delayed"
+      : requestedView;
   const isOutgoingView = isOutgoingJobRequestView(queryParams);
   const incomingVisibleJobs = visibleJobs.filter((job) => isIncomingDepartmentJob(session, job));
   const incomingFilteredJobs = filteredJobs.filter((job) => isIncomingDepartmentJob(session, job));
+  const outgoingVisibleJobs = visibleJobs.filter((job) => isOutgoingDepartmentJob(session, job));
   const outgoingFilteredJobs = filteredJobs.filter((job) => isOutgoingDepartmentJob(session, job));
-  const activeIncomingCount = incomingVisibleJobs.filter((job) => job.status !== "Completed").length;
+  const activeIncomingCount = incomingVisibleJobs.filter((job) => job.status !== "Completed" && job.status !== "Delayed").length;
   const completedCount = incomingVisibleJobs.filter((job) => job.status === "Completed").length;
+  const delayedCount = incomingVisibleJobs.filter((job) => job.status === "Delayed" || Boolean(job.slaRisk)).length;
+  const outgoingActiveCount = outgoingVisibleJobs.filter((job) => job.status !== "Completed" && job.status !== "Delayed").length;
+  const outgoingCompletedCount = outgoingVisibleJobs.filter((job) => job.status === "Completed").length;
+  const outgoingDelayedCount = outgoingVisibleJobs.filter((job) => job.status === "Delayed" || Boolean(job.slaRisk)).length;
   const blankFilters = {
     search: "",
     status: "",
@@ -6336,8 +6338,13 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
       ? incomingVisibleJobs
       : incomingFilteredJobs;
   const showCompletedJobs = quickView === "completed" || (!quickView && filters.status === "Completed");
+  const showDelayedJobs = quickView === "delayed" || (!quickView && filters.status === "Delayed");
   const listJobs = listSource
-    .filter((job) => isOutgoingView ? job.status !== "Completed" : showCompletedJobs ? job.status === "Completed" : job.status !== "Completed")
+    .filter((job) => {
+      if (showCompletedJobs) return job.status === "Completed";
+      if (showDelayedJobs) return job.status === "Delayed" || Boolean(job.slaRisk);
+      return job.status !== "Completed" && job.status !== "Delayed";
+    })
     .filter((job) => {
       if (quickView === "assigned") return job.assignee === session.fullName;
       if (quickView === "urgent") return isUrgentJobForUser(session, job);
@@ -6350,7 +6357,11 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
   const quickViewLabel = quickView === "assigned"
     ? "Bana Atanan"
     : isOutgoingView
-      ? "Giden İşler"
+      ? quickView === "completed"
+        ? "Giden Bitirilen İşler"
+        : quickView === "delayed"
+          ? "Giden Ertelenen İşler"
+          : "Gönderilen İşler"
     : quickView === "urgent"
       ? urgentJobsLabel()
     : quickView === "delayed"
@@ -6359,7 +6370,7 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
           ? "Periyodik Bakım"
           : quickView === "completed"
             ? "Bitirilen İşler"
-            : "Bekleyen İşler";
+            : "İş Havuzu";
 
   return (
     <>
@@ -6430,12 +6441,29 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
       </div>
       {filtersOpen && <button type="button" className="filter-backdrop" onClick={() => setFiltersOpen(false)} aria-label="Filtreleri kapat" />}
 
-      {!isOutgoingView && (
-        <div className="jobs-view-tabs" role="tablist" aria-label="Gelen işler görünümü">
-          <button type="button" className={`jobs-view-tab jobs-view-tab-pending ${!quickView ? "active" : ""}`} onClick={() => navigate("/jobs")}>Bekleyen İşler ({activeIncomingCount})</button>
-          <button type="button" className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`} onClick={() => navigate("/jobs?view=completed")}>Bitirilen İşler ({completedCount})</button>
-        </div>
-      )}
+      <div className="jobs-view-tabs" role="tablist" aria-label={isOutgoingView ? "Giden işler görünümü" : "Gelen işler görünümü"}>
+        <button
+          type="button"
+          className={`jobs-view-tab jobs-view-tab-pending ${!quickView || quickView === "outgoing" ? "active" : ""}`}
+          onClick={() => navigate(isOutgoingView ? "/jobs?view=outgoing" : "/jobs")}
+        >
+          {isOutgoingView ? `Gönderilen İşler (${outgoingActiveCount})` : `İş Havuzu (${activeIncomingCount})`}
+        </button>
+        <button
+          type="button"
+          className={`jobs-view-tab jobs-view-tab-delayed ${quickView === "delayed" ? "active" : ""}`}
+          onClick={() => navigate(isOutgoingView ? "/jobs?view=outgoing-delayed" : "/jobs?view=delayed")}
+        >
+          Ertelenen İşler ({isOutgoingView ? outgoingDelayedCount : delayedCount})
+        </button>
+        <button
+          type="button"
+          className={`jobs-view-tab ${quickView === "completed" ? "active" : ""}`}
+          onClick={() => navigate(isOutgoingView ? "/jobs?view=outgoing-completed" : "/jobs?view=completed")}
+        >
+          Bitirilen İşler ({isOutgoingView ? outgoingCompletedCount : completedCount})
+        </button>
+      </div>
 
       <div className="list-toolbar">
         <span className="ui-muted">{quickViewLabel ? `${quickViewLabel}: ` : ""}{listJobs.length} kayıt listeleniyor</span>
@@ -6826,6 +6854,8 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const [noteComposerOpen, setNoteComposerOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteSubmitting, setNoteSubmitting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [roomHistory, setRoomHistory] = useState<Array<{ code: string; title: string; status: JobStatus; priority: Priority; createdAt: string; assignee: string }>>([]);
   const needsMediaPayload = jobNeedsMediaPayload(job);
 
@@ -6893,6 +6923,8 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   useEffect(() => {
     setTransferTo(job?.assigneeId ?? "");
     setParticipantIds([]);
+    setDeleteConfirmOpen(false);
+    setDeleteSubmitting(false);
   }, [job?.id, job?.assigneeId]);
 
   if (!job) return <EmptyState title="Kayıt bulunamadı" description="Seçilen iş kaydı bulunamadı." />;
@@ -6903,7 +6935,6 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const timeline = job.timeline ?? [];
   const detailView = queryParams.get("view");
   const isOutgoingDetail = detailView === "outgoing" || isOutgoingDepartmentJob(session, job);
-  const canEditJobStatus = !isOutgoingDetail && canManageJobStatus(session, job);
   const canDelayCurrentJob = !isOutgoingDetail && canDelayJob(session, job, departmentWorkPolicy);
   const canClaimJob = !isOutgoingDetail && canClaimDepartmentJob(session, job);
   const canAssignCurrentJob = !isOutgoingDetail && canAssignJob(session, job, departmentWorkPolicy);
@@ -6913,6 +6944,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const participantOptions = assigneeOptions.filter((user) => user.id !== session.id && user.id !== job.assigneeId);
   const participantNames = (job.participants ?? []).map((user) => user.fullName).join(", ");
   const canOpenHousekeepingJob = session.departmentId === "technical" && job.departmentId === "technical" && canCreateJobType(session, "Job") && canUseModule(session, "jobs");
+  const jobLocationLabel = job.location || (job.room ? `Oda ${job.room}` : "-");
 
   const openHousekeepingJob = () => {
     const params = new URLSearchParams({
@@ -6955,16 +6987,24 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
 
   const completeJob = () => updateJob({ status: "Completed", participantIds });
 
+  const closeDeleteConfirm = () => {
+    if (deleteSubmitting) return;
+    setDeleteConfirmOpen(false);
+  };
+
   const deleteJob = async () => {
-    if (!window.confirm("Bu iş kaydı silinsin mi?")) return;
+    setDeleteSubmitting(true);
     try {
       await apiRequest<{ ok: boolean }>(`/work-orders/${job.id}`, { method: "DELETE" });
       setJobs((current) => current.filter((item) => item.id !== job.id));
+      setDeleteConfirmOpen(false);
       setAlert("İş kaydı silindi.");
       await refreshData();
       navigate(isOutgoingDetail ? "/jobs?view=outgoing" : "/jobs");
     } catch {
       setAlert("İş kaydı silinemedi.");
+    } finally {
+      setDeleteSubmitting(false);
     }
   };
 
@@ -7035,15 +7075,13 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
     <>
       <div className="page-header action-bar job-detail-actions ui-section-bottom-sm">
         <div className="action-group job-detail-action-group">
+          {canDelayCurrentJob && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>İşi Ertele</button>}
           {canClaimJob && <button type="button" className="btn btn-start" onClick={claimJob}><Wrench size={15} /> İşi Al</button>}
-          {canCompleteCurrentJob && job.status === "Pending" && <button type="button" className="btn btn-start" onClick={() => updateJob({ status: "InProgress" })}>İşe Başla</button>}
           {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
-          {canDelayCurrentJob && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>Ertelendi / 2. Öncelik</button>}
           <button type="button" className="btn btn-secondary" onClick={openNoteComposer}><MessageSquareText size={15} /> Not Ekle</button>
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
           <button type="button" className="btn btn-secondary" onClick={() => document.getElementById("job-detail-media")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Camera size={15} /> Medyayı Gör</button>
-          {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={deleteJob}><Trash2 size={15} /> Sil</button>}
-          {canEditJobStatus && job.status !== "Cancelled" && <button type="button" className="btn btn-danger" onClick={() => updateJob({ status: "Cancelled" })}>İptal Et</button>}
+          {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={() => setDeleteConfirmOpen(true)} disabled={deleteSubmitting}><Trash2 size={15} /> Sil</button>}
         </div>
         <button className="btn btn-ghost" onClick={() => navigate(isOutgoingDetail ? "/jobs?view=outgoing" : "/jobs")}>Listeye Dön</button>
       </div>
@@ -7256,6 +7294,16 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
         </div>
       </div>
       <PhotoLightbox photo={previewPhoto} onClose={() => setPreviewPhoto(null)} />
+      {deleteConfirmOpen && (
+        <DeleteJobConfirmModal
+          busy={deleteSubmitting}
+          departmentName={departmentLabelFor(job.departmentId)}
+          job={job}
+          locationLabel={jobLocationLabel}
+          onCancel={closeDeleteConfirm}
+          onConfirm={deleteJob}
+        />
+      )}
       {noteComposerOpen && (
         <JobNoteComposer
           noteDraft={noteDraft}
@@ -7320,16 +7368,22 @@ function HousekeepingPage({ departmentLabelFor, session, visibleJobs, navigate }
 }
 
 function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptions, departmentWorkPolicy, navigate, refreshData, session, setAlert, setJobs, visibleJobs }: RenderContext) {
+  type CalendarView = "month" | "week" | "day";
+  type CalendarCell = { key: string; date: Date; day: number; inMonth: boolean };
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
   const today = new Date();
+  const planFormRef = useRef<HTMLDivElement | null>(null);
+  const planTitleRef = useRef<HTMLInputElement | null>(null);
+  const [calendarView, setCalendarView] = useState<CalendarView>("month");
   const [selectedDay, setSelectedDay] = useState(today.getDate());
   const [planDraft, setPlanDraft] = useState(() => ({
     title: "",
     due: dateTimeLocalValue(today),
     departmentId: session.departmentId,
+    priority: "Normal" as Priority,
     assigneeId: "",
     location: ""
   }));
@@ -7353,7 +7407,10 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
     .filter((event) => scope.includes(event.departmentId))
     .filter((event) => (event.year ?? 2026) === calendarYear && (event.month ?? 4) === calendarMonthIndex)
     .sort((left, right) => left.time.localeCompare(right.time, "tr-TR"));
-  const selectedDate = new Date(calendarYear, calendarMonthIndex, Math.min(selectedDay, new Date(calendarYear, calendarMonthIndex + 1, 0).getDate()));
+  const selectedDate = useMemo(
+    () => new Date(calendarYear, calendarMonthIndex, Math.min(selectedDay, new Date(calendarYear, calendarMonthIndex + 1, 0).getDate())),
+    [calendarMonthIndex, calendarYear, selectedDay]
+  );
   const selectedJobs = visibleJobs
     .filter((job) => scope.includes(job.departmentId) && sameCalendarDay(job.due, calendarYear, calendarMonthIndex, selectedDay))
     .filter(isCalendarPlannedJob)
@@ -7363,10 +7420,62 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
     .filter((event) => (event.year ?? 2026) === calendarYear && (event.month ?? 4) === calendarMonthIndex && event.day === selectedDay)
     .sort((left, right) => left.time.localeCompare(right.time, "tr-TR"));
   const daysInMonth = new Date(calendarYear, calendarMonthIndex + 1, 0).getDate();
-  const days = Array.from({ length: Math.max(35, daysInMonth) }, (_, index) => index + 1);
   const weekdays = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+  const calendarViewOptions: Array<{ id: CalendarView; label: string }> = [
+    { id: "month", label: "Ay" },
+    { id: "week", label: "Hafta" },
+    { id: "day", label: "Gün" }
+  ];
+  const calendarCells = useMemo<CalendarCell[]>(() => {
+    if (calendarView === "day") {
+      return [{ key: dateInputValue(selectedDate), date: selectedDate, day: selectedDate.getDate(), inMonth: true }];
+    }
+    if (calendarView === "week") {
+      const selectedWeekdayIndex = (selectedDate.getDay() + 6) % 7;
+      return Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(calendarYear, calendarMonthIndex, selectedDay - selectedWeekdayIndex + index);
+        return {
+          key: dateInputValue(date),
+          date,
+          day: date.getDate(),
+          inMonth: date.getMonth() === calendarMonthIndex
+        };
+      });
+    }
+    return Array.from({ length: Math.max(35, daysInMonth) }, (_, index) => {
+      const day = index + 1;
+      const date = new Date(calendarYear, calendarMonthIndex, day);
+      return {
+        key: `${calendarYear}-${calendarMonthIndex}-${day}`,
+        date,
+        day: date.getDate(),
+        inMonth: day <= daysInMonth
+      };
+    });
+  }, [calendarMonthIndex, calendarView, calendarYear, daysInMonth, selectedDate, selectedDay]);
+  const visibleWeekdays = calendarView === "day" ? [weekdays[(selectedDate.getDay() + 6) % 7]] : weekdays;
   const isCurrentMonth = today.getFullYear() === calendarYear && today.getMonth() === calendarMonthIndex;
   const calendarTitle = new Intl.DateTimeFormat("tr-TR", { month: "long", year: "numeric" }).format(calendarMonth);
+  const eventTone = (event: CalendarRecord) => {
+    if (event.status === "Delayed") return "delayed";
+    if (event.status === "Completed") return "low";
+    return priorityClass(event.priority ?? "Normal");
+  };
+  const calendarCellEvents = (cell: CalendarCell) => (
+    events.filter((event) => (
+      cell.inMonth &&
+      event.day === cell.day &&
+      (event.year ?? calendarYear) === cell.date.getFullYear() &&
+      (event.month ?? calendarMonthIndex) === cell.date.getMonth()
+    ))
+  );
+  const openPlanComposer = () => {
+    setPlanDraft((draft) => ({ ...draft, due: dateTimeLocalValue(selectedDate) }));
+    window.requestAnimationFrame(() => {
+      planFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      planTitleRef.current?.focus({ preventScroll: true });
+    });
+  };
   const changeMonth = (offset: number) => {
     setCalendarMonth((current) => {
       const next = new Date(current.getFullYear(), current.getMonth() + offset, 1);
@@ -7381,10 +7490,12 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
     setSelectedDay(next.getDate());
     setPlanDraft((draft) => ({ ...draft, due: dateTimeLocalValue(next) }));
   };
-  const selectDay = (day: number) => {
-    if (day > daysInMonth) return;
-    setSelectedDay(day);
-    setPlanDraft((draft) => ({ ...draft, due: dateTimeLocalValue(new Date(calendarYear, calendarMonthIndex, day)) }));
+  const selectDay = (cell: CalendarCell) => {
+    if (!cell.inMonth) {
+      setCalendarMonth(new Date(cell.date.getFullYear(), cell.date.getMonth(), 1));
+    }
+    setSelectedDay(cell.day);
+    setPlanDraft((draft) => ({ ...draft, due: dateTimeLocalValue(cell.date) }));
   };
   useEffect(() => {
     let cancelled = false;
@@ -7431,7 +7542,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
           title: planDraft.title.trim(),
           type: calendarPlanType,
           departmentId: planDepartmentId,
-          priority: "Normal",
+          priority: planDraft.priority,
           assigneeId: planDraft.assigneeId,
           room: "",
           location: planDraft.location.trim() || departmentLabelFor(planDepartmentId),
@@ -7443,7 +7554,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
         })
       });
       setJobs((current) => [created, ...current]);
-      setPlanDraft({ title: "", due: planDraft.due, departmentId: session.departmentId, assigneeId: "", location: "" });
+      setPlanDraft({ title: "", due: planDraft.due, departmentId: session.departmentId, priority: planDraft.priority, assigneeId: "", location: "" });
       setAlert("Plan takvime eklendi.");
       await refreshData();
     } catch {
@@ -7466,31 +7577,38 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
             <span className="cal-title">{calendarTitle}</span>
           </div>
           <div className="cal-view-toggle">
-            <button type="button" className="cal-view-btn active">Ay</button>
-            <button type="button" className="cal-view-btn">Hafta</button>
-            <button type="button" className="cal-view-btn">Gün</button>
+            {calendarViewOptions.map((option) => (
+              <button
+                type="button"
+                key={option.id}
+                className={`cal-view-btn ${calendarView === option.id ? "active" : ""}`}
+                onClick={() => setCalendarView(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
           <div className="calendar-actions">
             <select className="form-control form-control-auto form-control-sm">
               <option>{isHotelWideCalendar ? "Tüm Departmanlar" : departmentLabelFor(session.departmentId)}</option>
             </select>
             {canWriteCalendar && (
-              <button className="btn btn-primary btn-sm" onClick={() => setPlanDraft((draft) => ({ ...draft, due: dateTimeLocalValue(selectedDate) }))}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={openPlanComposer}>
                 <Plus size={14} /> {calendarPlanButtonLabel}
               </button>
             )}
           </div>
         </div>
         <div className="calendar-grid">
-          <div className="cal-days-header">
-            {weekdays.map((day) => <div key={day} className="cal-day-header">{day}</div>)}
+          <div className={`cal-days-header view-${calendarView}`}>
+            {visibleWeekdays.map((day) => <div key={day} className="cal-day-header">{day}</div>)}
           </div>
-          <div className="cal-body">
-            {days.map((day) => (
-              <button type="button" key={day} onClick={() => selectDay(day)} className={`cal-cell ${selectedDay === day && day <= daysInMonth ? "selected" : ""} ${isCurrentMonth && day === today.getDate() ? "today" : ""} ${day > daysInMonth ? "other-month" : ""}`}>
-                <div className="cal-cell-date">{day > daysInMonth ? day - daysInMonth : day}</div>
-                {day <= daysInMonth && events.filter((event) => event.day === day).map((event, index) => (
-                  <span key={event.id ?? `${event.title}-${event.time}`} className={`cal-event ev-${event.status === "Completed" ? "low" : event.status === "Delayed" ? "urgent" : event.priority === "Urgent" ? "urgent" : event.priority === "High" ? "high" : index % 3 === 0 ? "normal" : "low"}`}>
+          <div className={`cal-body view-${calendarView}`}>
+            {calendarCells.map((cell) => (
+              <button type="button" key={cell.key} onClick={() => selectDay(cell)} className={`cal-cell ${selectedDay === cell.day && cell.inMonth ? "selected" : ""} ${isCurrentMonth && cell.inMonth && cell.day === today.getDate() ? "today" : ""} ${!cell.inMonth ? "other-month" : ""}`}>
+                <div className="cal-cell-date">{cell.day}</div>
+                {calendarCellEvents(cell).map((event) => (
+                  <span key={event.id ?? `${event.title}-${event.time}`} className={`cal-event ev-${eventTone(event)}`}>
                   {event.time} {isHotelWideCalendar ? `${departmentLabelFor(event.departmentId)} - ` : ""}{event.title}
                 </span>
               ))}
@@ -7539,17 +7657,26 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
           </div>
         </div>
         {canWriteCalendar && (
-          <div className="card">
+          <div className="card" ref={planFormRef}>
             <div className="card-header"><span className="card-title">Takvime Plan Ekle</span></div>
             <div className="card-body">
               <form onSubmit={createCalendarPlan} className="ui-body-compact">
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Başlık</label>
-                  <input className="form-control" value={planDraft.title} onChange={(event) => setPlanDraft((draft) => ({ ...draft, title: event.target.value }))} placeholder={calendarPlanPlaceholder} />
+                  <input ref={planTitleRef} className="form-control" value={planDraft.title} onChange={(event) => setPlanDraft((draft) => ({ ...draft, title: event.target.value }))} placeholder={calendarPlanPlaceholder} />
                 </div>
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Departman</label>
                   <input className="form-control" value={departmentLabelFor(session.departmentId)} disabled readOnly />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Öncelik</label>
+                  <select className={`form-control priority-select priority-${priorityClass(planDraft.priority)}`} value={planDraft.priority} onChange={(event) => setPlanDraft((draft) => ({ ...draft, priority: event.target.value as Priority }))}>
+                    <option value="Normal">Normal</option>
+                    <option value="Low">Düşük</option>
+                    <option value="High">Yüksek</option>
+                    <option value="Urgent">Acil</option>
+                  </select>
                 </div>
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Gün / Saat</label>
@@ -8606,436 +8733,6 @@ function ShiftPanelsPage({ departmentLabelFor, session, setAlert, users }: Rende
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function DepartmentTablesPage({ departmentLabelFor, departmentTables, navigate, queryParams, session, setAlert, setDepartmentTables }: RenderContext) {
-  const visibleTables = useMemo(() => departmentTables.filter((table) => table.enabled), [departmentTables]);
-  const requestedTableId = queryParams.get("table") ?? "";
-  const selectedTable = useMemo(() => (
-    visibleTables.find((table) => table.id === requestedTableId) ?? visibleTables[0] ?? null
-  ), [requestedTableId, visibleTables]);
-  const selectedColumnSignature = selectedTable?.columns.map((column) => `${column.id}:${column.label}:${column.type}`).join("|") ?? "";
-  const canCreateTable = canManageJobStatus(session, { departmentId: session.departmentId });
-  const [creatingNew, setCreatingNew] = useState(false);
-  const [editingConfig, setEditingConfig] = useState(false);
-  const [draft, setDraft] = useState<DepartmentTableDraft>(() => departmentTableDraftFromRecord(null, session, departmentLabelFor));
-  const [savingTable, setSavingTable] = useState(false);
-  const [rowDraft, setRowDraft] = useState<Record<string, string>>({});
-  const [rowNote, setRowNote] = useState("");
-  const [savingRow, setSavingRow] = useState(false);
-  const [editingRowId, setEditingRowId] = useState("");
-  const [editingRowDraft, setEditingRowDraft] = useState<Record<string, string>>({});
-  const [editingRowNote, setEditingRowNote] = useState("");
-
-  useEffect(() => {
-    if (creatingNew) return;
-    setDraft(departmentTableDraftFromRecord(selectedTable, session, departmentLabelFor));
-    setEditingConfig(false);
-  }, [creatingNew, departmentLabelFor, selectedTable, session]);
-
-  useEffect(() => {
-    setRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, ""])));
-    setRowNote("");
-    setEditingRowId("");
-    setEditingRowDraft({});
-    setEditingRowNote("");
-  }, [selectedColumnSignature, selectedTable?.columns, selectedTable?.id]);
-
-  const replaceTable = (table: DepartmentTableRecord) => {
-    setDepartmentTables((current) => {
-      const next = current.some((item) => item.id === table.id)
-        ? current.map((item) => (item.id === table.id ? table : item))
-        : [table, ...current];
-      return [...next].sort((left, right) => (
-        left.departmentName.localeCompare(right.departmentName, "tr-TR") || left.title.localeCompare(right.title, "tr-TR")
-      ));
-    });
-  };
-
-  const patchSelectedTableRows = (updater: (rows: DepartmentTableRow[]) => DepartmentTableRow[]) => {
-    if (!selectedTable) return;
-    setDepartmentTables((current) => current.map((table) => (
-      table.id === selectedTable.id ? { ...table, rows: updater(table.rows) } : table
-    )));
-  };
-
-  const startNewTable = () => {
-    setCreatingNew(true);
-    setEditingConfig(true);
-    setDraft(departmentTableDraftFromRecord(null, session, departmentLabelFor));
-  };
-
-  const selectTable = (tableId: string) => {
-    setCreatingNew(false);
-    navigate(`/department-tables?table=${encodeURIComponent(tableId)}`);
-  };
-
-  const updateDraftColumn = (index: number, patch: Partial<DepartmentTableColumn>) => {
-    setDraft((current) => ({
-      ...current,
-      columns: current.columns.map((column, columnIndex) => (columnIndex === index ? { ...column, ...patch } : column))
-    }));
-  };
-
-  const addDraftColumn = () => {
-    setDraft((current) => (
-      current.columns.length >= 40 ? current : { ...current, columns: [...current.columns, emptyDepartmentTableColumn()] }
-    ));
-  };
-
-  const removeDraftColumn = (index: number) => {
-    setDraft((current) => (
-      current.columns.length <= 1 ? current : { ...current, columns: current.columns.filter((_, columnIndex) => columnIndex !== index) }
-    ));
-  };
-
-  const saveTableConfig = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (savingTable) return;
-    const columns = sanitizedDepartmentTableColumns(draft.columns);
-    if (draft.title.trim().length < 2) {
-      setAlert("Tablo adı en az 2 karakter olmalı.");
-      return;
-    }
-    if (!columns.length) {
-      setAlert("En az bir kolon ekleyin.");
-      return;
-    }
-
-    const isNewTable = creatingNew || !selectedTable;
-    setSavingTable(true);
-    try {
-      const response = await apiRequest<{ item: DepartmentTableRecord }>(
-        isNewTable ? "/department-tables" : `/department-tables/${encodeURIComponent(selectedTable.id)}`,
-        {
-          method: isNewTable ? "POST" : "PATCH",
-          body: JSON.stringify({
-            departmentId: session.departmentId,
-            title: draft.title.trim(),
-            description: draft.description.trim(),
-            columns,
-            showInMenu: draft.showInMenu,
-            enabled: true
-          })
-        }
-      );
-      replaceTable(response.item);
-      setCreatingNew(false);
-      setEditingConfig(false);
-      setAlert(isNewTable ? "Departman tablosu oluşturuldu." : "Departman tablosu güncellendi.");
-      navigate(`/department-tables?table=${encodeURIComponent(response.item.id)}`);
-    } catch {
-      setAlert("Departman tablosu kaydedilemedi.");
-    } finally {
-      setSavingTable(false);
-    }
-  };
-
-  const clearRowForm = () => {
-    setRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, ""])));
-    setRowNote("");
-  };
-
-  const rowValuesFromDraft = (table: DepartmentTableRecord, values: Record<string, string>) => (
-    Object.fromEntries(table.columns.map((column) => [column.id, (values[column.id] ?? "").trim()]))
-  );
-
-  const addRow = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!selectedTable || savingRow) return;
-    const values = rowValuesFromDraft(selectedTable, rowDraft);
-    if (!Object.values(values).some(Boolean) && !rowNote.trim()) {
-      setAlert("Satır için en az bir alan doldurun.");
-      return;
-    }
-
-    setSavingRow(true);
-    try {
-      const response = await apiRequest<{ item: DepartmentTableRow }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows`, {
-        method: "POST",
-        body: JSON.stringify({ values, note: rowNote.trim() })
-      });
-      patchSelectedTableRows((rows) => [response.item, ...rows]);
-      clearRowForm();
-      setAlert("Satır eklendi.");
-    } catch {
-      setAlert("Satır eklenemedi.");
-    } finally {
-      setSavingRow(false);
-    }
-  };
-
-  const startEditRow = (row: DepartmentTableRow) => {
-    setEditingRowId(row.id);
-    setEditingRowDraft(Object.fromEntries((selectedTable?.columns ?? []).map((column) => [column.id, row.values[column.id] ?? ""])));
-    setEditingRowNote(row.note);
-  };
-
-  const saveRow = async (rowId: string) => {
-    if (!selectedTable || !editingRowId) return;
-    const values = rowValuesFromDraft(selectedTable, editingRowDraft);
-    try {
-      const response = await apiRequest<{ item: DepartmentTableRow }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows/${encodeURIComponent(rowId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ values, note: editingRowNote.trim() })
-      });
-      patchSelectedTableRows((rows) => rows.map((row) => (row.id === rowId ? response.item : row)));
-      setEditingRowId("");
-      setEditingRowDraft({});
-      setEditingRowNote("");
-      setAlert("Satır güncellendi.");
-    } catch {
-      setAlert("Satır güncellenemedi.");
-    }
-  };
-
-  const deleteRow = async (rowId: string) => {
-    if (!selectedTable || !window.confirm("Satır silinsin mi?")) return;
-    try {
-      await apiRequest<{ ok: boolean }>(`/department-tables/${encodeURIComponent(selectedTable.id)}/rows/${encodeURIComponent(rowId)}`, { method: "DELETE" });
-      patchSelectedTableRows((rows) => rows.filter((row) => row.id !== rowId));
-      setAlert("Satır silindi.");
-    } catch {
-      setAlert("Satır silinemedi.");
-    }
-  };
-
-  const exportSelectedTable = () => {
-    if (!selectedTable) return;
-    downloadExcelWorkbook(`nodera-${selectedTable.departmentId}-${selectedTable.slug}.xls`, [{
-      title: `${selectedTable.departmentName} - ${selectedTable.title}`,
-      headers: [...selectedTable.columns.map((column) => column.label), "Not", "Güncelleme"],
-      rows: selectedTable.rows.map((row) => [
-        ...selectedTable.columns.map((column) => row.values[column.id] ?? ""),
-        row.note,
-        formatDateTime(row.updatedAt)
-      ])
-    }]);
-  };
-
-  const canSaveTableConfig = creatingNew ? canCreateTable : Boolean(selectedTable?.canConfigure);
-
-  return (
-    <div className="ui-list-stack department-table-page">
-      <div className="card">
-        <div className="card-header">
-          <span>
-            <span className="card-title">Departman Tabloları</span>
-            <span className="ui-meta">{visibleTables.length} tablo / {visibleTables.reduce((total, table) => total + table.rows.length, 0)} satır</span>
-          </span>
-          <div className="ui-cluster-end">
-            {selectedTable && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={exportSelectedTable}>
-                <Download size={13} /> Exceli İndir
-              </button>
-            )}
-            {selectedTable?.canConfigure && !creatingNew && (
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingConfig((current) => !current)}>
-                <PenLine size={13} /> Tabloyu Düzenle
-              </button>
-            )}
-            {canCreateTable && (
-              <button type="button" className="btn btn-primary btn-sm" onClick={startNewTable}>
-                <Plus size={13} /> Yeni Tablo
-              </button>
-            )}
-          </div>
-        </div>
-        {visibleTables.length > 0 && (
-          <div className="card-body">
-            <div className="jobs-view-tabs department-table-tabs" role="tablist" aria-label="Departman tabloları">
-              {visibleTables.map((table) => (
-                <button
-                  key={table.id}
-                  type="button"
-                  className={`jobs-view-tab ${!creatingNew && selectedTable?.id === table.id ? "active" : ""}`}
-                  onClick={() => selectTable(table.id)}
-                >
-                  {table.title} ({table.rows.length})
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {(creatingNew || editingConfig || (!selectedTable && canCreateTable)) && canSaveTableConfig && (
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">{creatingNew || !selectedTable ? "Yeni Departman Tablosu" : "Tablo Ayarları"}</span>
-            <span className="badge badge-inprogress">{departmentLabelFor(session.departmentId)}</span>
-          </div>
-          <form className="card-body ui-body-form" onSubmit={saveTableConfig}>
-            <div className="form-row">
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Tablo Adı <span className="required">*</span></label>
-                <input className="form-control" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} maxLength={120} />
-              </div>
-              <label className="checklist-item checklist-clickable department-table-menu-toggle">
-                <input type="checkbox" checked={draft.showInMenu} onChange={(event) => setDraft((current) => ({ ...current, showInMenu: event.target.checked }))} />
-                <span>Menüde Göster</span>
-              </label>
-            </div>
-            <div className="form-group ui-form-compact">
-              <label className="form-label">Açıklama</label>
-              <textarea className="form-control" value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} rows={2} maxLength={1000} />
-            </div>
-            <div className="department-table-column-list">
-              {draft.columns.map((column, index) => (
-                <div key={`${column.id || "new"}-${index}`} className="department-table-column-row">
-                  <label className="shift-roster-field">
-                    <span>Kolon</span>
-                    <input className="form-control" value={column.label} onChange={(event) => updateDraftColumn(index, { label: event.target.value })} maxLength={80} />
-                  </label>
-                  <label className="shift-roster-field">
-                    <span>Tip</span>
-                    <select className="form-control" value={column.type} onChange={(event) => updateDraftColumn(index, { type: event.target.value as DepartmentTableColumn["type"] })}>
-                      {departmentTableColumnTypeOptions.map((option) => (
-                        <option key={option.id} value={option.id}>{option.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeDraftColumn(index)} disabled={draft.columns.length <= 1}>
-                    <Trash2 size={13} /> Sil
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="ui-cluster-end">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={addDraftColumn} disabled={draft.columns.length >= 40}>
-                <Plus size={13} /> Kolon Ekle
-              </button>
-              {selectedTable && !creatingNew && (
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingConfig(false)}>
-                  Vazgeç
-                </button>
-              )}
-              <button type="submit" className="btn btn-primary btn-sm" disabled={savingTable}>
-                <Save size={13} /> {savingTable ? "Kaydediliyor" : "Kaydet"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {selectedTable && !creatingNew ? (
-        <div className="card">
-          <div className="card-header">
-            <span>
-              <span className="card-title">{selectedTable.title}</span>
-              <span className="ui-meta">{selectedTable.departmentName} / {selectedTable.rows.length} satır</span>
-            </span>
-            <span className={`badge ${selectedTable.canEditRows ? "badge-completed" : "badge-pending"}`}>
-              {selectedTable.canEditRows ? "Düzenlenebilir" : "Görüntüleme"}
-            </span>
-          </div>
-          <div className="card-body ui-list-stack">
-            {selectedTable.description && <div className="module-helper">{selectedTable.description}</div>}
-            {selectedTable.canEditRows && (
-              <form className="department-table-row-form" onSubmit={addRow}>
-                {selectedTable.columns.map((column) => (
-                  <label key={column.id} className="department-table-field">
-                    <span>{column.label}</span>
-                    <input
-                      className="form-control"
-                      type={departmentTableInputType(column.type)}
-                      value={rowDraft[column.id] ?? ""}
-                      onChange={(event) => setRowDraft((current) => ({ ...current, [column.id]: event.target.value }))}
-                    />
-                  </label>
-                ))}
-                <label className="department-table-field">
-                  <span>Not</span>
-                  <input className="form-control" value={rowNote} onChange={(event) => setRowNote(event.target.value)} maxLength={2000} />
-                </label>
-                <button type="submit" className="btn btn-primary btn-sm department-table-row-submit" disabled={savingRow}>
-                  <Plus size={13} /> {savingRow ? "Ekleniyor" : "Satır Ekle"}
-                </button>
-              </form>
-            )}
-            <div className="table-scroll department-table-scroll">
-              <table className="data-table department-data-table">
-                <thead>
-                  <tr>
-                    {selectedTable.columns.map((column) => (
-                      <th key={column.id}>{column.label}<span className="ui-subtle"> {departmentTableColumnTypeLabel(column.type)}</span></th>
-                    ))}
-                    <th>Not</th>
-                    <th>Güncelleme</th>
-                    {selectedTable.canEditRows && <th>İşlem</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedTable.rows.length ? selectedTable.rows.map((row) => {
-                    const editing = editingRowId === row.id;
-                    return (
-                      <tr key={row.id}>
-                        {selectedTable.columns.map((column) => (
-                          <td key={column.id}>
-                            {editing ? (
-                              <input
-                                className="form-control form-control-sm"
-                                type={departmentTableInputType(column.type)}
-                                value={editingRowDraft[column.id] ?? ""}
-                                onChange={(event) => setEditingRowDraft((current) => ({ ...current, [column.id]: event.target.value }))}
-                              />
-                            ) : (
-                              row.values[column.id] || "-"
-                            )}
-                          </td>
-                        ))}
-                        <td>
-                          {editing ? (
-                            <input className="form-control form-control-sm" value={editingRowNote} onChange={(event) => setEditingRowNote(event.target.value)} maxLength={2000} />
-                          ) : (
-                            row.note || "-"
-                          )}
-                        </td>
-                        <td>{formatDateTime(row.updatedAt)}</td>
-                        {selectedTable.canEditRows && (
-                          <td>
-                            <div className="td-actions">
-                              {editing ? (
-                                <>
-                                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveRow(row.id)}>
-                                    <Save size={13} /> Kaydet
-                                  </button>
-                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingRowId("")}>
-                                    Vazgeç
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEditRow(row)}>
-                                    <PenLine size={13} /> Düzenle
-                                  </button>
-                                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteRow(row.id)}>
-                                    <Trash2 size={13} /> Sil
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  }) : (
-                    <tr>
-                      <td colSpan={selectedTable.columns.length + (selectedTable.canEditRows ? 3 : 2)}>
-                        <div className="ui-empty-inline">Kayıt yok.</div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      ) : (
-        !canCreateTable && <EmptyState title="Departman tablosu yok" description="Bu departman için tablo oluşturma yetkisi olan kullanıcı işlem yapabilir." />
-      )}
     </div>
   );
 }

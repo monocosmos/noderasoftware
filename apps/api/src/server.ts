@@ -3054,11 +3054,15 @@ async function canAssignWorkOrder(auth: AuthContext, departmentId: string, depar
 
 async function canDeleteAssignedDepartmentWorkOrder(
   auth: AuthContext,
-  workOrder: { departmentId: string; assignedToId: string | null; type: string }
+  workOrder: { departmentId: string; assignedToId: string | null; type: string; createdBy?: { department?: { code: string } | null } | null }
 ) {
   const department = await prisma.department.findUnique({ where: { id: workOrder.departmentId }, select: { code: true } });
   const departmentId = department?.code ? clientDepartmentIdFromCode(department.code) : "";
   if (!departmentId || auth.departmentId !== departmentId || !isWorkIncidentPoolType(workOrder.type)) return false;
+  const originDepartmentId = workOrder.createdBy?.department?.code
+    ? clientDepartmentIdFromCode(workOrder.createdBy.department.code)
+    : "";
+  if (originDepartmentId && originDepartmentId !== departmentId) return false;
   if (canManageWorkOrderStatus(auth, departmentId)) return true;
   if (workOrder.assignedToId !== auth.userId) return false;
   const policy = await workOrderPolicySets(auth.hotelId, workOrder.departmentId);
@@ -6073,11 +6077,10 @@ app.post("/work-orders/:code/claim", authenticate, requirePermission("work-order
     where: { code: existing.code },
     data: {
       assignedToId: req.auth!.userId,
-      status: "ACCEPTED",
       timeline: {
         create: {
           actorId: req.auth!.userId,
-          status: "ACCEPTED",
+          status: existing.status,
           message: `${departmentName(departmentId)} iş-ariza havuzundan işi aldı.`,
           metadata: { claimedById: req.auth!.userId }
         }
