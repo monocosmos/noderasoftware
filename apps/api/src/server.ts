@@ -2220,6 +2220,54 @@ function queryNumber(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+const defaultListPageSize = 50;
+const maxListPageSize = 100;
+const compactListPageSize = 24;
+
+function positiveQueryInteger(value: unknown, fallback: number) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function paginationFromQuery(
+  query: express.Request["query"],
+  options: { defaultPageSize?: number; maxPageSize?: number } = {}
+) {
+  const page = positiveQueryInteger(query.page, 1);
+  const requestedPageSize = positiveQueryInteger(query.pageSize ?? query.limit, options.defaultPageSize ?? defaultListPageSize);
+  const pageSize = Math.min(Math.max(1, requestedPageSize), options.maxPageSize ?? maxListPageSize);
+  return {
+    page,
+    pageSize,
+    skip: (page - 1) * pageSize,
+    take: pageSize
+  };
+}
+
+function paginationMeta(page: number, pageSize: number, total: number) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total ? (page - 1) * pageSize + 1 : 0;
+  const to = total ? Math.min(total, (page - 1) * pageSize + pageSize) : 0;
+  return {
+    page,
+    pageSize,
+    total,
+    totalPages,
+    from,
+    to,
+    hasPrevious: page > 1,
+    hasNext: page < totalPages
+  };
+}
+
+function paginatedItemsResponse<T>(items: T[], page: number, pageSize: number, total: number) {
+  return {
+    items,
+    pagination: paginationMeta(page, pageSize, total)
+  };
+}
+
 async function deepHealthSnapshot() {
   const checks: Array<{ name: string; run: () => Promise<unknown> }> = [
     { name: "db", run: () => prisma.$queryRaw`SELECT 1` },
@@ -5075,28 +5123,45 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
   await ensureHotelUserAccountIds(req.auth!.hotelId);
   const departments = scopeDepartmentIds(req.auth!);
   const departmentTablesEnabled = hasFeatureAccess(req, "departmentTables");
+  const listPage = paginationFromQuery(req.query);
+  const tableRowsPageSize = Math.min(listPage.pageSize, defaultListPageSize);
+  const workOrderWhere = workOrderVisibilityWhere(req.auth!);
+  const reminderWhere = reminderVisibilityWhere(req.auth!);
 
-  const [workOrders, notifications, reminders, users, activeDepartments, activeShift, departmentTables] = await Promise.all([
+  const [
+    workOrders,
+    workOrdersTotal,
+    notifications,
+    notificationsTotal,
+    reminders,
+    remindersTotal,
+    users,
+    activeDepartments,
+    activeShift,
+    departmentTables
+  ] = await Promise.all([
     prisma.workOrder.findMany({
-      where: workOrderVisibilityWhere(req.auth!),
+      where: workOrderWhere,
       include: workOrderInclude,
-      orderBy: [{ priority: "desc" }, { createdAt: "desc" }]
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      skip: listPage.skip,
+      take: listPage.take
     }),
+    prisma.workOrder.count({ where: workOrderWhere }),
     prisma.notification.findMany({
       where: { userId: req.auth!.userId },
       orderBy: { createdAt: "desc" },
-      take: 20
+      take: Math.min(20, listPage.pageSize)
     }),
+    prisma.notification.count({ where: { userId: req.auth!.userId } }),
     prisma.reminder.findMany({
-      where: {
-        hotelId: req.auth!.hotelId,
-        deletedAt: null,
-        department: { code: departmentCodeFromClientId(req.auth!.departmentId) },
-        OR: [{ assignedToId: req.auth!.userId }, { createdById: req.auth!.userId }]
-      },
+      where: reminderWhere,
       include: { createdBy: { include: userInclude }, assignedTo: { include: userInclude }, department: true },
-      orderBy: { remindAt: "asc" }
+      orderBy: { remindAt: "asc" },
+      skip: listPage.skip,
+      take: listPage.take
     }),
+    prisma.reminder.count({ where: reminderWhere }),
     canManageUsers(req.auth!.roleId)
       ? prisma.user.findMany({ where: visibleManageableUsersWhere(req.auth!), include: userInclude, orderBy: { fullName: "asc" } })
       : Promise.resolve([]),
@@ -5115,7 +5180,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
           where: departmentTableVisibleWhere(req.auth!),
           include: {
             department: true,
-            rows: { orderBy: { updatedAt: "desc" }, take: 200 }
+            rows: { orderBy: { updatedAt: "desc" }, take: tableRowsPageSize }
           },
           orderBy: [{ department: { name: "asc" } }, { title: "asc" }]
         })
@@ -5133,7 +5198,13 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     departmentTables: departmentTables.map((table) => serializeDepartmentTable(table, req.auth!)),
     notifications: notifications.map(serializeNotification),
     activeShift: activeShift ? serializeShiftSession(activeShift) : null,
-    maintenance: readMaintenanceStatus()
+    maintenance: readMaintenanceStatus(),
+    pagination: {
+      jobs: paginationMeta(listPage.page, listPage.pageSize, workOrdersTotal),
+      reminders: paginationMeta(listPage.page, listPage.pageSize, remindersTotal),
+      notifications: paginationMeta(1, Math.min(20, listPage.pageSize), notificationsTotal),
+      departmentTableRows: { pageSize: tableRowsPageSize }
+    }
   });
 }));
 
@@ -5680,6 +5751,8 @@ app.get("/department-tables", authenticate, requireModuleAccess("departmentTable
     ? req.query.departmentId.trim()
     : "";
   const includeDisabled = typeof req.query.includeDisabled === "string" && req.query.includeDisabled === "true";
+  const listPage = paginationFromQuery(req.query);
+  const rowTake = Math.min(listPage.pageSize, defaultListPageSize);
   const where: Prisma.DepartmentTableWhereInput = {
     hotelId: req.auth!.hotelId,
     ...(includeDisabled && canViewAllShiftPanels(req.auth!) ? {} : { enabled: true }),
@@ -5700,11 +5773,14 @@ app.get("/department-tables", authenticate, requireModuleAccess("departmentTable
     where,
     include: {
       department: true,
-      rows: { orderBy: { updatedAt: "desc" }, take: 200 }
+      rows: { orderBy: { updatedAt: "desc" }, take: rowTake }
     },
     orderBy: [{ department: { name: "asc" } }, { title: "asc" }]
   });
-  res.json({ items: tables.map((table) => serializeDepartmentTable(table, req.auth!)) });
+  res.json({
+    items: tables.map((table) => serializeDepartmentTable(table, req.auth!)),
+    pagination: { rows: { pageSize: rowTake } }
+  });
 }));
 
 app.post("/department-tables", authenticate, requireModuleAccess("departmentTables"), asyncHandler(async (req, res) => {
@@ -5877,12 +5953,24 @@ app.delete("/department-tables/:tableId/rows/:rowId", authenticate, requireModul
 }));
 
 app.get("/work-orders", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
-  const workOrders = await prisma.workOrder.findMany({
-    where: workOrderVisibilityWhere(req.auth!),
-    include: workOrderInclude,
-    orderBy: [{ priority: "desc" }, { createdAt: "desc" }]
-  });
-  res.json({ items: workOrders.map((workOrder) => serializeWorkOrder(workOrder)) });
+  const listPage = paginationFromQuery(req.query);
+  const where = workOrderVisibilityWhere(req.auth!);
+  const [workOrders, total] = await Promise.all([
+    prisma.workOrder.findMany({
+      where,
+      include: workOrderInclude,
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.workOrder.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(
+    workOrders.map((workOrder) => serializeWorkOrder(workOrder)),
+    listPage.page,
+    listPage.pageSize,
+    total
+  ));
 });
 
 app.get("/work-orders/:code", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
@@ -6395,15 +6483,22 @@ app.delete("/work-orders/:code", authenticate, requireModuleAccess("jobs"), asyn
 
 app.get("/calendar-events", authenticate, requirePermission("calendar:read"), requireModuleAccess("departmentCalendar"), async (req, res) => {
   const departmentCodes = scopeDepartmentIds(req.auth!).map(departmentCodeFromClientId);
-  const events = await prisma.calendarEvent.findMany({
-    where: {
+  const listPage = paginationFromQuery(req.query, { defaultPageSize: maxListPageSize, maxPageSize: 200 });
+  const where: Prisma.CalendarEventWhereInput = {
       deletedAt: null,
       department: { hotelId: req.auth!.hotelId, code: { in: departmentCodes } }
-    },
-    include: { department: true },
-    orderBy: { startsAt: "asc" }
-  });
-  res.json({ items: events.map(serializeCalendarEvent) });
+  };
+  const [events, total] = await Promise.all([
+    prisma.calendarEvent.findMany({
+      where,
+      include: { department: true },
+      orderBy: { startsAt: "asc" },
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.calendarEvent.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(events.map(serializeCalendarEvent), listPage.page, listPage.pageSize, total));
 });
 
 app.post("/calendar-events", authenticate, requirePermission("calendar:write"), requireModuleAccess("departmentCalendar"), async (req, res) => {
@@ -6453,17 +6548,19 @@ app.get("/management-requests", authenticate, requireModuleAccess("managementReq
     res.status(403).json({ error: "FORBIDDEN" });
     return;
   }
-  const requests = await prisma.managementRequest.findMany({
-    where: {
-      hotelId: req.auth!.hotelId,
-      deletedAt: null,
-      OR: [{ createdById: req.auth!.userId }, { recipientId: req.auth!.userId }, { relatedUserId: req.auth!.userId }]
-    },
-    include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } },
-    orderBy: { createdAt: "desc" },
-    take: 100
-  });
-  res.json({ items: requests.map(serializeManagementRequest) });
+  const listPage = paginationFromQuery(req.query);
+  const where = managementRequestVisibilityWhere(req.auth!);
+  const [requests, total] = await Promise.all([
+    prisma.managementRequest.findMany({
+      where,
+      include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } },
+      orderBy: { createdAt: "desc" },
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.managementRequest.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(requests.map(serializeManagementRequest), listPage.page, listPage.pageSize, total));
 }));
 
 app.post("/management-requests", authenticate, requireModuleAccess("managementRequests"), asyncHandler(async (req, res) => {
@@ -6582,19 +6679,24 @@ app.patch("/management-requests/:id/status", authenticate, requireModuleAccess("
 }));
 
 app.get("/operation-documents", authenticate, requireModuleAccess("operationDocuments"), asyncHandler(async (req, res) => {
-  const [documents, audience] = await Promise.all([
+  const listPage = paginationFromQuery(req.query, { defaultPageSize: compactListPageSize, maxPageSize: defaultListPageSize });
+  const where: Prisma.OperationDocumentWhereInput = { hotelId: req.auth!.hotelId, deletedAt: null };
+  const [documents, total, audience] = await Promise.all([
     prisma.operationDocument.findMany({
-      where: { hotelId: req.auth!.hotelId, deletedAt: null },
+      where,
       include: operationDocumentInclude,
       orderBy: [{ operationDate: "desc" }, { createdAt: "desc" }],
-      take: 100
+      skip: listPage.skip,
+      take: listPage.take
     }),
+    prisma.operationDocument.count({ where }),
     operationDocumentAudienceUsers(req.auth!.hotelId)
   ]);
 
   res.json({
     canCreate: canCreateOperationDocument(req.auth!),
-    items: documents.map((document) => serializeOperationDocument(document, audience, req.auth!))
+    items: documents.map((document) => serializeOperationDocument(document, audience, req.auth!)),
+    pagination: paginationMeta(listPage.page, listPage.pageSize, total)
   });
 }));
 
@@ -6682,17 +6784,19 @@ app.patch("/operation-documents/:id/read", authenticate, requireModuleAccess("op
 
 app.get("/reminders", authenticate, requireModuleAccess("reminders"), asyncHandler(async (req, res) => {
   await processDueRemindersForRequest(req.auth!.userId);
-  const reminders = await prisma.reminder.findMany({
-    where: {
-      hotelId: req.auth!.hotelId,
-      deletedAt: null,
-      department: { code: departmentCodeFromClientId(req.auth!.departmentId) },
-      OR: [{ assignedToId: req.auth!.userId }, { createdById: req.auth!.userId }]
-    },
-    include: { createdBy: { include: userInclude }, assignedTo: { include: userInclude }, department: true },
-    orderBy: { remindAt: "asc" }
-  });
-  res.json({ items: reminders.map(serializeReminder) });
+  const listPage = paginationFromQuery(req.query);
+  const where = reminderVisibilityWhere(req.auth!);
+  const [reminders, total] = await Promise.all([
+    prisma.reminder.findMany({
+      where,
+      include: { createdBy: { include: userInclude }, assignedTo: { include: userInclude }, department: true },
+      orderBy: { remindAt: "asc" },
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.reminder.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(reminders.map(serializeReminder), listPage.page, listPage.pageSize, total));
 }));
 
 app.post("/reminders", authenticate, requireModuleAccess("reminders"), asyncHandler(async (req, res) => {
@@ -6872,12 +6976,18 @@ app.get("/rooms/:number/history", authenticate, requirePermission("work-orders:r
 
 app.get("/notifications", authenticate, async (req, res) => {
   await processDueRemindersForRequest(req.auth!.userId);
-  const notifications = await prisma.notification.findMany({
-    where: { userId: req.auth!.userId },
-    orderBy: { createdAt: "desc" },
-    take: 50
-  });
-  res.json({ items: notifications.map(serializeNotification) });
+  const listPage = paginationFromQuery(req.query);
+  const where: Prisma.NotificationWhereInput = { userId: req.auth!.userId };
+  const [notifications, total] = await Promise.all([
+    prisma.notification.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.notification.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(notifications.map(serializeNotification), listPage.page, listPage.pageSize, total));
 });
 
 app.patch("/notifications/read-all", authenticate, async (req, res) => {
@@ -6903,15 +7013,21 @@ app.patch("/notifications/:id/read", authenticate, async (req, res) => {
 });
 
 app.get("/audit-logs", authenticate, requirePermission("audit:read"), requireModuleAccess("reports"), requireFeatureAccess("featureAuditLogs"), async (req, res) => {
-  const logs = await prisma.auditLog.findMany({
-    where: req.auth!.roleId === "generalManager"
+  const listPage = paginationFromQuery(req.query);
+  const where: Prisma.AuditLogWhereInput = req.auth!.roleId === "generalManager"
       ? { actor: { hotelId: req.auth!.hotelId } }
-      : { actor: { hotelId: req.auth!.hotelId, department: { code: departmentCodeFromClientId(req.auth!.departmentId) } } },
-    include: { actor: { include: { role: true, department: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 100
-  });
-  res.json({ items: logs });
+      : { actor: { hotelId: req.auth!.hotelId, department: { code: departmentCodeFromClientId(req.auth!.departmentId) } } };
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      include: { actor: { include: { role: true, department: true } } },
+      orderBy: { createdAt: "desc" },
+      skip: listPage.skip,
+      take: listPage.take
+    }),
+    prisma.auditLog.count({ where })
+  ]);
+  res.json(paginatedItemsResponse(logs, listPage.page, listPage.pageSize, total));
 });
 
 function isPayloadTooLargeError(error: unknown) {

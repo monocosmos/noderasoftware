@@ -98,11 +98,15 @@ fi
 
 cd "${APP_DIR}"
 
+if [ -d "${APP_DIR}/.git/lfs/tmp" ]; then
+  rm -f "${APP_DIR}"/.git/lfs/tmp/* 2>/dev/null || true
+fi
+
 echo "==> GitHub guncel kaynak aliniyor"
 git fetch --prune origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
 
-git checkout -B "${BRANCH}" "origin/${BRANCH}"
-git reset --hard "origin/${BRANCH}"
+GIT_LFS_SKIP_SMUDGE=1 git checkout -f -B "${BRANCH}" "origin/${BRANCH}"
+GIT_LFS_SKIP_SMUDGE=1 git reset --hard "origin/${BRANCH}"
 git lfs install --local
 git lfs pull
 git clean -fd \

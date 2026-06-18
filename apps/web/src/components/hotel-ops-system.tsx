@@ -174,6 +174,11 @@ type BootstrapResponse = {
   activeShift: ShiftRecord | null;
   maintenance?: MaintenanceStatus;
   sync?: SyncStateResponse;
+  pagination?: {
+    jobs?: PaginationMeta;
+    reminders?: PaginationMeta;
+    notifications?: PaginationMeta;
+  };
 };
 
 type AndroidPushDeviceStatus = {
@@ -203,6 +208,33 @@ type SyncStateResponse = {
   serverTime: string;
   maintenance: MaintenanceStatus;
   state: Record<string, unknown>;
+};
+
+type PaginationMeta = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  from: number;
+  to: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+};
+
+type PaginatedItemsResponse<T> = {
+  items: T[];
+  pagination?: PaginationMeta;
+};
+
+const DEFAULT_LIST_PAGINATION: PaginationMeta = {
+  page: 1,
+  pageSize: 50,
+  total: 0,
+  totalPages: 1,
+  from: 0,
+  to: 0,
+  hasPrevious: false,
+  hasNext: false
 };
 
 type MaintenanceStatus = {
@@ -2696,6 +2728,7 @@ export function HotelOpsSystem() {
   const [operationDocuments, setOperationDocuments] = useState<OperationDocumentRecord[]>([]);
   const [departmentTables, setDepartmentTables] = useState<DepartmentTableRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [jobPagination, setJobPagination] = useState<PaginationMeta>(DEFAULT_LIST_PAGINATION);
   const [activeShift, setActiveShift] = useState<ShiftRecord | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<DemoUser[]>([]);
   const [managementRequestRecipients, setManagementRequestRecipients] = useState<DemoUser[]>([]);
@@ -2887,6 +2920,7 @@ export function HotelOpsSystem() {
         syncEtagRef.current = "";
         setUsers([]);
         setJobs([]);
+        setJobPagination(DEFAULT_LIST_PAGINATION);
         setReminders([]);
         setManagementRequests([]);
         setOperationDocuments([]);
@@ -2930,6 +2964,7 @@ export function HotelOpsSystem() {
         setSession(bootstrap.user);
         setUsers(bootstrap.users);
         setJobs(bootstrap.jobs);
+        setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
         setReminders(bootstrap.reminders ?? []);
         setManagementRequests([]);
         setOperationDocuments([]);
@@ -2945,6 +2980,7 @@ export function HotelOpsSystem() {
         setSession(null);
         setUsers([]);
         setJobs([]);
+        setJobPagination(DEFAULT_LIST_PAGINATION);
         setReminders([]);
         setManagementRequests([]);
         setOperationDocuments([]);
@@ -3224,6 +3260,7 @@ export function HotelOpsSystem() {
     setSession(bootstrap.user);
     setUsers(bootstrap.users);
     setJobs(bootstrap.jobs);
+    setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
     setReminders(bootstrap.reminders ?? []);
     setNotifications(bootstrap.notifications ?? []);
     setActiveShift(bootstrap.activeShift ?? null);
@@ -3259,6 +3296,22 @@ export function HotelOpsSystem() {
       // Mutation succeeded; keep the success message and let the next navigation/bootstrap refresh recover.
     }
   }, [refreshAppData]);
+
+  const loadJobsPage = useCallback(async (page: number) => {
+    const safePage = Math.max(1, Math.floor(page));
+    const pageSize = jobPagination.pageSize || DEFAULT_LIST_PAGINATION.pageSize;
+    const response = await apiRequest<PaginatedItemsResponse<JobRecord>>(`/work-orders?page=${safePage}&pageSize=${pageSize}`);
+    setJobs(response.items);
+    setJobPagination(response.pagination ?? {
+      ...DEFAULT_LIST_PAGINATION,
+      page: safePage,
+      pageSize,
+      total: response.items.length,
+      totalPages: 1,
+      from: response.items.length ? 1 : 0,
+      to: response.items.length
+    });
+  }, [jobPagination.pageSize]);
 
   useEffect(() => {
     if (!session) {
@@ -3621,6 +3674,7 @@ export function HotelOpsSystem() {
       }
       setUsers(bootstrap.users);
       setJobs(bootstrap.jobs);
+      setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
       setReminders(bootstrap.reminders ?? []);
       setNotifications(bootstrap.notifications ?? []);
       setActiveShift(bootstrap.activeShift ?? null);
@@ -3677,6 +3731,8 @@ export function HotelOpsSystem() {
     syncEtagRef.current = "";
     clearApiToken();
     setSession(null);
+    setJobs([]);
+    setJobPagination(DEFAULT_LIST_PAGINATION);
     setReminders([]);
     setManagementRequests([]);
     setOperationDocuments([]);
@@ -4247,6 +4303,7 @@ export function HotelOpsSystem() {
                 departmentLabelFor: activeDepartmentLabel,
                 jobDraft,
                 jobCreateInProgress,
+                jobPagination,
                 jobs,
                 notifications,
                 operationDocumentDraft,
@@ -4281,6 +4338,7 @@ export function HotelOpsSystem() {
                 visibleJobs,
                 navigate,
                 refreshData: refreshAppDataQuietly,
+                loadJobsPage,
                 refreshMaintenanceStatus,
                 handleCreateJob: handleCreateJobApi,
                 handleCreateManagementRequest: handleCreateManagementRequestApi,
@@ -5175,6 +5233,7 @@ type RenderContext = {
   departmentLabelFor: (departmentId: string) => string;
   jobDraft: JobDraft;
   jobCreateInProgress: boolean;
+  jobPagination: PaginationMeta;
   jobs: JobRecord[];
   managementRequestDraft: ManagementRequestDraft;
   managementRequestRecipients: DemoUser[];
@@ -5209,6 +5268,7 @@ type RenderContext = {
   visibleJobs: JobRecord[];
   navigate: (path: string) => void;
   refreshData: () => Promise<void>;
+  loadJobsPage: (page: number) => Promise<void>;
   refreshMaintenanceStatus: () => Promise<MaintenanceStatus>;
   handleCreateJob: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   handleCreateManagementRequest: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
@@ -6300,8 +6360,23 @@ function OperationDocumentsPage({
   );
 }
 
-function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, filteredJobs, filters, navigate, queryParams, session, setFilters, visibleJobs }: RenderContext) {
+function JobsPage({
+  departmentAssignees,
+  departmentLabelFor,
+  departmentOptions,
+  filteredJobs,
+  filters,
+  jobPagination,
+  loadJobsPage,
+  navigate,
+  queryParams,
+  session,
+  setAlert,
+  setFilters,
+  visibleJobs
+}: RenderContext) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const requestedView = queryParams.get("view");
   const quickView = requestedView === "outgoing-completed"
@@ -6467,6 +6542,40 @@ function JobsPage({ departmentAssignees, departmentLabelFor, departmentOptions, 
 
       <div className="list-toolbar">
         <span className="ui-muted">{quickViewLabel ? `${quickViewLabel}: ` : ""}{listJobs.length} kayıt listeleniyor</span>
+        <div className="list-pagination" aria-label="Is listesi sayfalama">
+          <span className="list-page-range">
+            {jobPagination.total ? `${jobPagination.from}-${jobPagination.to} / ${jobPagination.total}` : `${listJobs.length}`}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline list-page-btn"
+            disabled={!jobPagination.hasPrevious || pageLoading}
+            onClick={() => {
+              if (!jobPagination.hasPrevious || pageLoading) return;
+              setPageLoading(true);
+              loadJobsPage(jobPagination.page - 1)
+                .catch(() => setAlert("Liste sayfasi yuklenemedi. Baglantiyi kontrol edip tekrar deneyin."))
+                .finally(() => setPageLoading(false));
+            }}
+          >
+            Onceki
+          </button>
+          <span className="list-page-status">{jobPagination.page} / {jobPagination.totalPages}</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline list-page-btn"
+            disabled={!jobPagination.hasNext || pageLoading}
+            onClick={() => {
+              if (!jobPagination.hasNext || pageLoading) return;
+              setPageLoading(true);
+              loadJobsPage(jobPagination.page + 1)
+                .catch(() => setAlert("Liste sayfasi yuklenemedi. Baglantiyi kontrol edip tekrar deneyin."))
+                .finally(() => setPageLoading(false));
+            }}
+          >
+            Sonraki
+          </button>
+        </div>
         <div className="quick-filter-group">
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-delayed" onClick={() => applyQuickFilter({ status: "Delayed" })}>Ertelenen</button>}
           {canAdvancedFilter && canUseAccess(session, "featureSlaEscalation") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-sla" onClick={() => applyQuickFilter({ slaRisk: "1" })}>SLA Riski</button>}

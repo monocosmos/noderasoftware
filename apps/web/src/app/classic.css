@@ -2998,6 +2998,35 @@ textarea.form-control {
   flex-wrap: nowrap;
 }
 
+.list-pagination {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.list-page-range,
+.list-page-status {
+  color: var(--classic-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.list-page-btn {
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.list-page-btn:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
 .jobs-view-tabs {
   display: flex;
   gap: 8px;
@@ -6526,6 +6555,19 @@ textarea.form-control {
     font-size: 11px !important;
     flex: 1 1 auto;
     min-width: 70px;
+  }
+  .list-pagination {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+  .list-page-range {
+    display: none;
+  }
+  .list-page-btn {
+    min-height: 24px;
+    padding: 3px 6px;
+    font-size: 10px;
   }
   .quick-filter-group {
     flex: 1 1 100%;
