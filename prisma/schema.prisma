@@ -96,7 +96,7 @@ model Hotel {
   managementRequests  ManagementRequest[]
   operationDocuments  OperationDocument[]
   workOrderPolicies   WorkOrderDepartmentPolicy[]
-  departmentTables     DepartmentTable[]
+  departmentTables    DepartmentTable[]
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @updatedAt
 }
@@ -117,14 +117,15 @@ model HotelFloor {
 }
 
 model HotelFloorArea {
-  id        String     @id @default(cuid())
-  floorId   String
-  label     String
-  kind      String     @default("ROOM")
-  sortOrder Int        @default(0)
-  floor     HotelFloor @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                   String     @id @default(cuid())
+  floorId              String
+  label                String
+  kind                 String     @default("ROOM")
+  sortOrder            Int        @default(0)
+  visibleToDepartments Boolean    @default(true)
+  floor                HotelFloor @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
   @@unique([floorId, label])
   @@index([floorId, sortOrder])
@@ -251,10 +252,10 @@ model User {
   readManagementRequests      ManagementRequest[]     @relation("ReadManagementRequests")
   createdOperationDocuments   OperationDocument[]     @relation("CreatedOperationDocuments")
   operationDocumentReads      OperationDocumentRead[] @relation("OperationDocumentReads")
-  createdDepartmentTables      DepartmentTable[]       @relation("CreatedDepartmentTables")
-  updatedDepartmentTables      DepartmentTable[]       @relation("UpdatedDepartmentTables")
-  createdDepartmentTableRows   DepartmentTableRow[]    @relation("CreatedDepartmentTableRows")
-  updatedDepartmentTableRows   DepartmentTableRow[]    @relation("UpdatedDepartmentTableRows")
+  createdDepartmentTables     DepartmentTable[]       @relation("CreatedDepartmentTables")
+  updatedDepartmentTables     DepartmentTable[]       @relation("UpdatedDepartmentTables")
+  createdDepartmentTableRows  DepartmentTableRow[]    @relation("CreatedDepartmentTableRows")
+  updatedDepartmentTableRows  DepartmentTableRow[]    @relation("UpdatedDepartmentTableRows")
   accountIdReservation        AccountIdReservation?
   createdAt                   DateTime                @default(now())
   updatedAt                   DateTime                @updatedAt

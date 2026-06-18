@@ -398,6 +398,7 @@ export type HotelFloorAreaRecord = {
   label: string;
   kind: "ROOM" | "AREA";
   sortOrder: number;
+  visibleToDepartments: boolean;
 };
 
 export type HotelFloorRecord = {

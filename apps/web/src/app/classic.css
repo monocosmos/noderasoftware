@@ -5314,6 +5314,9 @@ textarea.form-control {
 .room-status-pill.inprogress { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
 .room-status-pill.urgent,
 .room-status-pill.delayed { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.room-status-pill.occupied { background: #dcfce7; border-color: #86efac; color: #166534; }
+.room-status-pill.vacant { background: #f8fafc; border-color: #cbd5e1; color: #475569; }
+.room-status-pill.work { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
 
 .room-approval-actions,
 .room-approval-panel {
@@ -5483,6 +5486,162 @@ textarea.form-control {
 .room-tile.urgent,
 .room-tile.delayed { background: #fef2f2; border-color: #fecaca; }
 .room-tile.inprogress { background: #eff6ff; border-color: #bfdbfe; }
+.room-tile.occupied { background: #dcfce7; border-color: #86efac; }
+.room-tile.vacant { background: #f8fafc; border-color: #cbd5e1; }
+.room-tile.work { background: #fff7ed; border-color: #fed7aa; }
+
+.operation-tracking-card {
+  border-top: 3px solid #2563eb;
+}
+
+.floor-selector-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: min(260px, 100%);
+}
+
+.floor-selector-inline .form-label {
+  margin: 0;
+}
+
+.operation-room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+}
+
+.operation-room-tile {
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius);
+  min-height: 92px;
+  padding: 12px 10px;
+  display: grid;
+  align-content: space-between;
+  gap: 5px;
+  text-align: left;
+  color: var(--classic-text);
+  cursor: pointer;
+}
+
+.operation-room-tile strong {
+  font-size: 16px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.operation-room-tile span,
+.operation-room-tile small {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.operation-room-tile span {
+  color: var(--classic-text);
+}
+
+.operation-room-tile small {
+  color: var(--classic-muted);
+}
+
+.operation-room-tile.occupied {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.operation-room-tile.vacant {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.operation-room-tile.work {
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.operation-room-tile:hover {
+  border-color: var(--classic-primary);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.floor-plan-output-card {
+  border-top: 3px solid #0f766e;
+}
+
+.floor-plan-output-body {
+  display: grid;
+  gap: 16px;
+}
+
+.floor-plan-output-floor {
+  display: grid;
+  gap: 10px;
+}
+
+.floor-plan-output-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.floor-plan-output-title strong {
+  color: var(--classic-text);
+  font-weight: 850;
+}
+
+.floor-plan-output-title small {
+  color: var(--classic-muted);
+  font-size: 12px;
+}
+
+.floor-plan-output-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.floor-output-tile {
+  position: relative;
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius);
+  background: #fff;
+  min-height: 96px;
+  padding: 14px 36px 12px 12px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.floor-output-tile input {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 16px;
+  height: 16px;
+}
+
+.floor-output-tile strong {
+  color: var(--classic-text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.floor-output-tile small {
+  color: var(--classic-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.floor-output-tile.visible {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.floor-output-tile.technical-only {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
 
 .module-mini-card {
   cursor: pointer;
@@ -6445,6 +6604,14 @@ textarea.form-control {
   .room-status-grid,
   .module-mini-grid {
     grid-template-columns: 1fr;
+  }
+  .operation-room-grid,
+  .floor-plan-output-grid {
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  }
+  .floor-selector-inline {
+    display: grid;
+    width: 100%;
   }
   .type-selector,
   .management-request-actions,

@@ -91,8 +91,8 @@ export const modules: ModuleDefinition[] = [
     id: "housekeeping",
     titleTR: "Housekeeping",
     titleEN: "Housekeeping",
-    descriptionTR: "Oda durumları, kat planı, temizlik ve minibar",
-    descriptionEN: "Room status, floor plan, cleaning and minibar",
+    descriptionTR: "Operasyon takip, kat planı, temizlik ve minibar",
+    descriptionEN: "Operation tracking, floor plan, cleaning and minibar",
     icon: Sparkles,
     color: "from-emerald-500 to-lime-400"
   },

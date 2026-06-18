@@ -1166,7 +1166,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "shiftPanels", label: "Vardiya Paneli", group: "Takvim & Hatırlatma" },
   { id: "managementRequests", label: "Talepler", group: "Takvim & Hatırlatma" },
   { id: "inventory", label: "Envanter ve Depo", group: "Yönetim" },
-  { id: "roomStatus", label: "Oda Durum Yönetimi", group: "Yönetim" },
+  { id: "roomStatus", label: "Operasyon Takip", group: "Yönetim" },
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
   { id: "operationDocuments", label: "Operasyon Belgeleri", group: "Yönetim" },
@@ -1208,14 +1208,17 @@ const featureAccessOptions: Array<{ id: FeatureAccessId; label: string }> = [
 ];
 
 const roomStatusOptions = [
-  { label: "Temiz", tone: "completed" },
-  { label: "Kirli", tone: "pending" },
-  { label: "Arızalı", tone: "urgent" },
-  { label: "Kontrol Bekliyor", tone: "inprogress" },
-  { label: "Blokajlı", tone: "delayed" },
-  { label: "DND - Rahatsız Etmeyin", tone: "delayed" },
-  { label: "OOO - Out of Order", tone: "urgent" },
-  { label: "OOI - Envanter Dışı", tone: "urgent" }
+  { label: "Dolu", tone: "occupied" },
+  { label: "Boş", tone: "vacant" },
+  { label: "Temiz", tone: "vacant" },
+  { label: "Kirli", tone: "work" },
+  { label: "Bakımda", tone: "work" },
+  { label: "Arızalı", tone: "work" },
+  { label: "Kontrol Bekliyor", tone: "work" },
+  { label: "Blokajlı", tone: "work" },
+  { label: "DND - Rahatsız Etmeyin", tone: "work" },
+  { label: "OOO - Out of Order", tone: "work" },
+  { label: "OOI - Envanter Dışı", tone: "work" }
 ];
 
 type OperationalModuleConfig = {
@@ -1247,9 +1250,9 @@ const operationalModules: OperationalModuleConfig[] = [
   {
     id: "roomStatus",
     path: "/modules/rooms",
-    title: "Oda Durum Yönetimi",
-    subtitle: "Temiz, kirli, arızalı, blokajlı ve VIP oda takibi",
-    primaryAction: "Oda Durumu Güncelle",
+    title: "Operasyon Takip",
+    subtitle: "Kat bazlı oda ve alan operasyon durumları",
+    primaryAction: "Operasyon Güncelle",
     fields: ["Oda", "Durum", "Açıklama"],
     metrics: [{ label: "Kirli Oda", value: "14", tone: "pending" }, { label: "Blokajlı", value: "3", tone: "delayed" }],
     records: [
@@ -1644,6 +1647,41 @@ function operationalRecordsFor(module: OperationalModuleConfig, visibleJobs: Job
     return [...roomJobs, ...seed];
   }
   return seed;
+}
+
+function operationAreaLabelFromRecord(record: Pick<OperationalRecord, "title">) {
+  return record.title.replace(/^Oda\s+/i, "").trim();
+}
+
+function roomOperationTone(status: string) {
+  const normalized = status.toLocaleLowerCase("tr-TR");
+  if (normalized.includes("dolu")) return "occupied";
+  if (normalized.includes("boş") || normalized.includes("temiz") || normalized.includes("alan")) return "vacant";
+  if (
+    normalized.includes("bakım") ||
+    normalized.includes("kirli") ||
+    normalized.includes("arız") ||
+    normalized.includes("kontrol") ||
+    normalized.includes("blokaj") ||
+    normalized.includes("dnd") ||
+    normalized.includes("ooo") ||
+    normalized.includes("ooi") ||
+    normalized.includes("operasyon")
+  ) {
+    return "work";
+  }
+  return "vacant";
+}
+
+function roomOperationStatusForArea(area: HotelFloorAreaRecord, records: OperationalRecord[]) {
+  const areaKey = floorPlanAreaKey(area.label);
+  const record = records.find((item) => floorPlanAreaKey(operationAreaLabelFromRecord(item)) === areaKey);
+  const status = record?.status ?? (area.kind === "AREA" ? "Alan" : "Boş");
+  return {
+    record,
+    status,
+    tone: roomOperationTone(status)
+  };
 }
 
 function operationalStorageKey(moduleId: ModuleId, userId: string) {
@@ -4985,7 +5023,7 @@ function SidebarNav({
   });
   const prioritizeRoomStatus = isHousekeepingStaff(session) || isHousekeepingChief(session) || isHousekeepingManager(session);
   const urgentJobsNavLabel = urgentJobsLabel();
-  const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Oda Durumu", Home, undefined, "oda housekeeping önbüro");
+  const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Operasyon Takip", Home, undefined, "oda operasyon housekeeping önbüro");
   const priorityItems = [
     entry("dashboard", "dashboard", "/dashboard", "Ana Sayfa", LayoutDashboard, undefined, "dashboard ana ekran ozet"),
     ...(prioritizeRoomStatus ? [roomStatusEntry] : []),
@@ -5590,6 +5628,8 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const [selectedId, setSelectedId] = useState("");
   const [activeMetric, setActiveMetric] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [floorPlanFloors, setFloorPlanFloors] = useState<HotelFloorRecord[]>([]);
+  const [selectedOperationFloorLevel, setSelectedOperationFloorLevel] = useState("");
   const localRecordIds = useMemo(() => new Set(localRecords.map((record) => record.id)), [localRecords]);
   const records = [...localRecords, ...seedRecords.filter((record) => !localRecordIds.has(record.id))].filter((record) => (
     !completedRecordIds.includes(record.id) && !record.status.includes("Tamamlandı")
@@ -5604,12 +5644,12 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const showCreatePanel = module.id !== "announcements";
   const roomStatusWorkflowNote = isRoomStatusModule
     ? isHousekeepingStaff(session)
-      ? "HK personeli oda durum kartını açar ve durumu günceller. Kayıt kat şefi onayına düşer."
+      ? "HK personeli operasyon kartını açar ve durumu günceller. Kayıt kat şefi onayına düşer."
       : isHousekeepingChief(session)
         ? "Kat şefi Onay Sekmesi üzerinden kaydı kontrol eder, gerekirse durumu değiştirir ve HK müdürüne gönderir."
         : isHousekeepingManager(session)
-          ? "HK müdürü Onay Sekmesi üzerinden final onayı verir. Yeni oda durum kartını HK personeli açar."
-          : "Oda durum akışı HK personeli, kat şefi ve HK müdürü rolleriyle yönetilir."
+          ? "HK müdürü Onay Sekmesi üzerinden final onayı verir. Yeni operasyon kartını HK personeli açar."
+          : "Operasyon takip akışı HK personeli, kat şefi ve HK müdürü rolleriyle yönetilir."
     : "";
   const matchesMetric = (record: OperationalRecord, metricLabel: string) => {
     if (!metricLabel) return true;
@@ -5629,6 +5669,8 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const visibleRecords = records.filter((record) => matchesMetric(record, activeMetric));
   const selected = visibleRecords.find((record) => record.id === selectedId) ?? visibleRecords[0];
   const detailPanelTitle = selected ? "Kayıt Detayı" : showCreatePanel ? module.primaryAction : "Kayıt Detayı";
+  const operationFloorOptions = useMemo(() => visibleFloorPlanFloorsForUser(floorPlanFloors, session), [floorPlanFloors, session]);
+  const selectedOperationFloor = operationFloorOptions.find((floor) => String(floor.level) === selectedOperationFloorLevel) ?? operationFloorOptions[0];
 
   useEffect(() => {
     try {
@@ -5650,6 +5692,33 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   }, [module.id, session.id]);
 
   useEffect(() => {
+    if (!isRoomStatusModule) return;
+    let cancelled = false;
+    const loadFloorPlan = async () => {
+      try {
+        const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan");
+        if (!cancelled) setFloorPlanFloors(response.floors);
+      } catch {
+        if (!cancelled) setFloorPlanFloors([]);
+      }
+    };
+    void loadFloorPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRoomStatusModule]);
+
+  useEffect(() => {
+    if (!isRoomStatusModule) return;
+    if (!operationFloorOptions.length) {
+      if (selectedOperationFloorLevel) setSelectedOperationFloorLevel("");
+      return;
+    }
+    const currentExists = operationFloorOptions.some((floor) => String(floor.level) === selectedOperationFloorLevel);
+    if (!currentExists) setSelectedOperationFloorLevel(String(operationFloorOptions[0].level));
+  }, [isRoomStatusModule, operationFloorOptions, selectedOperationFloorLevel]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(operationalStorageKey(module.id, session.id), JSON.stringify(localRecords));
     } catch {
@@ -5668,7 +5737,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const createOperationalRecord = () => {
     const title = draft[module.fields[0]]?.trim();
     if (!canCreateRoomStatus) {
-      setAlert("Oda durum kartını sadece HK personeli açabilir. Kat şefi kontrol/onay, HK müdürü final onay yapar.");
+      setAlert("Operasyon kartını sadece HK personeli açabilir. Kat şefi kontrol/onay, HK müdürü final onay yapar.");
       return;
     }
     if (!title) {
@@ -5697,7 +5766,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
         ? roomDescription || `${module.primaryAction} kaydı ${formatDateTime(new Date().toISOString())} tarihinde oluşturuldu.`
         : `${module.primaryAction} kaydı ${formatDateTime(new Date().toISOString())} tarihinde oluşturuldu.`,
       due: draft.Tarih || draft["Son Tarih"] || "Bugün",
-      risk: module.id === "guestRequests" || ["Arızalı", "Blokajlı", "DND - Rahatsız Etmeyin", "OOO - Out of Order", "OOI - Envanter Dışı"].includes(roomStatus) ? "high" : "normal",
+      risk: module.id === "guestRequests" || ["Bakımda", "Arızalı", "Blokajlı", "DND - Rahatsız Etmeyin", "OOO - Out of Order", "OOI - Envanter Dışı"].includes(roomStatus) ? "high" : roomStatus === "Dolu" ? "low" : "normal",
       approvalStage: module.id === "roomStatus" ? "chief" : undefined,
       approvalTrail: module.id === "roomStatus" ? [`${session.fullName} durum kaydı açtı`] : undefined
     };
@@ -5723,14 +5792,14 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
       setAlert("Durumu sadece HK personeli veya kat şefi değiştirebilir.");
       return;
     }
-    const risky = ["Arızalı", "Blokajlı", "DND - Rahatsız Etmeyin", "OOO - Out of Order", "OOI - Envanter Dışı"].includes(status);
+    const risky = ["Bakımda", "Arızalı", "Blokajlı", "DND - Rahatsız Etmeyin", "OOO - Out of Order", "OOI - Envanter Dışı"].includes(status);
     upsertOperationalRecord(record, {
       status,
-      risk: risky ? "high" : status === "Temiz" ? "low" : "normal",
+      risk: risky ? "high" : status === "Temiz" || status === "Boş" || status === "Dolu" ? "low" : "normal",
       approvalStage: "chief",
       approvalTrail: [...(record.approvalTrail ?? []), `${session.fullName} durumu ${status} olarak güncelledi`]
     });
-    setAlert("Oda durumu güncellendi ve kat şefi onayına düştü.");
+    setAlert("Operasyon durumu güncellendi ve kat şefi onayına düştü.");
   };
 
   const approveRoomRecord = (record: OperationalRecord, stage: "chief" | "manager") => {
@@ -5772,6 +5841,14 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
     setAlert(nextRecords.length ? `${metricLabel} kayıtları açıldı.` : `${metricLabel} için açık kayıt bulunamadı.`);
   };
 
+  const selectOperationArea = (area: HotelFloorAreaRecord) => {
+    const areaStatus = roomOperationStatusForArea(area, records);
+    setActiveMetric("");
+    setSelectedId(areaStatus.record?.id ?? "");
+    setDraft((current) => ({ ...current, Oda: area.label }));
+    setAlert(areaStatus.record ? `${area.label} operasyon kaydı açıldı.` : `${area.label} seçildi.`);
+  };
+
   return (
     <div className={`module-workspace ${module.id === "announcements" ? "module-workspace-compact" : ""}`}>
       <div className="kpi-grid ui-section-bottom-sm">
@@ -5789,6 +5866,55 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
           </button>
         ))}
       </div>
+
+      {isRoomStatusModule && (
+        <div className="card operation-tracking-card">
+          <div className="card-header">
+            <span className="card-title">Kat Bazlı Operasyon Takip</span>
+            <div className="floor-selector-inline">
+              <label className="form-label" htmlFor="operationFloorSelect">Kat</label>
+              <select
+                id="operationFloorSelect"
+                className="form-control"
+                value={selectedOperationFloor ? String(selectedOperationFloor.level) : ""}
+                onChange={(event) => setSelectedOperationFloorLevel(event.target.value)}
+                disabled={!operationFloorOptions.length}
+              >
+                {operationFloorOptions.length ? operationFloorOptions.map((floor) => (
+                  <option key={floor.level} value={String(floor.level)}>
+                    {floor.name?.trim() || defaultFloorName(floor.level)}
+                  </option>
+                )) : (
+                  <option value="">Kat yok</option>
+                )}
+              </select>
+            </div>
+          </div>
+          <div className="card-body">
+            {selectedOperationFloor ? (
+              <div className="operation-room-grid">
+                {selectedOperationFloor.areas.map((area) => {
+                  const areaStatus = roomOperationStatusForArea(area, records);
+                  return (
+                    <button
+                      type="button"
+                      className={`operation-room-tile ${areaStatus.tone}`}
+                      key={`${selectedOperationFloor.level}-${area.id}-${area.label}`}
+                      onClick={() => selectOperationArea(area)}
+                    >
+                      <strong>{area.label}</strong>
+                      <span>{areaStatus.status}</span>
+                      <small>{area.kind === "ROOM" ? "Oda" : "Alan"}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState title="Görüntülenecek alan yok" description={canViewFullFloorPlan(session) ? "Kat Planı ekranından oda/alan tanımlayın." : "Teknik tarafından departmanlara açılan oda/alan bulunmuyor."} />
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="side-panel-grid">
         <div className="card">
@@ -5852,7 +5978,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
                     </div>
                   )}
                 </div>
-              )) : <EmptyState title={activeMetric ? `${activeMetric} kaydı yok` : "Açık kayıt yok"} description="Tamamlanan oda durum kayıtları bu listeden düşer." />}
+              )) : <EmptyState title={activeMetric ? `${activeMetric} kaydı yok` : "Açık kayıt yok"} description="Tamamlanan operasyon kayıtları bu listeden düşer." />}
             </div>
           </div>
         </div>
@@ -5961,8 +6087,8 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
             ))}
             {module.id === "roomStatus" && (
               <div className="room-status-list-block">
-                <div className="room-status-list-title">Otel Oda Durum Listesi</div>
-                <div className="room-status-catalog" aria-label="Oda durum listesi">
+                <div className="room-status-list-title">Operasyon Durum Listesi</div>
+                <div className="room-status-catalog" aria-label="Operasyon durum listesi">
                   {roomStatusOptions.map((option) => (
                     <span key={option.label} className={`room-status-pill ${option.tone}`}>{option.label}</span>
                   ))}
@@ -5970,7 +6096,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
               </div>
             )}
             {!canCreateRoomStatus && (
-              <div className="module-helper strong">Oda durum kaydını HK personeli açar; kat şefi ve HK müdürü onay akışını yönetir.</div>
+              <div className="module-helper strong">Operasyon kaydını HK personeli açar; kat şefi ve HK müdürü onay akışını yönetir.</div>
             )}
             <button type="button" className="btn btn-primary btn-full" onClick={createOperationalRecord} disabled={!canCreateRoomStatus}><Plus size={15} /> {module.primaryAction}</button>
             <div className="module-helper">
@@ -6638,7 +6764,7 @@ function JobFormPage({
     : incomingJobDepartmentsForType(session, jobDraft.type);
   const [floorPlanFloors, setFloorPlanFloors] = useState<HotelFloorRecord[]>([]);
   const [selectedFloorLevel, setSelectedFloorLevel] = useState("");
-  const floorOptions = useMemo(() => sortHotelFloors(floorPlanFloors), [floorPlanFloors]);
+  const floorOptions = useMemo(() => visibleFloorPlanFloorsForUser(floorPlanFloors, session), [floorPlanFloors, session]);
   const selectedFloor = floorOptions.find((floor) => String(floor.level) === selectedFloorLevel) ?? floorOptions[0];
   const selectedFloorAreas = selectedFloor?.areas ?? [];
   const selectedLocationValue = selectedFloor
@@ -9921,6 +10047,25 @@ function sortHotelFloors(floors: HotelFloorRecord[]) {
   return floors.slice().sort((left, right) => right.level - left.level);
 }
 
+function floorPlanAreaKey(label: string) {
+  return label.trim().toLocaleLowerCase("tr-TR");
+}
+
+function canViewFullFloorPlan(user: Pick<DemoUser, "roleId" | "departmentId">) {
+  return user.roleId === "siteAdmin" || user.departmentId === "technical";
+}
+
+function visibleFloorPlanFloorsForUser(floors: HotelFloorRecord[], user: Pick<DemoUser, "roleId" | "departmentId">) {
+  const sortedFloors = sortHotelFloors(floors);
+  if (canViewFullFloorPlan(user)) return sortedFloors;
+  return sortedFloors
+    .map((floor) => ({
+      ...floor,
+      areas: floor.areas.filter((area) => area.visibleToDepartments !== false)
+    }))
+    .filter((floor) => floor.areas.length > 0);
+}
+
 function areaTextFromRecords(areas: HotelFloorAreaRecord[]) {
   return areas
     .slice()
@@ -9939,7 +10084,8 @@ function floorAreasFromText(text: string): HotelFloorAreaRecord[] {
       id: `draft-area-${Date.now()}-${index}`,
       label,
       kind: /^\d+[A-Z]?$/.test(label.toLocaleUpperCase("tr-TR")) ? "ROOM" : "AREA",
-      sortOrder: index
+      sortOrder: index,
+      visibleToDepartments: true
     }));
 }
 
@@ -9956,6 +10102,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
   const [negativeCount, setNegativeCount] = useState(6);
   const [groundName, setGroundName] = useState("L Zemin Kat");
   const [areaTextByLevel, setAreaTextByLevel] = useState<Record<string, string>>({});
+  const [showPlanOutput, setShowPlanOutput] = useState(false);
 
   useEffect(() => {
     if (!canUseAccess(session, "featureHotelFloorPlanning")) return;
@@ -10019,6 +10166,19 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
     });
   };
 
+  const toggleAreaDepartmentVisibility = (floorLevel: number, areaId: string, visibleToDepartments: boolean) => {
+    setFloors((current) => sortHotelFloors(current.map((floor) => (
+      floor.level === floorLevel
+        ? {
+            ...floor,
+            areas: floor.areas.map((area) => (
+              area.id === areaId ? { ...area, visibleToDepartments } : area
+            ))
+          }
+        : floor
+    ))));
+  };
+
   const saveFloorPlan = async () => {
     if (!canUseAccess(session, "featureHotelFloorPlanning")) {
       setAlert("Otel kat planlaması yetkiniz yok.");
@@ -10030,11 +10190,18 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         level: floor.level,
         name: floor.name.trim() || defaultFloorName(floor.level),
         sortOrder: floorIndex,
-        areas: floorAreasFromText(areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)).map((area, areaIndex) => ({
-          label: area.label.trim(),
-          kind: area.kind,
-          sortOrder: areaIndex
-        })).filter((area) => area.label)
+        areas: (() => {
+          const currentAreasByLabel = new Map(floor.areas.map((area) => [floorPlanAreaKey(area.label), area]));
+          return floorAreasFromText(areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)).map((area, areaIndex) => {
+            const currentArea = currentAreasByLabel.get(floorPlanAreaKey(area.label));
+            return {
+              label: area.label.trim(),
+              kind: area.kind,
+              sortOrder: areaIndex,
+              visibleToDepartments: currentArea?.visibleToDepartments ?? area.visibleToDepartments
+            };
+          }).filter((area) => area.label);
+        })()
       }));
       const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan", {
         method: "PUT",
@@ -10089,6 +10256,9 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
           </label>
           <div className="ui-cluster">
             <button type="button" className="btn btn-primary" onClick={buildFloorTree}><Plus size={15} /> Kat Ağacı Oluştur</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setShowPlanOutput((current) => !current)} disabled={loading}>
+              <ClipboardCheck size={15} /> {showPlanOutput ? "Plan Çıktısını Kapat" : "Plan Çıktısı Üret"}
+            </button>
             <button type="button" className="btn btn-start" onClick={saveFloorPlan} disabled={saving || loading}>
               <Save size={15} /> {saving ? "Kaydediliyor" : "Planı Kaydet"}
             </button>
@@ -10102,6 +10272,52 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         <div className="kpi-card delayed"><div className="kpi-value">{floors.filter((floor) => floor.level < 0).length}</div><div className="kpi-label">Alt kat</div></div>
         <div className="kpi-card completed"><div className="kpi-value">{roomCount}</div><div className="kpi-label">Oda</div></div>
       </div>
+
+      {showPlanOutput && (
+        <div className="card floor-plan-output-card">
+          <div className="card-header">
+            <span className="card-title">Plan Çıktısı</span>
+            <button type="button" className="btn btn-start btn-sm" onClick={saveFloorPlan} disabled={saving || loading}>
+              <Save size={13} /> {saving ? "Kaydediliyor" : "Görünürlükleri Kaydet"}
+            </button>
+          </div>
+          <div className="card-body floor-plan-output-body">
+            {floors.length ? sortHotelFloors(floors).map((floor) => (
+              <section className="floor-plan-output-floor" key={`output-${floor.level}`}>
+                <div className="floor-plan-output-title">
+                  <span className="badge badge-inprogress">{floor.level > 0 ? `+${floor.level}` : floor.level === 0 ? "0 / L" : floor.level}</span>
+                  <strong>{floor.name || defaultFloorName(floor.level)}</strong>
+                  <small>{floor.areas.length} oda-alan</small>
+                </div>
+                {floor.areas.length ? (
+                  <div className="floor-plan-output-grid">
+                    {floor.areas
+                      .slice()
+                      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
+                      .map((area) => (
+                        <label className={`floor-output-tile ${area.visibleToDepartments ? "visible" : "technical-only"}`} key={`${floor.level}-${area.id}-${area.label}`}>
+                          <input
+                            type="checkbox"
+                            checked={area.visibleToDepartments !== false}
+                            onChange={(event) => toggleAreaDepartmentVisibility(floor.level, area.id, event.target.checked)}
+                            aria-label={`${area.label} departmanlarda görünsün`}
+                          />
+                          <span className={`badge ${area.kind === "ROOM" ? "badge-completed" : "badge-pending"}`}>{area.kind === "ROOM" ? "Oda" : "Alan"}</span>
+                          <strong>{area.label}</strong>
+                          <small>{area.visibleToDepartments !== false ? "Departmanlarda görünür" : "Sadece Teknik"}</small>
+                        </label>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="module-helper">Bu katta tanımlı oda veya alan yok.</div>
+                )}
+              </section>
+            )) : (
+              <EmptyState title="Çıktı üretilecek alan yok" description="Önce kat ve oda/alan tanımlarını oluşturun." />
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="ui-list-stack">
         {loading ? (
@@ -10139,8 +10355,13 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                   value={areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)}
                   onChange={(event) => {
                     const text = event.target.value;
+                    const currentAreasByLabel = new Map(floor.areas.map((area) => [floorPlanAreaKey(area.label), area]));
+                    const nextAreas = floorAreasFromText(text).map((area) => ({
+                      ...area,
+                      visibleToDepartments: currentAreasByLabel.get(floorPlanAreaKey(area.label))?.visibleToDepartments ?? area.visibleToDepartments
+                    }));
                     setAreaTextByLevel((current) => ({ ...current, [String(floor.level)]: text }));
-                    updateFloor(floor.level, { areas: floorAreasFromText(text) });
+                    updateFloor(floor.level, { areas: nextAreas });
                   }}
                   placeholder={"101, 102, 103\nNişantaşı toplantı salonu\nBresserie Restorant"}
                 />

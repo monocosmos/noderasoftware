@@ -580,6 +580,9 @@ function hasFeatureAccess(req, featureId) {
         return true;
     }
 }
+function canViewFullHotelFloorPlan(req) {
+    return req.auth?.roleId === "siteAdmin" || req.auth?.departmentId === "technical" || hasFeatureAccess(req, "featureHotelFloorPlanning");
+}
 function requireFeatureAccess(featureId) {
     return (req, res, next) => {
         if (!hasFeatureAccess(req, featureId)) {
@@ -818,7 +821,8 @@ function serializeHotelFloor(floor) {
             id: area.id,
             label: area.label,
             kind: area.kind,
-            sortOrder: area.sortOrder
+            sortOrder: area.sortOrder,
+            visibleToDepartments: area.visibleToDepartments
         }))
     };
 }
@@ -1645,7 +1649,8 @@ const hotelFloorAreaSchema = z.object({
     id: z.string().optional(),
     label: z.string().trim().min(1).max(120),
     kind: z.enum(["ROOM", "AREA"]).optional().default("ROOM"),
-    sortOrder: z.number().int().min(0).max(9999).optional()
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+    visibleToDepartments: z.boolean().optional().default(true)
 });
 const hotelFloorSchema = z.object({
     id: z.string().optional(),
@@ -4784,7 +4789,12 @@ app.get("/hotel-floor-plan", authenticate, asyncHandler(async (req, res) => {
         include: { areas: true },
         orderBy: [{ sortOrder: "asc" }, { level: "desc" }]
     });
-    res.json({ floors: floors.map(serializeHotelFloor) });
+    const canViewFullPlan = canViewFullHotelFloorPlan(req);
+    const serialized = floors.map(serializeHotelFloor).map((floor) => ({
+        ...floor,
+        areas: canViewFullPlan ? floor.areas : floor.areas.filter((area) => area.visibleToDepartments)
+    }));
+    res.json({ floors: canViewFullPlan ? serialized : serialized.filter((floor) => floor.areas.length > 0) });
 }));
 app.put("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFloorPlanning"), asyncHandler(async (req, res) => {
     const payload = hotelFloorPlanSchema.parse(req.body);
@@ -4818,7 +4828,8 @@ app.put("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFlo
                         create: floor.areas.map((area, areaIndex) => ({
                             label: area.label,
                             kind: area.kind,
-                            sortOrder: area.sortOrder ?? areaIndex
+                            sortOrder: area.sortOrder ?? areaIndex,
+                            visibleToDepartments: area.visibleToDepartments
                         }))
                     }
                 }
