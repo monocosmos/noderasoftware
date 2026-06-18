@@ -1308,6 +1308,7 @@ function serializeWorkOrder(workOrder, options = {}) {
         assigneeId: workOrder.assignedToId ?? "",
         room: workOrder.room ?? "",
         location: workOrder.location,
+        locationDetail: workOrder.locationDetail ?? "",
         due: workOrder.slaDueAt?.toISOString() ?? "",
         guestImpact: workOrder.guestImpact,
         slaRisk,
@@ -1355,7 +1356,7 @@ function workOrderNotificationText(workOrder) {
             : workOrder.type === "PLANNED_HOUSEKEEPING"
                 ? "Yeni HK görevi"
                 : `${departmentName(departmentId)} - Yeni iş`;
-    const location = [workOrder.room ? `Oda ${workOrder.room}` : "", workOrder.location].filter(Boolean).join(" - ");
+    const location = [workOrder.room ? `Oda ${workOrder.room}` : "", workOrder.location, workOrder.locationDetail].filter(Boolean).join(" - ");
     return {
         title,
         body: `${workOrder.code} - ${workOrder.title}${location ? ` (${location})` : ""}`
@@ -1603,6 +1604,7 @@ const workOrderSchema = z.object({
     assigneeId: z.string().optional().default(""),
     room: z.string().optional().default(""),
     location: z.string().optional().default(""),
+    locationDetail: z.string().trim().max(240).optional().default(""),
     due: z.string().optional().default(""),
     guestImpact: z.boolean().optional().default(false),
     description: z.string().optional().default(""),
@@ -1620,6 +1622,7 @@ const workOrderUpdateSchema = z.object({
     assigneeId: z.string().optional(),
     room: z.string().optional(),
     location: z.string().optional(),
+    locationDetail: z.string().trim().max(240).optional(),
     due: z.string().optional(),
     guestImpact: z.boolean().optional(),
     description: z.string().optional(),
@@ -1953,6 +1956,38 @@ function paginatedItemsResponse(items, page, pageSize, total) {
         items,
         pagination: paginationMeta(page, pageSize, total)
     };
+}
+function stringQueryValue(value) {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return typeof raw === "string" ? raw.trim() : "";
+}
+function queryDateBoundary(value, endOfDay = false) {
+    const raw = stringQueryValue(value);
+    if (!raw)
+        return null;
+    const date = new Date(`${raw.slice(0, 10)}T${endOfDay ? "23:59:59.999" : "00:00:00"}`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+function workOrderListWhere(auth, query) {
+    const filters = [workOrderVisibilityWhere(auth)];
+    const status = stringQueryValue(query.status);
+    const completedFrom = queryDateBoundary(query.completedFrom);
+    const completedTo = queryDateBoundary(query.completedTo, true);
+    if (status === "Completed") {
+        filters.push({ status: { in: ["COMPLETED", "HK_VERIFIED", "CLOSED"] } });
+    }
+    else if (status) {
+        filters.push({ status: mapStatusToDb(status) });
+    }
+    if (completedFrom || completedTo) {
+        filters.push({
+            completedAt: {
+                ...(completedFrom ? { gte: completedFrom } : {}),
+                ...(completedTo ? { lte: completedTo } : {})
+            }
+        });
+    }
+    return filters.length === 1 ? filters[0] : { AND: filters };
 }
 async function deepHealthSnapshot() {
     const checks = [
@@ -5247,13 +5282,14 @@ app.delete("/department-tables/:tableId/rows/:rowId", authenticate, requireModul
     res.json({ ok: true });
 }));
 app.get("/work-orders", authenticate, requirePermission("work-orders:read"), requireModuleAccess("jobs"), async (req, res) => {
-    const listPage = paginationFromQuery(req.query);
-    const where = workOrderVisibilityWhere(req.auth);
+    const listPage = paginationFromQuery(req.query, { maxPageSize: 1000 });
+    const where = workOrderListWhere(req.auth, req.query);
+    const reportQuery = stringQueryValue(req.query.status) === "Completed" || Boolean(stringQueryValue(req.query.completedFrom) || stringQueryValue(req.query.completedTo));
     const [workOrders, total] = await Promise.all([
         prisma.workOrder.findMany({
             where,
             include: workOrderInclude,
-            orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+            orderBy: reportQuery ? [{ completedAt: "desc" }, { priority: "desc" }, { createdAt: "desc" }] : [{ priority: "desc" }, { createdAt: "desc" }],
             skip: listPage.skip,
             take: listPage.take
         }),
@@ -5307,6 +5343,7 @@ app.post("/work-orders", authenticate, requirePermission("work-orders:create"), 
             description: payload.description,
             room: payload.room,
             location: payload.location,
+            locationDetail: payload.locationDetail,
             tags: payload.tags,
             guestImpact: hasFeatureAccess(req, "featureGuestImpact") ? payload.guestImpact : false,
             checklistJson: JSON.stringify(payload.checklist),
@@ -5379,6 +5416,7 @@ app.post("/calendar/work-orders", authenticate, requirePermission("calendar:writ
             description: payload.description,
             room: payload.room,
             location: payload.location,
+            locationDetail: payload.locationDetail,
             tags: payload.tags,
             guestImpact: false,
             checklistJson: JSON.stringify(payload.checklist),
@@ -5520,6 +5558,8 @@ app.patch("/work-orders/:code", authenticate, requirePermission("work-orders:upd
         data.priority = mapPriorityToDb(payload.priority);
     if (payload.location)
         data.location = payload.location;
+    if (payload.locationDetail !== undefined)
+        data.locationDetail = payload.locationDetail;
     if (payload.guestImpact !== undefined && hasFeatureAccess(req, "featureGuestImpact"))
         data.guestImpact = payload.guestImpact;
     if (payload.description !== undefined)

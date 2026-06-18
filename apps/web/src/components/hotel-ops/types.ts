@@ -179,6 +179,7 @@ export type JobRecord = {
   assigneeId?: string;
   room: string;
   location: string;
+  locationDetail: string;
   due: string;
   guestImpact?: boolean;
   slaRisk?: boolean;

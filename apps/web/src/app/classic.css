@@ -3158,6 +3158,12 @@ textarea.form-control {
   color: #166534;
 }
 
+.quick-filter-report {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
 .quick-filter-all {
   background: #f8fafc;
   border-color: #cbd5e1;
@@ -3166,6 +3172,48 @@ textarea.form-control {
 
 .quick-filter-btn:hover {
   filter: saturate(1.08) brightness(.98);
+}
+
+.completed-report-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, .7fr) minmax(150px, .7fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.completed-report-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.completed-report-copy strong {
+  font-size: 13px;
+  color: var(--classic-text);
+}
+
+.completed-report-copy span,
+.completed-report-error {
+  color: var(--classic-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.completed-report-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.completed-report-error {
+  grid-column: 1 / -1;
+  color: #b91c1c;
 }
 
 .jobs-create-btn {
@@ -6748,6 +6796,16 @@ textarea.form-control {
     padding: 3px 5px;
     font-size: 10px;
     white-space: normal;
+  }
+  .completed-report-panel {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .completed-report-actions {
+    justify-content: stretch;
+  }
+  .completed-report-actions .btn {
+    flex: 1 1 0;
   }
   .table-scroll {
     overflow-x: visible;

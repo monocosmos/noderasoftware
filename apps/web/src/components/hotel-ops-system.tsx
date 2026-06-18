@@ -1397,6 +1397,7 @@ const initialJobs: JobRecord[] = [
     assignee: "Emre Teknik",
     room: "1108",
     location: "11. Kat",
+    locationDetail: "",
     due: "2026-05-11T14:30",
     createdBy: "onburo",
     description: "Misafir odasında klima soğutmuyor. Parça kontrolü gerekiyor.",
@@ -1413,6 +1414,7 @@ const initialJobs: JobRecord[] = [
     assignee: "Nihan Kaya",
     room: "1501",
     location: "15. Kat",
+    locationDetail: "",
     due: "2026-05-11T12:45",
     createdBy: "housekeeping1",
     description: "VIP misafir girişi öncesi oda checklist kontrolü.",
@@ -1429,6 +1431,7 @@ const initialJobs: JobRecord[] = [
     assignee: "Kerem Aksoy",
     room: "",
     location: "Balo Salonu",
+    locationDetail: "",
     due: "2026-05-11T21:00",
     createdBy: "guvenlik",
     description: "Gala organizasyonu için giriş ve kat devriyesi.",
@@ -1445,6 +1448,7 @@ const initialJobs: JobRecord[] = [
     assignee: "Mert Demir",
     room: "",
     location: "İK Ofisi",
+    locationDetail: "",
     due: "2026-05-12T17:30",
     createdBy: "ik.mudur",
     description: "Kat hizmetleri ve teknik ekip için sezonluk aday görüşmeleri.",
@@ -1461,6 +1465,7 @@ const initialJobs: JobRecord[] = [
     assignee: "Baran Usta",
     room: "",
     location: "Grand Ballroom",
+    locationDetail: "",
     due: "2026-05-11T19:00",
     createdBy: "fnb",
     description: "Ses sistemi ve sahne ışığı teknik kurulum desteği.",
@@ -1635,7 +1640,7 @@ function operationalRecordsFor(module: OperationalModuleConfig, visibleJobs: Job
     const roomJobs = visibleJobs.filter((job) => job.room).slice(0, 8).map((job) => ({
       id: `room-job-${job.id}`,
       title: `Oda ${job.room}`,
-      meta: `${departmentLabelFor(job.departmentId)} / ${job.location || "Oda"}`,
+      meta: `${departmentLabelFor(job.departmentId)} / ${[job.location || "Oda", job.locationDetail].filter(Boolean).join(" / ")}`,
       status: job.status === "Completed" ? "Kontrol Bekliyor" : job.status === "Delayed" ? "Arızalı" : "Operasyonda",
       owner: job.assignee || "Atanmadı",
       detail: job.title,
@@ -1805,6 +1810,11 @@ function isDateInReportRange(value: string | undefined, startDate: string, endDa
   return true;
 }
 
+function isReportDateRangeInvalid(startDate: string, endDate: string) {
+  const { startMs, endMs } = reportDateBounds(startDate, endDate);
+  return startMs !== null && endMs !== null && startMs > endMs;
+}
+
 function jobMatchesReportRange(job: JobRecord, startDate: string, endDate: string) {
   const dates = [
     job.createdAt,
@@ -1818,6 +1828,18 @@ function jobMatchesReportRange(job: JobRecord, startDate: string, endDate: strin
 
   if (!dates.length) return true;
   return dates.some((date) => isDateInReportRange(date, startDate, endDate));
+}
+
+function completedJobReportDate(job: JobRecord) {
+  return job.completedAt || job.updatedAt || job.createdAt || job.due;
+}
+
+function completedJobMatchesReportRange(job: JobRecord, startDate: string, endDate: string) {
+  return job.status === "Completed" && isDateInReportRange(completedJobReportDate(job), startDate, endDate);
+}
+
+function jobLocationText(job: JobRecord) {
+  return [job.room ? `Oda ${job.room}` : "", job.location, job.locationDetail].filter(Boolean).join(" / ") || "-";
 }
 
 function workflowStatusLabel(status: string) {
@@ -1897,6 +1919,46 @@ function downloadExcelWorkbook(filename: string, sections: Array<{ title: string
   const link = document.createElement("a");
   link.href = url;
   link.download = filename.endsWith(".xls") ? filename : `${filename}.xls`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function wordTable(title: string, headers: string[], rows: Array<Array<unknown>>) {
+  const safeRows = rows.length ? rows : [["Kayıt yok", ...Array(Math.max(0, headers.length - 1)).fill("")]];
+  return `
+    <h2>${excelCell(title)}</h2>
+    <table>
+      <thead><tr>${headers.map((header) => `<th>${excelCell(header)}</th>`).join("")}</tr></thead>
+      <tbody>${safeRows.map((row) => `<tr>${headers.map((_, index) => `<td>${excelCell(row[index])}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>
+  `;
+}
+
+function downloadWordDocument(filename: string, title: string, sections: Array<{ title: string; headers: string[]; rows: Array<Array<unknown>> }>) {
+  const html = `<!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        @page { margin: 1.4cm; }
+        body { font-family: Arial, sans-serif; color: #111827; line-height: 1.35; }
+        h1 { font-size: 22px; margin: 0 0 16px; color: #111827; }
+        h2 { font-size: 16px; margin: 22px 0 8px; color: #1f2937; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 18px; }
+        th { background: #1f2937; color: #fff; font-weight: 700; }
+        th, td { border: 1px solid #cbd5e1; padding: 7px 8px; font-size: 11px; vertical-align: top; }
+      </style>
+    </head>
+    <body>
+      <h1>${excelCell(title)}</h1>
+      ${sections.map((section) => wordTable(section.title, section.headers, section.rows)).join("")}
+    </body>
+  </html>`;
+  const blob = new Blob([`\uFEFF${html}`], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".doc") ? filename : `${filename}.doc`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -2672,6 +2734,7 @@ function newJobDraft(user?: DemoUser): JobDraft {
     assignee: "",
     room: "",
     location: "",
+    locationDetail: "",
     due: "",
     guestImpact: false,
     description: "",
@@ -6503,6 +6566,10 @@ function JobsPage({
 }: RenderContext) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pageLoading, setPageLoading] = useState(false);
+  const [completedReportOpen, setCompletedReportOpen] = useState(false);
+  const [completedReportStartDate, setCompletedReportStartDate] = useState(() => monthStartInputValue());
+  const [completedReportEndDate, setCompletedReportEndDate] = useState(() => monthEndInputValue());
+  const [completedReportLoading, setCompletedReportLoading] = useState(false);
   const canAdvancedFilter = canUseAccess(session, "featureAdvancedFilters");
   const requestedView = queryParams.get("view");
   const quickView = requestedView === "outgoing-completed"
@@ -6555,6 +6622,11 @@ function JobsPage({
       if (quickView === "completed") return true;
       return true;
     });
+  const completedReportRangeInvalid = isReportDateRangeInvalid(completedReportStartDate, completedReportEndDate);
+  const localCompletedReportJobs = useMemo(
+    () => incomingVisibleJobs.filter((job) => completedJobMatchesReportRange(job, completedReportStartDate, completedReportEndDate)),
+    [completedReportEndDate, completedReportStartDate, incomingVisibleJobs]
+  );
   const quickViewLabel = quickView === "assigned"
     ? "Bana Atanan"
     : isOutgoingView
@@ -6572,6 +6644,115 @@ function JobsPage({
           : quickView === "completed"
             ? "Bitirilen İşler"
             : "İş Havuzu";
+  const completedReportScopeLabel = `${departmentLabelFor(session.departmentId)} / ${completedReportStartDate || "Başlangıç yok"} - ${completedReportEndDate || "Bitiş yok"}`;
+
+  useEffect(() => {
+    if (!showCompletedJobs || isOutgoingView) setCompletedReportOpen(false);
+  }, [isOutgoingView, showCompletedJobs]);
+
+  const completedReportSections = (jobs: JobRecord[]) => {
+    const generatedAt = new Date().toISOString();
+    const completedRows = jobs.map((job) => [
+      job.id,
+      job.title,
+      typeLabel(job.type),
+      departmentLabelFor(job.departmentId),
+      priorityLabel(job.priority),
+      job.assignee || "-",
+      jobLocationText(job),
+      formatReportDateTime(completedJobReportDate(job)),
+      job.createdBy,
+      job.guestImpact ? "Evet" : "Hayır",
+      job.slaRisk ? "Evet" : "Hayır",
+      job.tags || "-",
+      job.description || "-"
+    ]);
+    const noteRows = jobs.flatMap((job) => [
+      ...(job.description ? [[job.id, job.title, "Açıklama", job.description, job.createdBy, formatReportDateTime(job.createdAt)]] : []),
+      ...(job.comments ?? []).map((comment) => [job.id, job.title, "Yorum", comment.body, comment.author, formatReportDateTime(comment.createdAt)])
+    ]);
+    const checklistRows = jobs.flatMap((job) =>
+      job.checklist.map((item, index) => [job.id, job.title, index + 1, item, formatReportDateTime(completedJobReportDate(job))])
+    );
+    const flowRows = jobs.flatMap((job) => {
+      if (job.timeline?.length) {
+        return job.timeline.map((item) => [job.id, job.title, workflowStatusLabel(item.status), item.message, formatReportDateTime(item.createdAt)]);
+      }
+      return [[job.id, job.title, "Tamamlandı", "Kayıt bitirilen işler raporundan üretildi", formatReportDateTime(completedJobReportDate(job))]];
+    });
+    const summaryRows = [
+      ["Rapor Tarihi", formatReportDateTime(generatedAt)],
+      ["Kullanıcı", session.fullName],
+      ["Kapsam", departmentLabelFor(session.departmentId)],
+      ["Tarih Aralığı", `${completedReportStartDate || "-"} / ${completedReportEndDate || "-"}`],
+      ["Toplam Bitirilen İş", jobs.length],
+      ["Planlı İş", jobs.filter((job) => job.type === "PlannedMaintenance" || job.type === "PlannedHousekeeping").length],
+      ["Misafir Etkisi", jobs.filter((job) => job.guestImpact).length],
+      ["SLA Riski", jobs.filter((job) => job.slaRisk).length]
+    ];
+
+    return [
+      { title: "Özet", headers: ["Alan", "Değer"], rows: summaryRows },
+      {
+        title: "Bitirilen İşler",
+        headers: ["Kod", "Başlık", "Tür", "Departman", "Öncelik", "Atanan", "Lokasyon", "Tamamlanma", "Açan", "Misafir Etkisi", "SLA Riski", "Etiketler", "Açıklama"],
+        rows: completedRows
+      },
+      { title: "Notlar ve Açıklamalar", headers: ["Kod", "Başlık", "Not Tipi", "Not", "Yazan", "Tarih/Saat"], rows: noteRows },
+      { title: "Kontrol Listesi", headers: ["Kod", "Başlık", "Sıra", "Madde", "Tamamlanma"], rows: checklistRows },
+      { title: "Tarih Saat Akışı", headers: ["Kod", "Başlık", "Akış Durumu", "Açıklama", "Tarih/Saat"], rows: flowRows }
+    ];
+  };
+
+  const loadCompletedReportJobs = async () => {
+    const params = new URLSearchParams({
+      status: "Completed",
+      pageSize: "1000"
+    });
+    if (completedReportStartDate) params.set("completedFrom", completedReportStartDate);
+    if (completedReportEndDate) params.set("completedTo", completedReportEndDate);
+
+    const allJobs: JobRecord[] = [];
+    for (let page = 1; page <= 20; page += 1) {
+      params.set("page", String(page));
+      const response = await apiRequest<PaginatedItemsResponse<JobRecord>>(`/work-orders?${params.toString()}`, { timeoutMs: 30_000 });
+      allJobs.push(...response.items.filter((job) => isIncomingDepartmentJob(session, job)));
+      if (!response.pagination?.hasNext) break;
+    }
+    return allJobs;
+  };
+
+  const exportCompletedReport = async (format: "word" | "excel") => {
+    if (completedReportRangeInvalid) {
+      setAlert("Rapor başlangıç tarihi bitiş tarihinden sonra olamaz.");
+      return;
+    }
+    setCompletedReportLoading(true);
+    try {
+      let reportJobs: JobRecord[];
+      let usedLocalFallback = false;
+      try {
+        reportJobs = await loadCompletedReportJobs();
+      } catch {
+        reportJobs = localCompletedReportJobs;
+        usedLocalFallback = true;
+      }
+      const sections = completedReportSections(reportJobs);
+      const filenameBase = `nodera-bitirilen-isler-${completedReportStartDate || "baslangic-yok"}-${completedReportEndDate || "bitis-yok"}`;
+      if (format === "excel") {
+        downloadExcelWorkbook(`${filenameBase}.xls`, sections);
+      } else {
+        downloadWordDocument(`${filenameBase}.doc`, "Nodera Sistem Bitirilen İşler Raporu", sections);
+      }
+      setAlert(
+        usedLocalFallback
+          ? `${reportJobs.length} bitirilen iş için ${format === "excel" ? "Excel" : "Word"} raporu ekranda yüklü kayıtlarla hazırlandı.`
+          : `${reportJobs.length} bitirilen iş için ${format === "excel" ? "Excel" : "Word"} raporu hazırlandı.`
+      );
+    } finally {
+      setCompletedReportLoading(false);
+    }
+  };
 
   return (
     <>
@@ -6708,9 +6889,40 @@ function JobsPage({
           {canAdvancedFilter && canUseAccess(session, "featureGuestImpact") && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-guest" onClick={() => applyQuickFilter({ guestImpact: "1" })}>Misafir Etkisi</button>}
           {canAdvancedFilter && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-unassigned" onClick={() => applyQuickFilter({ assignee: "unassigned" })}>Atanmamış</button>}
           {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-completed" onClick={() => navigate("/jobs/new?status=Completed&type=Job")}>Biten İş Ekle</button>}
+          {!isOutgoingView && showCompletedJobs && (
+            <button type="button" className="btn btn-sm quick-filter-btn quick-filter-report" onClick={() => setCompletedReportOpen((open) => !open)}>
+              <FileText size={13} /> Rapor Hazırla
+            </button>
+          )}
           {!isOutgoingView && <button type="button" className="btn btn-sm quick-filter-btn quick-filter-all" onClick={() => { applyQuickFilter({}); navigate("/jobs"); }}>Tüm İşler</button>}
         </div>
       </div>
+
+      {!isOutgoingView && showCompletedJobs && completedReportOpen && (
+        <div className="completed-report-panel">
+          <div className="completed-report-copy">
+            <strong>Bitirilen işler raporu</strong>
+            <span>{completedReportScopeLabel} / ön izleme {localCompletedReportJobs.length} kayıt</span>
+          </div>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Başlangıç</span>
+            <input type="date" className="form-control" value={completedReportStartDate} onChange={(event) => setCompletedReportStartDate(event.target.value)} />
+          </label>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Bitiş</span>
+            <input type="date" className="form-control" value={completedReportEndDate} onChange={(event) => setCompletedReportEndDate(event.target.value)} />
+          </label>
+          <div className="completed-report-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void exportCompletedReport("word")} disabled={completedReportLoading || completedReportRangeInvalid}>
+              <FileText size={14} /> Word
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => void exportCompletedReport("excel")} disabled={completedReportLoading || completedReportRangeInvalid}>
+              <Download size={14} /> Excel
+            </button>
+          </div>
+          {completedReportRangeInvalid && <span className="completed-report-error">Başlangıç tarihi bitiş tarihinden sonra olamaz.</span>}
+        </div>
+      )}
 
       {listJobs.length ? <JobCardList jobs={listJobs} navigate={navigate} departmentLabelFor={departmentLabelFor} detailView={isOutgoingView ? "outgoing" : undefined} /> : <EmptyState title={showCompletedJobs ? "Bitirilen iş bulunamadı" : "Aktif iş bulunamadı"} description={showCompletedJobs ? "Uygulama dışından tamamlanan işleri Biten İş Ekle ile kaydedebilirsiniz." : "Arama kriterlerinizi değiştirin veya yeni iş ekleyin."} />}
     </>
@@ -6727,7 +6939,7 @@ function JobCardList({ jobs, navigate, departmentLabelFor = departmentLabel, det
             <span className="job-title">{job.title}</span>
             <span className="job-meta">
               <span className="job-meta-item">{job.id}</span>
-              <span className="job-meta-item">{job.room ? `Oda ${job.room}` : job.location}</span>
+              <span className="job-meta-item">{[job.room ? `Oda ${job.room}` : job.location, job.locationDetail].filter(Boolean).join(" / ")}</span>
               <span className="job-meta-item">{departmentLabelFor(job.departmentId)}</span>
               <span className={`badge badge-${typeClass(job.type)}`}>{typeLabel(job.type)}</span>
               <span className={`badge badge-${priorityClass(job.priority)}`}>{priorityLabel(job.priority)}</span>
@@ -6808,6 +7020,7 @@ function JobFormPage({
     const departmentId = queryParams.get("departmentId");
     const room = queryParams.get("room");
     const location = queryParams.get("location");
+    const locationDetail = queryParams.get("locationDetail");
     const description = queryParams.get("description");
     const priority = queryParams.get("priority") as Priority | null;
     const status = isOutgoingRequest ? "Pending" : queryParams.get("status") as JobDraft["initialStatus"] | null;
@@ -6830,6 +7043,7 @@ function JobFormPage({
           : draft.priority,
         room: room ?? draft.room,
         location: location ?? draft.location,
+        locationDetail: locationDetail ?? draft.locationDetail,
         description: description ?? draft.description
       }));
     } else if (isOutgoingRequest) {
@@ -6979,12 +7193,30 @@ function JobFormPage({
                     ))}
                   </select>
                 </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Konum</label>
+                  <input
+                    className="form-control"
+                    value={jobDraft.locationDetail}
+                    onChange={(event) => setJobDraft((draft) => ({ ...draft, locationDetail: event.target.value }))}
+                    placeholder="örn: en soldaki musluk"
+                  />
+                </div>
               </div>
             ) : (
               <div className="form-row ui-section-sm">
                 <div className="form-group ui-form-compact">
                   <label className="form-label">Lokasyon</label>
                   <input className="form-control" value={jobDraft.location || jobDraft.room} onChange={(event) => setJobDraft((draft) => ({ ...draft, room: "", location: event.target.value }))} placeholder="örn: 2. Kat / Lobi" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Konum</label>
+                  <input
+                    className="form-control"
+                    value={jobDraft.locationDetail}
+                    onChange={(event) => setJobDraft((draft) => ({ ...draft, locationDetail: event.target.value }))}
+                    placeholder="örn: en soldaki musluk"
+                  />
                 </div>
               </div>
             )}
@@ -7179,7 +7411,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const participantOptions = assigneeOptions.filter((user) => user.id !== session.id && user.id !== job.assigneeId);
   const participantNames = (job.participants ?? []).map((user) => user.fullName).join(", ");
   const canOpenHousekeepingJob = session.departmentId === "technical" && job.departmentId === "technical" && canCreateJobType(session, "Job") && canUseModule(session, "jobs");
-  const jobLocationLabel = job.location || (job.room ? `Oda ${job.room}` : "-");
+  const jobLocationLabel = [job.location || (job.room ? `Oda ${job.room}` : ""), job.locationDetail].filter(Boolean).join(" / ") || "-";
 
   const openHousekeepingJob = () => {
     const params = new URLSearchParams({
@@ -7192,6 +7424,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
     });
     if (job.room) params.set("room", job.room);
     if (job.location) params.set("location", job.location);
+    if (job.locationDetail) params.set("locationDetail", job.locationDetail);
     navigate(`/jobs/new?${params.toString()}`);
   };
 
@@ -7343,6 +7576,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
               <Info label="Atanan" value={job.assignee || (isDepartmentPoolJob(job) ? departmentPoolLabel(job.departmentId, departmentLabelFor) : "-")} />
                 {isWorkIncidentPoolType(job) && <Info label="Ekip" value={participantNames || "-"} />}
                 <Info label="Lokasyon" value={job.location || (job.room ? `Oda ${job.room}` : "-")} />
+                <Info label="Konum" value={job.locationDetail || "-"} />
                 {canUseAccess(session, "featureGuestImpact") && <Info label="Misafir Etkisi" value={job.guestImpact ? "Evet" : "Hayır"} />}
                 {canUseAccess(session, "featureSlaEscalation") && <Info label="SLA Durumu" value={job.slaRisk ? "Riskli / eskalasyon adayı" : "Normal"} />}
                 <Info label="Oluşturan" value={job.createdBy} />
@@ -7874,7 +8108,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
                   <strong>{job.title}</strong>
                   <span>{job.due ? formatDateTime(job.due) : "-"} / {job.assignee || "Atanmadı"}</span>
                   {isHotelWideCalendar && <span>{departmentLabelFor(job.departmentId)}</span>}
-                  <span>{job.room ? `Oda ${job.room}` : job.location}</span>
+                  <span>{[job.room ? `Oda ${job.room}` : job.location, job.locationDetail].filter(Boolean).join(" / ") || "-"}</span>
                 </div>
                 <span className={`badge badge-${statusClass(job.status)}`}>{statusLabel(job.status)}</span>
                 <div className="calendar-task-actions">
@@ -7927,7 +8161,7 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
                   </select>
                 </div>
                 <div className="form-group ui-form-compact">
-                  <label className="form-label">Konum</label>
+                  <label className="form-label">Lokasyon</label>
                   <input className="form-control" value={planDraft.location} onChange={(event) => setPlanDraft((draft) => ({ ...draft, location: event.target.value }))} placeholder="Alan / oda / ekipman" />
                 </div>
                 <button type="submit" className="btn btn-primary btn-full"><Plus size={14} /> Takvime Ekle</button>
@@ -9074,6 +9308,7 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
       "Atanan",
       "Oda",
       "Lokasyon",
+      "Konum",
       "Açılış Tarihi",
       "Plan/SLA Tarihi",
       "Tamamlanma",
@@ -9093,6 +9328,7 @@ function ReportsPage({ departmentLabelFor, departmentOptions, session, visibleJo
       job.assignee || "-",
       job.room || "-",
       job.location || "-",
+      job.locationDetail || "-",
       formatReportDateTime(job.createdAt),
       formatReportDateTime(job.due),
       formatReportDateTime(job.completedAt),
@@ -10215,7 +10451,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
       if (isApiRequestError(error) && error.code === "FEATURE_ACCESS_DENIED") {
         setAlert("Otel kat planlaması yetkiniz yok.");
       } else {
-        setAlert("Kat planı kaydedilemedi. Kat numarası ve alan adlarının tekrar etmediğini kontrol edin.");
+        setAlert("Kat planı kaydedilemedi. Kat ve alan adlarının tekrar etmediğini kontrol edin.");
       }
     } finally {
       setSaving(false);
@@ -10332,21 +10568,10 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
               <button type="button" className="btn btn-danger btn-sm" onClick={() => removeFloor(floor.level)}><Trash2 size={13} /> Sil</button>
             </div>
             <div className="card-body ui-body-form">
-              <div className="form-grid two">
-                <label className="form-group">
-                  <span className="form-label">Kat numarası</span>
-                  <input
-                    className="form-control"
-                    type="number"
-                    value={floor.level}
-                    onChange={(event) => updateFloor(floor.level, { level: Number(event.target.value) || 0 })}
-                  />
-                </label>
-                <label className="form-group">
-                  <span className="form-label">Kat adı</span>
-                  <input className="form-control" value={floor.name} onChange={(event) => updateFloor(floor.level, { name: event.target.value })} />
-                </label>
-              </div>
+              <label className="form-group">
+                <span className="form-label">Kat adı</span>
+                <input className="form-control" value={floor.name} onChange={(event) => updateFloor(floor.level, { name: event.target.value })} />
+              </label>
               <label className="form-group">
                 <span className="form-label">Oda / alanlar</span>
                 <textarea

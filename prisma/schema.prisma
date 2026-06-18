@@ -318,6 +318,7 @@ model WorkOrder {
   description      String?
   room             String?
   location         String
+  locationDetail   String                 @default("")
   tags             String?
   guestImpact      Boolean                @default(false)
   shiftCode        String?
