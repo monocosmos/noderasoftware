@@ -12,6 +12,7 @@ import {
   ClipboardCheck,
   Code2,
   Cpu,
+  Download,
   ExternalLink,
   Factory,
   Github,
@@ -124,6 +125,9 @@ export default function Home() {
               <a href="#urunler" className="hover:text-[#ffffff]">
                 Ürünler
               </a>
+              <Link href="/videowallplayer/" className="hover:text-[#ffffff]">
+                VideoWallPlayer
+              </Link>
               <a href="#embedded" className="hover:text-[#ffffff]">
                 STM32 / ESP32
               </a>
@@ -248,6 +252,59 @@ export default function Home() {
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="videowallplayer" className="border-y border-[#b8cce0] bg-[#edf4fa] px-5 py-14 sm:px-8 lg:px-10">
+        <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.82fr_1.18fr] lg:items-center">
+          <div className="flex items-start gap-5">
+            <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg border border-[#b8cce0] bg-[#07111f] p-3">
+              <Image
+                src="/brand/videowallplayer/brand-logo.png"
+                alt="VideoWallPlayer logosu"
+                width={64}
+                height={64}
+                className="h-full w-full object-contain"
+                unoptimized
+              />
+            </span>
+            <div>
+              <p className="text-sm font-bold uppercase text-[#2563eb]">Yeni yayınlanan proje</p>
+              <h2 className="mt-3 text-3xl font-semibold leading-tight">VideoWallPlayer</h2>
+              <p className="mt-4 max-w-2xl leading-8 text-[#4d647a]">
+                Otel, showroom ve video wall ekranlarında kenarlıksız, tam ekran ve kesintisiz oynatma için Windows ve
+                Android tabanlı medya oynatıcı.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {[
+              "Windows ve Android paketleri",
+              "VLC/libVLC codec altyapısı",
+              "Loop, karışık mod ve kiosk oynatma"
+            ].map((item) => (
+              <div key={item} className="rounded-lg border border-[#b8cce0] bg-[#e1ebf4] p-5">
+                <BadgeCheck className="text-[#16a34a]" size={22} />
+                <p className="mt-4 text-sm font-bold leading-6 text-[#17324d]">{item}</p>
+              </div>
+            ))}
+          </div>
+          <div className="lg:col-span-2 flex flex-wrap gap-3">
+            <Link
+              href="/videowallplayer/"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2f80c9] px-5 py-3 text-sm font-bold text-[#edf7ff] transition hover:bg-[#2563eb]"
+            >
+              Detay ve indirme
+              <Download size={17} />
+            </Link>
+            <a
+              href="https://github.com/monocosmos/VideoWallPlayer"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#b8cce0] px-5 py-3 text-sm font-semibold text-[#17324d] transition hover:bg-[#d8e6f2]"
+            >
+              Kaynak kod
+              <Github size={17} />
+            </a>
           </div>
         </div>
       </section>
