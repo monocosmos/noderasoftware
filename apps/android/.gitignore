@@ -15,3 +15,4 @@
 local.properties
 hotelops-release.jks
 app/google-services.json
+app/src/*/google-services.json

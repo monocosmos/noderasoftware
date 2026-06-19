@@ -5,10 +5,8 @@ import type { LucideIcon } from "lucide-react";
 import {
   ArrowRight,
   BadgeCheck,
-  BarChart3,
   Blocks,
   Building2,
-  CheckCircle2,
   ChevronRight,
   CircuitBoard,
   ClipboardCheck,
@@ -18,8 +16,6 @@ import {
   Factory,
   Github,
   Globe2,
-  Hotel,
-  Layers3,
   Mail,
   MapPin,
   MonitorCog,
@@ -39,46 +35,6 @@ export const metadata: Metadata = {
 };
 
 const brandLogo = "/brand/nodera-logo.png";
-
-const platformStats = [
-  { value: "HotelOps", label: "otel operasyon platformu" },
-  { value: "STM32 / ESP32", label: "gömülü sistem yazılımı" },
-  { value: "ISO 9001 / 14001", label: "kalite ve çevre yönetimi" }
-];
-
-const mainProducts: Array<{
-  title: string;
-  eyebrow: string;
-  text: string;
-  icon: LucideIcon;
-  features: string[];
-  href: string;
-}> = [
-  {
-    title: "HotelOps Yönetim Sistemi",
-    eyebrow: "SaaS + masaüstü + mobil",
-    text: "Otel ekiplerinin housekeeping, teknik servis, ön büro, güvenlik, stok, eğitim ve yönetim süreçlerini tek ekranda toplar.",
-    icon: Hotel,
-    features: ["Rol bazlı operasyon ekranları", "Web, Windows ve Android kullanım", "Raspberry Pi üzerinde canlı kurulum"],
-    href: "/hotel/"
-  },
-  {
-    title: "STM32 ve ESP32 Yazılım Paketleri",
-    eyebrow: "embedded ürünleşme",
-    text: "Sensör okuma, haberleşme, kontrol algoritmaları, eğitim kiti arşivleri ve üretime yakın mikrodenetleyici firmware çalışmaları.",
-    icon: Cpu,
-    features: ["STM32 örnek kod arşivleri", "ESP32 eğitim kiti yazılımları", "Prototipten saha testine geçiş"],
-    href: "#embedded"
-  },
-  {
-    title: "Kalite Yönetim Yazılımları",
-    eyebrow: "ISO 9001 ve ISO 14001",
-    text: "Doküman kontrolü, aksiyon takibi, iç tetkik, uygunsuzluk, çevre hedefleri ve yönetim gözden geçirme süreçleri için yazılım modülleri.",
-    icon: ClipboardCheck,
-    features: ["Doküman revizyon takibi", "CAPA ve denetim akışları", "Çevre hedefleri ve performans kayıtları"],
-    href: "#kalite"
-  }
-];
 
 const serviceLines: Array<{ title: string; text: string; icon: LucideIcon }> = [
   {
@@ -193,8 +149,8 @@ export default function Home() {
             </div>
           </nav>
 
-          <div className="grid flex-1 items-center gap-8 py-10 md:grid-cols-[1.02fr_0.98fr] lg:py-14">
-            <div>
+          <div className="flex flex-1 items-center py-10 lg:py-14">
+            <div className="max-w-4xl">
               <p className="mb-5 inline-flex items-center gap-2 rounded-md border border-[#22d3ee]/45 bg-[#22d3ee]/10 px-3 py-2 text-sm font-semibold text-[#a5f3fc]">
                 <Sparkles size={16} />
                 Otel, gömülü sistem ve kalite yönetimi için yazılım
@@ -237,101 +193,61 @@ export default function Home() {
                 </span>
               </div>
             </div>
-
-            <div className="relative hidden md:block">
-              <div className="rounded-lg border border-[#d5ebf8]/28 bg-[#edf7ff]/12 p-4 shadow-2xl shadow-[#0f3d5a]/24 backdrop-blur">
-                <div className="rounded-md border border-[#bfd4e7] bg-[#edf4fa] p-4 text-[#17324d]">
-                  <div className="flex items-center justify-between gap-4 border-b border-[#dbe6f3] pb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-md bg-[#2f80c9] text-[#edf7ff]">
-                        <Layers3 size={20} />
-                      </span>
-                      <div>
-                        <p className="text-sm font-bold">Nodera ürün paneli</p>
-                        <p className="text-xs font-semibold text-[#65746b]">Teklif, kurulum, destek ve satış hattı</p>
-                      </div>
-                    </div>
-                    <span className="rounded-md bg-[#dcfce7] px-2.5 py-1 text-xs font-bold text-[#166534]">Canlı</span>
-                  </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                    {platformStats.map((item) => (
-                      <div key={item.value} className="rounded-md border border-[#bfd4e7] bg-[#f0f6fb] p-4">
-                        <p className="text-lg font-bold">{item.value}</p>
-                        <p className="mt-2 text-xs font-semibold leading-5 text-[#65746b]">{item.label}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-4 grid gap-3 md:grid-cols-[0.9fr_1.1fr]">
-                    <div className="rounded-md border border-[#bfd4e7] bg-[#1e4f6f] p-4 text-[#edf7ff]">
-                      <p className="text-sm font-bold text-[#a5f3fc]">Satış odakları</p>
-                      <div className="mt-4 space-y-3">
-                        {["Otel operasyonları", "Endüstriyel kontrol", "ISO süreç takibi"].map((item) => (
-                          <div key={item} className="flex items-center gap-2 text-sm font-semibold text-[#e1f2fb]">
-                            <CheckCircle2 size={16} className="text-[#22d3ee]" />
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-[#bfd4e7] bg-[#f0f6fb] p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-bold">Kurulum akışı</p>
-                        <BarChart3 size={18} className="text-[#2563eb]" />
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {["Analiz", "Demo", "Özelleştirme", "Teslim"].map((step, index) => (
-                          <div key={step} className="flex items-center gap-3">
-                            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#edf2ef] text-xs font-bold">
-                              {index + 1}
-                            </span>
-                            <span className="text-sm font-semibold text-[#34413a]">{step}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </section>
 
-      <section id="urunler" className="px-5 py-20 sm:px-8 lg:px-10">
-        <div className="mx-auto max-w-7xl">
-          <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase text-[#2563eb]">Pazarlanacak ürün aileleri</p>
-            <h2 className="mt-4 text-4xl font-semibold leading-tight sm:text-5xl">
-              Yazılım, donanım ve saha operasyonunu aynı satış çatısı altında topluyoruz.
-            </h2>
-          </div>
-          <div className="mt-10 grid gap-4 lg:grid-cols-3">
-            {mainProducts.map(({ title, eyebrow, text, icon: Icon, features, href }) => (
-              <article key={title} className="rounded-lg border border-[#b8cce0] bg-[#edf4fa] p-6 shadow-soft">
-                <div className="flex items-start justify-between gap-4">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-md bg-[#ccefff] text-[#2f80c9]">
-                    <Icon size={24} />
-                  </span>
-                  <span className="rounded-md border border-[#cbd8e6] px-2.5 py-1 text-xs font-bold uppercase text-[#52637a]">
-                    {eyebrow}
-                  </span>
+      <section id="urunler" className="border-y border-[#5f86a0] bg-[#07111f] text-[#edf7ff]">
+        <div className="relative min-h-[calc(100vh-96px)] overflow-hidden">
+          <iframe
+            title="Nodera HotelOps web tabanlı tanıtım deneyimi"
+            src="/animations/hotelops-ad/Nodera%20Reklam%20Web.html"
+            className="pointer-events-none absolute inset-0 h-full w-full border-0 opacity-55"
+            loading="eager"
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_42%,rgba(47,230,176,0.08),transparent_34%),linear-gradient(90deg,rgba(7,17,31,0.94)_0%,rgba(7,17,31,0.82)_42%,rgba(7,17,31,0.52)_100%)]" />
+          <div className="relative z-10 mx-auto flex min-h-[calc(100vh-96px)] w-full max-w-7xl flex-col justify-center px-5 py-16 sm:px-8 lg:px-10">
+            <div className="grid gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:items-center">
+              <div>
+                <p className="text-sm font-bold uppercase text-[#2dd4bf]">HotelOps web deneyimi</p>
+                <h2 className="mt-5 max-w-3xl text-5xl font-semibold leading-tight sm:text-6xl">
+                  Nodera HotelOps
+                </h2>
+                <p className="mt-6 max-w-2xl text-lg leading-8 text-[#d5ebf8]">
+                  Otel operasyonlarını, departman görevlerini ve yönetim takiplerini tek merkezde toplayan seçilebilir,
+                  tıklanabilir ve web tabanlı tanıtım yüzeyi.
+                </p>
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <Link
+                    href="/hotel/"
+                    className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2dd4bf] px-5 py-3 text-sm font-bold text-[#17324d] transition hover:bg-[#67e8f9]"
+                  >
+                    HotelOps girişini aç
+                    <ExternalLink size={17} />
+                  </Link>
+                  <a
+                    href="mailto:info@noderasoftware.com"
+                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+                  >
+                    Demo talep et
+                    <Mail size={17} />
+                  </a>
                 </div>
-                <h3 className="mt-7 text-2xl font-semibold">{title}</h3>
-                <p className="mt-4 leading-7 text-[#4d647a]">{text}</p>
-                <div className="mt-6 space-y-3">
-                  {features.map((feature) => (
-                    <p key={feature} className="flex gap-2 text-sm font-semibold text-[#17324d]">
-                      <CheckCircle2 className="mt-0.5 shrink-0 text-[#16a34a]" size={16} />
-                      {feature}
-                    </p>
-                  ))}
-                </div>
-                <a href={href} className="mt-7 inline-flex items-center gap-2 text-sm font-bold text-[#2f80c9]">
-                  Detaylara git
-                  <ArrowRight size={16} />
-                </a>
-              </article>
-            ))}
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                {[
+                  { value: "Housekeeping", label: "oda ve görev takibi" },
+                  { value: "Teknik servis", label: "arıza, bakım ve aksiyon" },
+                  { value: "Yönetim", label: "rapor, rol ve süreç görünümü" }
+                ].map((item) => (
+                  <div key={item.value} className="rounded-lg border border-[#d5ebf8]/22 bg-[#edf7ff]/10 p-5 backdrop-blur-md">
+                    <p className="text-xl font-bold text-[#ffffff]">{item.value}</p>
+                    <p className="mt-3 text-sm font-semibold leading-6 text-[#c8e3f3]">{item.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>

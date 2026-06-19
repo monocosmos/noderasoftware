@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-06-16T21:35:00+03:00",
+  "updatedAt": "2026-06-18T20:04:28+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
@@ -28,9 +28,9 @@
       "message": "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
     },
     "androidPlay": {
-      "latestVersion": "1.0.9",
-      "latestCode": 2026060102,
-      "minimumCode": 2026060102,
+      "latestVersion": "1.0.22",
+      "latestCode": 2026061607,
+      "minimumCode": 2026061607,
       "downloadUrl": "https://play.google.com/store/apps/details?id=com.noderasoftware.hotelops",
       "title": "Android Play Store uygulamasi guncel degil",
       "message": "HotelOps Android Play Store kanalinin yeni surumu hazir."

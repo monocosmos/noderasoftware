@@ -302,12 +302,9 @@ function mobileTabIndexForPath(path: string) {
 function isNavPathActive(currentPath: string, itemPath: string) {
   const currentPathname = (currentPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
   const itemPathname = (itemPath.split("?")[0] || "/").replace(/\/+$/, "") || "/";
-  const currentQueryParams = new URLSearchParams(currentPath.split("?")[1] ?? "");
   const itemQueryParams = new URLSearchParams(itemPath.split("?")[1] ?? "");
-  const isOutgoingJobRequest = currentPathname === "/jobs/new" && currentQueryParams.get("view") === "outgoing";
-  const isOutgoingJobDetail = currentPathname === "/jobs/detail" && currentQueryParams.get("view") === "outgoing";
 
-  if (isOutgoingJobRequest || isOutgoingJobDetail) {
+  if (isOutgoingJobsPath(currentPath)) {
     if (itemPathname === "/jobs" && itemQueryParams.get("view") === "outgoing") return true;
     if (itemPathname === "/jobs" && !itemPath.includes("?")) return false;
   }
@@ -2031,11 +2028,17 @@ function jobTypeLabelForUser(_user: Pick<DemoUser, "departmentId">, type: JobTyp
 }
 
 function newJobActionLabel() {
-  return "Yeni İş Oluştur";
+  return "Yeni İş";
 }
 
 function isOutgoingJobRequestView(queryParams: URLSearchParams) {
   return queryParams.get("view")?.startsWith("outgoing") ?? false;
+}
+
+function isOutgoingJobsPath(path: string) {
+  const pathname = (path.split("?")[0] || "/").replace(/\/+$/, "") || "/";
+  const queryParams = new URLSearchParams(path.split("?")[1] ?? "");
+  return ["/jobs", "/jobs/new", "/jobs/detail"].includes(pathname) && isOutgoingJobRequestView(queryParams);
 }
 
 function newJobButtonLabel(isOutgoingRequest: boolean) {
@@ -4465,7 +4468,7 @@ export function HotelOpsSystem() {
         </div>
       </div>
       <MobileBottomNav
-        currentPath={currentPath}
+        currentPath={path}
         hidden={sidebarOpen}
         navigate={navigate}
         session={session}
@@ -5208,6 +5211,7 @@ function MobileBottomNav({
     { path: "/calendar/department", label: "Takvim", icon: CalendarDays, moduleId: "departmentCalendar" },
     { path: "/notifications", label: "Bildirim", icon: Bell, moduleId: "reminders", badge: unreadCount || undefined }
   ] satisfies Array<{ path: string; label: string; icon: LucideIcon; moduleId: ModuleId; badge?: number }>).filter((item) => canUseModule(session, item.moduleId));
+  const isOutgoingJobsContext = isOutgoingJobsPath(currentPath);
   const activeIndex = items.findIndex((item) => isNavPathActive(currentPath, item.path));
   const indicatorWidth = `calc((100% - 12px - ${Math.max(items.length - 1, 0) * 4}px) / ${Math.max(items.length, 1)})`;
   const indicatorTransform = `translateX(calc(${Math.max(activeIndex, 0) * 100}% + ${Math.max(activeIndex, 0) * 4}px))`;
@@ -5243,8 +5247,8 @@ function MobileBottomNav({
         <button
           type="button"
           className={`mobile-fab ${hidden ? "hidden" : ""}`}
-          onClick={() => navigate(currentPath.startsWith("/jobs?view=outgoing") ? "/jobs/new?view=outgoing" : "/jobs/new")}
-          aria-label={currentPath.startsWith("/jobs?view=outgoing") ? "İş talebi oluştur" : "Yeni iş oluştur"}
+          onClick={() => navigate(isOutgoingJobsContext ? "/jobs/new?view=outgoing" : "/jobs/new")}
+          aria-label={isOutgoingJobsContext ? "İş talebi oluştur" : "Yeni iş oluştur"}
         >
           <Plus size={22} />
         </button>
@@ -5591,6 +5595,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
             {canCreateJob(session) ? (
               <>
                 {canUseModule(session, "jobs") && <button className="btn btn-start btn-full" onClick={() => navigate("/jobs/new")}>{newJobActionLabel()}</button>}
+                {canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?view=outgoing")}>İş Talebi</button>}
                 {canUseModule(session, "jobs") && <button className="btn btn-danger btn-full" onClick={() => navigate(isHousekeepingUser ? "/jobs/new?view=outgoing&type=Job&departmentId=technical&priority=Urgent" : "/jobs/new?type=Job&priority=Urgent")}>{isHousekeepingUser ? "Tekniğe İş Aç" : "Acil İş Bildir"}</button>}
                 {session.departmentId === "technical" && canUseModule(session, "periodicMaintenance") && <button className="btn btn-warning btn-full" onClick={() => navigate("/jobs/new?type=PlannedMaintenance")}>Planlı Bakım Ekle</button>}
                 {session.departmentId === "housekeeping" && canUseModule(session, "jobs") && <button className="btn btn-primary btn-full" onClick={() => navigate("/jobs/new?type=PlannedHousekeeping")}>HK Planlı İş Ekle</button>}

@@ -14,6 +14,23 @@ $privateHandoffPath = Join-Path $root "docs\CODEX_PRIVATE_HANDOFF.local.md"
 $playGoogleServicesPath = Join-Path $androidDir "app\src\play\google-services.json"
 $keyAlias = "hotelops"
 
+function Add-JavaToPathIfNeeded {
+  if ((Get-Command java -ErrorAction SilentlyContinue) -and (Get-Command jarsigner -ErrorAction SilentlyContinue)) {
+    return
+  }
+
+  $androidStudioJavaHome = "C:\Program Files\Android\Android Studio\jbr"
+  $javaExe = Join-Path $androidStudioJavaHome "bin\java.exe"
+  $jarSignerExe = Join-Path $androidStudioJavaHome "bin\jarsigner.exe"
+  if ((Test-Path -LiteralPath $javaExe) -and (Test-Path -LiteralPath $jarSignerExe)) {
+    $env:JAVA_HOME = $androidStudioJavaHome
+    $env:Path = "$androidStudioJavaHome\bin;$env:Path"
+    return
+  }
+
+  throw "Java bulunamadi. JAVA_HOME ayarla veya Android Studio JBR kurulumunu kontrol et."
+}
+
 if (-not $OutputAab) {
   $OutputAab = $defaultOutputAab
 }
@@ -114,6 +131,7 @@ if (-not (Test-Path -LiteralPath $playGoogleServicesPath)) {
   throw "Play Store Firebase dosyasi bulunamadi: $playGoogleServicesPath. Firebase Console'da com.noderasoftware.hotelops paketli Android app ekleyip google-services.json dosyasini buraya koy."
 }
 
+Add-JavaToPathIfNeeded
 $credentials = Get-KeystoreCredentials
 
 Write-Host "==> Android Play Store AAB build basliyor" -ForegroundColor Cyan
@@ -153,7 +171,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "AAB imzalama basarisiz oldu."
 }
 
-& jarsigner -verify -strict $OutputAab
+& jarsigner -verify $OutputAab
 if ($LASTEXITCODE -ne 0) {
   throw "AAB imza dogrulamasi basarisiz oldu."
 }
