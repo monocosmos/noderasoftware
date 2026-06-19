@@ -22,11 +22,18 @@ export const metadata: Metadata = {
 
 const downloads = [
   {
-    title: "Windows x64",
-    text: "Taşınabilir zip paket. Exe, VLC/libVLC dosyaları, codec altyapısı ve örnek içerik birlikte gelir.",
-    href: "/downloads/VideoWallPlayer-Windows-x64.zip",
-    file: "VideoWallPlayer-Windows-x64.zip",
+    title: "Windows Setup",
+    text: "Kurulum paketi. Uygulamayı Program Files altına kurar, masaüstü ve Start Menu kısayollarını oluşturur.",
+    href: "/downloads/VideoWallPlayer-Windows-Setup-x64.exe",
+    file: "VideoWallPlayer-Windows-Setup-x64.exe",
     icon: MonitorPlay
+  },
+  {
+    title: "Windows Portable",
+    text: "Taşınabilir zip paket. Klasöre çıkarıp VideoWallPlayer.exe dosyasını doğrudan çalıştırabilirsiniz.",
+    href: "/downloads/VideoWallPlayer-Windows-Portable-x64.zip",
+    file: "VideoWallPlayer-Windows-Portable-x64.zip",
+    icon: Download
   },
   {
     title: "Android APK",
@@ -83,12 +90,20 @@ export default function VideoWallPlayerPage() {
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
-                  href="/downloads/VideoWallPlayer-Windows-x64.zip"
+                  href="/downloads/VideoWallPlayer-Windows-Setup-x64.exe"
                   download
                   className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2dd4bf] px-5 py-3 text-sm font-bold text-[#07111f] transition hover:bg-[#67e8f9]"
                 >
-                  Windows indir
+                  Windows Setup indir
                   <Download size={17} />
+                </a>
+                <a
+                  href="/downloads/VideoWallPlayer-Windows-Portable-x64.zip"
+                  download
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+                >
+                  Windows Portable
+                  <MonitorPlay size={17} />
                 </a>
                 <a
                   href="/downloads/VideoWallPlayer-Android.apk"
@@ -126,8 +141,8 @@ export default function VideoWallPlayerPage() {
               <h2 className="mt-3 text-4xl font-semibold leading-tight">Windows ve Android için hazır yayın.</h2>
             </div>
             <p className="max-w-xl leading-7 text-[#4d647a]">
-              Windows paketi zip olarak gelir; klasörü çıkarıp `VideoWallPlayer.exe` dosyasını çalıştırın. Android tarafında
-              APK dosyasını cihaza yükleyebilirsiniz.
+              Windows için kurulum paketi ve portable zip ayrı sunulur. Setup paketi klasik kurulum yapar; portable paket
+              klasöre çıkarılıp doğrudan çalıştırılır. Android tarafında APK dosyasını cihaza yükleyebilirsiniz.
             </p>
           </div>
 
