@@ -125,6 +125,12 @@ export default function Home() {
               <a href="#urunler" className="hover:text-[#ffffff]">
                 Ürünler
               </a>
+              <Link href="/hotel/" className="hover:text-[#ffffff]">
+                HotelOps
+              </Link>
+              <Link href="/hotel/hotelpanel/" className="hover:text-[#ffffff]">
+                HotelPanel
+              </Link>
               <Link href="/videowallplayer/" className="hover:text-[#ffffff]">
                 VideoWallPlayer
               </Link>

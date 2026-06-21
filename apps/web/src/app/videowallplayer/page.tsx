@@ -61,18 +61,32 @@ export default function VideoWallPlayerPage() {
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(135deg,rgba(7,17,31,0.98),rgba(18,58,86,0.92)_48%,rgba(16,102,123,0.86))]" />
 
         <div className="mx-auto flex min-h-[72vh] w-full max-w-7xl flex-col px-5 py-5 sm:px-8 lg:px-10">
-          <nav className="flex items-center justify-between gap-4">
+          <nav className="flex flex-wrap items-center justify-between gap-4">
             <Link href="/" className="inline-flex items-center gap-2 text-sm font-bold text-[#d5ebf8] hover:text-white">
               <ArrowLeft size={17} />
               Nodera Software
             </Link>
-            <a
-              href="https://github.com/monocosmos/VideoWallPlayer"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/30 px-4 py-2.5 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
-            >
-              <Github size={16} />
-              GitHub
-            </a>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/hotel/"
+                className="inline-flex items-center justify-center rounded-md border border-[#d5ebf8]/30 px-4 py-2.5 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+              >
+                HotelOps
+              </Link>
+              <Link
+                href="/hotel/hotelpanel/"
+                className="inline-flex items-center justify-center rounded-md border border-[#d5ebf8]/30 px-4 py-2.5 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+              >
+                HotelPanel
+              </Link>
+              <a
+                href="https://github.com/monocosmos/VideoWallPlayer"
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/30 px-4 py-2.5 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+              >
+                <Github size={16} />
+                GitHub
+              </a>
+            </div>
           </nav>
 
           <div className="grid flex-1 gap-10 py-12 lg:grid-cols-[0.92fr_1.08fr] lg:items-center">

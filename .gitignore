@@ -17,6 +17,7 @@ prisma/dev.db
 apps/desktop/release/
 mac-artifacts/
 apps/web/public/downloads/
+manual-upload/
 apps/desktop/build/icon.icns
 tools/
 _tools/

@@ -317,6 +317,64 @@ function Assert-AndroidDownloadMatchesManifest {
   Write-Host "    Android APK/version manifest eslesti: $actualCode" -ForegroundColor DarkGreen
 }
 
+function Assert-WebRouteExports {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $WebOutPath,
+
+    [Parameter(Mandatory = $true)]
+    [string] $Label
+  )
+
+  $requiredRoutes = @(
+    "index.html",
+    "hotel\index.html",
+    "hotel\login\index.html",
+    "hotel\hotelpanel\index.html",
+    "hotelpanel\index.html",
+    "videowallplayer\index.html"
+  )
+
+  foreach ($route in $requiredRoutes) {
+    $path = Join-Path $WebOutPath $route
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "$Label web export eksik: $path. Deploy durduruldu; once tam web build alin."
+    }
+  }
+
+  Write-Host "    $Label web route kontrolu tamam: hotel, hotelpanel ve videowallplayer mevcut" -ForegroundColor DarkGreen
+}
+
+function Assert-VideoWallDownloads {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $DownloadsPath,
+
+    [Parameter(Mandatory = $true)]
+    [string] $Label
+  )
+
+  $requiredDownloads = @(
+    "VideoWallPlayer-Windows-Setup-x64.exe",
+    "VideoWallPlayer-Windows-Portable-x64.zip",
+    "VideoWallPlayer-Android.apk"
+  )
+
+  foreach ($download in $requiredDownloads) {
+    $path = Join-Path $DownloadsPath $download
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "$Label VideoWallPlayer indirme dosyasi eksik: $path"
+    }
+
+    $item = Get-Item -LiteralPath $path
+    if ($item.Length -le 0) {
+      throw "$Label VideoWallPlayer indirme dosyasi bos: $path"
+    }
+  }
+
+  Write-Host "    $Label VideoWallPlayer indirme dosyalari mevcut" -ForegroundColor DarkGreen
+}
+
 try {
   if (-not $SkipBuild) {
     Write-Host "==> Lokal API build aliniyor" -ForegroundColor Cyan
@@ -333,6 +391,7 @@ try {
 
   Write-Host "==> Web build manifesti guncelleniyor" -ForegroundColor Cyan
   Update-WebBuildManifest
+  Assert-WebRouteExports -WebOutPath (Join-Path $root "apps\web\out") -Label "Lokal"
   $localApiSrcHash = (Get-FileHash (Join-Path $root "apps\api\src\server.ts") -Algorithm SHA256).Hash.ToLowerInvariant()
   $localApiDistHash = (Get-FileHash (Join-Path $root "apps\api\dist\server.js") -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -385,6 +444,7 @@ try {
   Copy-RequiredItem -From (Join-Path $root ".env.example") -To (Join-Path $stage ".env.example")
   Copy-RequiredItem -From (Join-Path $root ".gitignore") -To (Join-Path $stage ".gitignore")
   Copy-RequiredItem -From (Join-Path $root "README.md") -To (Join-Path $stage "README.md")
+  Assert-WebRouteExports -WebOutPath (Join-Path $stage "apps\web\out") -Label "Paket"
 
   & tar.exe -czf "$archive" -C "$stage" .
   if ($LASTEXITCODE -ne 0) {
@@ -436,6 +496,7 @@ sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
       throw "Indirme dosyalari klasoru bulunamadi: $downloadsPath"
     }
 
+    Assert-VideoWallDownloads -DownloadsPath $downloadsPath -Label "Lokal"
     Assert-AndroidDownloadMatchesManifest
 
     Write-Host "==> Indirme dosyalari manifest oncesi Pi'ye yukleniyor" -ForegroundColor Cyan
@@ -561,6 +622,14 @@ if [ "`$include_downloads" = "1" ]; then
   sudo chown -R hotelops:hotelops /opt/noderasoftware/apps/web/out/downloads /opt/noderasoftware/apps/web/public/downloads
   sudo find /opt/noderasoftware/apps/web/out/downloads /opt/noderasoftware/apps/web/public/downloads -type d -exec chmod 755 {} +
   sudo find /opt/noderasoftware/apps/web/out/downloads /opt/noderasoftware/apps/web/public/downloads -type f -exec chmod 644 {} +
+  for download_file in \
+    VideoWallPlayer-Windows-Setup-x64.exe \
+    VideoWallPlayer-Windows-Portable-x64.zip \
+    VideoWallPlayer-Android.apk
+  do
+    test -s "/opt/noderasoftware/apps/web/out/downloads/`$download_file"
+    test -s "/opt/noderasoftware/apps/web/public/downloads/`$download_file"
+  done
 fi
 
 test -s '$remoteStage/apps/web/out/app-version.json'
@@ -580,6 +649,16 @@ sudo rsync -a '$remoteStage/apps/web/eslint.config.mjs' /opt/noderasoftware/apps
 sudo rsync -a '$remoteStage/apps/web/Web.config' /opt/noderasoftware/apps/web/Web.config
 sudo install -o hotelops -g hotelops -m 644 /opt/noderasoftware/runtime/maintenance-status.json /opt/noderasoftware/apps/web/out/maintenance-status.json
 sudo install -o hotelops -g hotelops -m 644 /opt/noderasoftware/runtime/maintenance-status.json /opt/noderasoftware/apps/web/public/maintenance-status.json
+for required_route in \
+  index.html \
+  hotel/index.html \
+  hotel/login/index.html \
+  hotel/hotelpanel/index.html \
+  hotelpanel/index.html \
+  videowallplayer/index.html
+do
+  test -s "/opt/noderasoftware/apps/web/out/`$required_route"
+done
 test -s /opt/noderasoftware/apps/web/out/hotel/hotelpanel/index.html
 test -s /opt/noderasoftware/apps/web/out/maintenance-status.json
 sudo mkdir -p /opt/noderasoftware/apps/desktop
