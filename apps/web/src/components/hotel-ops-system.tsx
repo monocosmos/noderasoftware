@@ -5076,12 +5076,11 @@ function SidebarNav({
     badge: badge || undefined,
     keywords: `${label} ${keywords}`.toLocaleLowerCase("tr-TR")
   });
-  const prioritizeRoomStatus = isHousekeepingStaff(session) || isHousekeepingChief(session) || isHousekeepingManager(session);
   const urgentJobsNavLabel = urgentJobsLabel();
   const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Otel Operasyon", Home, undefined, "oda operasyon housekeeping önbüro kat toplantı");
   const priorityItems = [
     entry("dashboard", "dashboard", "/dashboard", "Ana Sayfa", LayoutDashboard, undefined, "dashboard ana ekran ozet"),
-    ...(prioritizeRoomStatus ? [roomStatusEntry] : []),
+    ...(can("roomStatus") ? [roomStatusEntry] : []),
     ...(session.roleId === "staff" ? [entry("assigned", "jobs", "/jobs?view=assigned", "Bana Atanan", Wrench, assignedJobs.length, "benim işlerim görev")] : []),
     ...(can("managementRequests") ? [entry("requests-priority", "managementRequests", "/modules/requests", unreadRequestCount ? "Okunmamış Talepler" : "Talepler", MessageSquareText, unreadRequestCount || requestCount, "onay yönetici talep")] : []),
     ...(session.roleId === "hrManager" ? [] : [entry("urgent", "jobs", "/jobs?view=urgent", urgentJobsNavLabel, AlertTriangle, urgentJobs.length, urgentJobsKeywords())]),
@@ -5112,7 +5111,6 @@ function SidebarNav({
         entry("requests", "managementRequests", "/modules/requests", "Talepler", MessageSquareText, requestCount, "müdür şef genel müdür"),
         entry("operation-documents", "operationDocuments", "/modules/operation-documents", "Operasyon Belgeleri", FileText, unreadDocumentCount, "satış fnb pdf excel office operasyon okundu"),
         entry("guest", "guestRequests", "/modules/guest-requests", "Misafir Talebi", MessageSquareText, undefined, "şikayet istek"),
-        ...(!prioritizeRoomStatus ? [roomStatusEntry] : []),
         entry("lost", "lostFound", "/modules/lost-found", "Kayıp Eşya", Search, undefined, "eşya"),
         entry("announcements", "announcements", "/modules/announcements", "Duyurular", Bell, undefined, "iletişim")
       ]

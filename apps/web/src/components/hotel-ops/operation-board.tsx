@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { AlertTriangle, CalendarDays, Clock, Home, Users, Wrench } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle, CalendarDays, ClipboardList, Clock, Home, X, Users, Wrench } from "lucide-react";
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
 
@@ -25,6 +25,30 @@ type MeetingPlan = {
   needs: string;
 };
 
+type AreaActivity = {
+  id: string;
+  sourceLabel: string;
+  title: string;
+  detail: string;
+  owner: string;
+  due: string;
+  status: string;
+  risk: AreaIssueCard["risk"];
+};
+
+type AreaView = {
+  key: string;
+  floor: HotelFloorRecord;
+  area: HotelFloorAreaRecord;
+  status: AreaStatus;
+  issueCards: AreaIssueCard[];
+  meetingPlan: MeetingPlan | null;
+  guestPlan: string;
+  records: OperationalRecord[];
+  jobs: JobRecord[];
+  activities: AreaActivity[];
+};
+
 export function HotelOperationBoard({
   canViewFullPlan,
   departmentLabelFor,
@@ -48,6 +72,8 @@ export function HotelOperationBoard({
   selectedFloorLevel: string;
   showAllFloors: boolean;
 }) {
+  const [expandedAreaKey, setExpandedAreaKey] = useState("");
+  const [detailAreaKey, setDetailAreaKey] = useState("");
   const selectedFloor = floors.find((floor) => String(floor.level) === selectedFloorLevel) ?? floors[0];
   const displayedFloors = showAllFloors ? floors : selectedFloor ? [selectedFloor] : [];
   const areaSummaries = floors.flatMap((floor) => floor.areas.map((area) => {
@@ -66,6 +92,14 @@ export function HotelOperationBoard({
   const departmentCount = areaSummaries.filter((item) => item.status.tone === "department").length;
   const issueCount = areaSummaries.reduce((sum, item) => sum + item.issueCount, 0);
   const meetingCount = areaSummaries.filter((item) => item.meetingPlan).length;
+  const detailView = useMemo(() => {
+    if (!detailAreaKey) return null;
+    for (const floor of floors) {
+      const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === detailAreaKey);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor);
+    }
+    return null;
+  }, [departmentLabelFor, detailAreaKey, floors, jobs, records]);
 
   return (
     <section className="hotel-operation-board" aria-label="Otel operasyon kat ve oda haritası">
@@ -135,53 +169,53 @@ export function HotelOperationBoard({
                     .slice()
                     .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
                     .map((area) => {
-                      const areaRecords = recordsForArea(area, records);
-                      const areaJobs = activeJobsForArea(area, jobs);
-                      const status = statusForArea(area, areaRecords, areaJobs, departmentLabelFor);
-                      const issueCards = issueCardsForArea(areaRecords, areaJobs, departmentLabelFor);
-                      const meetingPlan = meetingPlanForArea(area, areaRecords, areaJobs);
-                      const guestPlan = guestPlanForArea(area, status, areaRecords, areaJobs);
+                      const view = areaViewFor(floor, area, records, jobs, departmentLabelFor);
+                      const isExpanded = expandedAreaKey === view.key;
                       return (
-                        <button
-                          type="button"
-                          className={`hotel-operation-area-tile ${status.tone}`}
-                          key={`${floor.level}-${area.id}-${area.label}`}
-                          onClick={() => onSelectArea(area)}
+                        <div
+                          className={`hotel-operation-area-cell ${isExpanded ? "expanded" : ""}`}
+                          key={view.key}
                         >
+                          <button
+                            type="button"
+                            className={`hotel-operation-area-tile ${view.status.tone}`}
+                            onClick={() => setExpandedAreaKey((current) => current === view.key ? "" : view.key)}
+                            aria-expanded={isExpanded}
+                          >
                           <span className="hotel-operation-tile-main">
                             <span className="hotel-operation-tile-head">
                               <strong>{area.label}</strong>
-                              <span className={`hotel-operation-status ${status.tone}`}>{status.label}</span>
+                              <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
                             </span>
                             <span className="hotel-operation-meta-row">
                               <span>{area.kind === "ROOM" ? "Oda" : "Alan"}</span>
-                              {status.departmentLabel ? <span>{status.departmentLabel}</span> : null}
+                              {view.status.departmentLabel ? <span>{view.status.departmentLabel}</span> : null}
                             </span>
-                            {guestPlan ? (
+                            {view.guestPlan ? (
                               <span className="hotel-operation-note">
-                                <Clock size={13} /> {guestPlan}
+                                <Clock size={13} /> {view.guestPlan}
                               </span>
                             ) : null}
-                            {meetingPlan ? (
+                            {view.meetingPlan ? (
                               <span className="hotel-operation-note meeting">
-                                <CalendarDays size={13} /> {meetingPlan.time} · {meetingPlan.needs}
+                                <CalendarDays size={13} /> {view.meetingPlan.time} · {view.meetingPlan.needs}
                               </span>
                             ) : null}
                           </span>
-                          {issueCards.length ? (
-                            <span className="hotel-operation-issue-list">
-                              {issueCards.slice(0, 3).map((issue) => (
-                                <span key={issue.id} className={`hotel-operation-issue-card ${issue.risk}`}>
-                                  <span className="hotel-operation-issue-label">{issue.label}</span>
-                                  <strong>{issue.title}</strong>
-                                  <small>{issue.detail}</small>
-                                  <small>{issue.due}</small>
-                                </span>
-                              ))}
-                              {issueCards.length > 3 ? <span className="hotel-operation-more-issues">+{issueCards.length - 3} kayıt</span> : null}
-                            </span>
+                          {view.issueCards.length ? (
+                            <span className="hotel-operation-compact-alert">{view.issueCards.length} açık kayıt</span>
                           ) : null}
                         </button>
+                        {isExpanded ? (
+                          <AreaNotePaper
+                            view={view}
+                            onDetails={() => {
+                              onSelectArea(area);
+                              setDetailAreaKey(view.key);
+                            }}
+                          />
+                        ) : null}
+                      </div>
                       );
                     })}
                 </div>
@@ -197,6 +231,7 @@ export function HotelOperationBoard({
           description={canViewFullPlan ? "Kat Planı ekranından oda ve toplantı alanlarını tanımlayın." : "Teknik tarafından departmanlara açılan oda veya alan bulunmuyor."}
         />
       )}
+      {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
     </section>
   );
 }
@@ -209,6 +244,209 @@ function SummaryCard({ icon, label, tone, value }: { icon: ReactNode; label: str
       <span>{label}</span>
     </div>
   );
+}
+
+function AreaNotePaper({ onDetails, view }: { onDetails: () => void; view: AreaView }) {
+  const primaryIssue = view.issueCards[0];
+  const primaryActivity = view.activities[0];
+
+  return (
+    <div className="hotel-operation-note-paper">
+      <div className="hotel-operation-note-paper-head">
+        <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
+        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-details" onClick={onDetails}>
+          <ClipboardList size={14} /> Detaylar
+        </button>
+      </div>
+      <div className="hotel-operation-note-paper-body">
+        <strong>{view.area.label} notu</strong>
+        <p>{noteSummaryForArea(view)}</p>
+      </div>
+      <div className="hotel-operation-note-paper-meta">
+        {view.guestPlan ? (
+          <span><Clock size={13} /> {view.guestPlan}</span>
+        ) : null}
+        {view.meetingPlan ? (
+          <span><CalendarDays size={13} /> {view.meetingPlan.time} · {view.meetingPlan.needs}</span>
+        ) : null}
+        {primaryIssue ? (
+          <span><AlertTriangle size={13} /> {primaryIssue.label}: {primaryIssue.title}</span>
+        ) : (
+          <span>Açık aksiyon yok</span>
+        )}
+      </div>
+      {primaryActivity ? (
+        <small className="hotel-operation-note-paper-foot">Son aktivite: {primaryActivity.sourceLabel} · {primaryActivity.title}</small>
+      ) : null}
+    </div>
+  );
+}
+
+function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaView }) {
+  const titleId = `hotel-operation-detail-${view.key}`;
+
+  return (
+    <div className="app-modal-overlay hotel-operation-detail-overlay" role="presentation" onClick={onClose}>
+      <section className="app-modal hotel-operation-detail-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
+        <header className="app-modal-header">
+          <div className="app-modal-title-row">
+            <span className="app-modal-title-icon">
+              {isMeetingArea(view.area) ? <CalendarDays size={20} /> : <Home size={20} />}
+            </span>
+            <div>
+              <span className="app-modal-eyebrow">{view.floor.name || defaultFloorName(view.floor.level)}</span>
+              <h3 className="app-modal-title" id={titleId}>{view.area.label} Detayları</h3>
+            </div>
+          </div>
+          <button type="button" className="app-modal-close" onClick={onClose} aria-label="Detay penceresini kapat">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="app-modal-body hotel-operation-detail-body">
+          <div className="hotel-operation-detail-grid">
+            <DetailMetric label="Durum" value={view.status.label} tone={view.status.tone} />
+            <DetailMetric label="Açık kayıt" value={String(view.issueCards.length)} tone={view.issueCards.length ? "attention" : "vacant"} />
+            <DetailMetric label="Aktivite" value={String(view.activities.length)} tone="meeting" />
+          </div>
+
+          <section className="hotel-operation-detail-section">
+            <h4>Plan ve Not</h4>
+            <div className="hotel-operation-detail-plan">
+              {view.guestPlan ? <p><Clock size={14} /> {view.guestPlan}</p> : null}
+              {view.meetingPlan ? <p><CalendarDays size={14} /> {view.meetingPlan.time} · {view.meetingPlan.needs}</p> : null}
+              {!view.guestPlan && !view.meetingPlan ? <p>Giriş veya toplantı planı yok.</p> : null}
+            </div>
+          </section>
+
+          <section className="hotel-operation-detail-section">
+            <h4>Oda Aktiviteleri</h4>
+            {view.activities.length ? (
+              <div className="hotel-operation-activity-list">
+                {view.activities.map((activity) => (
+                  <article className={`hotel-operation-activity-row ${activity.risk}`} key={activity.id}>
+                    <span className="hotel-operation-issue-label">{activity.sourceLabel}</span>
+                    <div>
+                      <strong>{activity.title}</strong>
+                      <small>{activity.detail || "Detay notu yok"}</small>
+                    </div>
+                    <div>
+                      <small>Sorumlu</small>
+                      <span>{activity.owner || "Atama bekliyor"}</span>
+                    </div>
+                    <div>
+                      <small>Hedef</small>
+                      <span>{activity.due}</span>
+                    </div>
+                    <div>
+                      <small>Durum</small>
+                      <span>{activity.status}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="app-modal-empty">Bu oda veya alan için açık aktivite yok.</div>
+            )}
+          </section>
+
+          {view.issueCards.length ? (
+            <section className="hotel-operation-detail-section">
+              <h4>Bekleyen Kartlar</h4>
+              <div className="hotel-operation-issue-list expanded">
+                {view.issueCards.map((issue) => (
+                  <span key={issue.id} className={`hotel-operation-issue-card ${issue.risk}`}>
+                    <span className="hotel-operation-issue-label">{issue.label}</span>
+                    <strong>{issue.title}</strong>
+                    <small>{issue.detail}</small>
+                    <small>{issue.due}</small>
+                  </span>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DetailMetric({ label, tone, value }: { label: string; tone: string; value: string }) {
+  return (
+    <div className={`hotel-operation-detail-metric ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function areaViewFor(
+  floor: HotelFloorRecord,
+  area: HotelFloorAreaRecord,
+  records: OperationalRecord[],
+  jobs: JobRecord[],
+  departmentLabelFor: (departmentId: string) => string
+): AreaView {
+  const areaRecords = recordsForArea(area, records);
+  const areaJobs = activeJobsForArea(area, jobs);
+  const status = statusForArea(area, areaRecords, areaJobs, departmentLabelFor);
+
+  return {
+    key: areaKeyFor(floor, area),
+    floor,
+    area,
+    status,
+    issueCards: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor),
+    meetingPlan: meetingPlanForArea(area, areaRecords, areaJobs),
+    guestPlan: guestPlanForArea(area, status, areaRecords, areaJobs),
+    records: areaRecords,
+    jobs: areaJobs,
+    activities: activityItemsForArea(areaRecords, areaJobs, departmentLabelFor)
+  };
+}
+
+function activityItemsForArea(
+  records: OperationalRecord[],
+  jobs: JobRecord[],
+  departmentLabelFor: (departmentId: string) => string
+): AreaActivity[] {
+  const jobActivities = jobs.map((job) => ({
+    id: `job-activity-${job.id}`,
+    sourceLabel: issueLabelForJob(job),
+    title: job.title,
+    detail: job.description || job.tags,
+    owner: [departmentLabelFor(job.departmentId), job.assignee].filter(Boolean).join(" · "),
+    due: job.due ? formatBoardDate(job.due) : "Bugün",
+    status: job.status,
+    risk: job.priority === "Urgent" || job.slaRisk ? "urgent" : job.priority === "High" || job.status === "Delayed" ? "high" : "normal"
+  } satisfies AreaActivity));
+
+  const recordActivities = records
+    .filter((record) => !isVacantStatus(record.status) || Boolean(record.detail || record.meta))
+    .map((record) => ({
+      id: `record-activity-${record.id}`,
+      sourceLabel: issueLabelForStatus(record.status),
+      title: record.status,
+      detail: record.detail || record.meta,
+      owner: record.owner,
+      due: record.due || "Bugün",
+      status: record.status,
+      risk: record.risk
+    } satisfies AreaActivity));
+
+  return [...jobActivities, ...recordActivities];
+}
+
+function noteSummaryForArea(view: AreaView) {
+  const leadIssue = view.issueCards[0];
+  if (view.meetingPlan) return `${view.meetingPlan.time} planı var. İhtiyaç: ${view.meetingPlan.needs}`;
+  if (view.status.tone === "occupied") return view.guestPlan || "Misafir konaklaması aktif.";
+  if (leadIssue) return `${leadIssue.label} bekliyor: ${leadIssue.title}.`;
+  if (view.status.tone === "department") return `${view.status.departmentLabel || "Departman"} üzerinde işlemde.`;
+  return view.area.kind === "ROOM" ? "Oda boş, açık aksiyon görünmüyor." : "Alan hazır, açık aksiyon görünmüyor.";
+}
+
+function areaKeyFor(floor: HotelFloorRecord, area: HotelFloorAreaRecord) {
+  return `${floor.level}-${area.id}-${area.label}`;
 }
 
 function recordsForArea(area: HotelFloorAreaRecord, records: OperationalRecord[]) {
