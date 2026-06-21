@@ -410,6 +410,19 @@ export type HotelFloorRecord = {
   areas: HotelFloorAreaRecord[];
 };
 
+export type OperationalRecord = {
+  id: string;
+  title: string;
+  meta: string;
+  status: string;
+  owner: string;
+  detail: string;
+  due: string;
+  risk: "low" | "normal" | "high" | "urgent";
+  approvalStage?: "staff" | "chief" | "manager" | "completed";
+  approvalTrail?: string[];
+};
+
 export type NotificationRecord = {
   id: string;
   title: string;

@@ -47,6 +47,7 @@ import { departments, getRole, type DepartmentId, type RoleId } from "@/lib/rbac
 import { MeterTrackingPage } from "./meter-tracking-page";
 import { AccessDenied, EmptyState, Info } from "./hotel-ops/ui-common";
 import { JobNoteComposer } from "./hotel-ops/jobs";
+import { HotelOperationBoard } from "./hotel-ops/operation-board";
 import {
   AppDownloadCards,
   AppUpdateCard,
@@ -85,6 +86,7 @@ import {
   type ModuleId,
   type NotificationPreferences,
   type NotificationRecord,
+  type OperationalRecord,
   type OperationDocumentDraft,
   type OperationDocumentRecord,
   type PageTransitionDirection,
@@ -1163,7 +1165,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "shiftPanels", label: "Vardiya Paneli", group: "Takvim & Hatırlatma" },
   { id: "managementRequests", label: "Talepler", group: "Takvim & Hatırlatma" },
   { id: "inventory", label: "Envanter ve Depo", group: "Yönetim" },
-  { id: "roomStatus", label: "Operasyon Takip", group: "Yönetim" },
+  { id: "roomStatus", label: "Otel Operasyon", group: "Yönetim" },
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
   { id: "operationDocuments", label: "Operasyon Belgeleri", group: "Yönetim" },
@@ -1229,29 +1231,16 @@ type OperationalModuleConfig = {
   records: Array<{ title: string; meta: string; status: string }>;
 };
 
-type OperationalRecord = {
-  id: string;
-  title: string;
-  meta: string;
-  status: string;
-  owner: string;
-  detail: string;
-  due: string;
-  risk: "low" | "normal" | "high" | "urgent";
-  approvalStage?: "staff" | "chief" | "manager" | "completed";
-  approvalTrail?: string[];
-};
-
 const operationalModules: OperationalModuleConfig[] = [
   { id: "inventory", path: "/modules/inventory", title: "Envanter ve Depo", subtitle: "Yedek parça, sarf malzeme ve minimum stok uyarıları", primaryAction: "Stok Kaydı Ekle", fields: ["Malzeme", "Miktar", "Minimum Stok"], metrics: [{ label: "Kritik Stok", value: "6", tone: "urgent" }, { label: "Toplam Kalem", value: "124", tone: "inprogress" }], records: [{ title: "Klima filtresi", meta: "8 adet kaldı", status: "Kritik" }, { title: "HK temizlik seti", meta: "42 adet", status: "Normal" }] },
   {
     id: "roomStatus",
     path: "/modules/rooms",
-    title: "Operasyon Takip",
-    subtitle: "Kat bazlı oda ve alan operasyon durumları",
-    primaryAction: "Operasyon Güncelle",
+    title: "Otel Operasyon",
+    subtitle: "Kat, oda, toplantı alanı ve bekleyen aksiyon izleme üssü",
+    primaryAction: "Operasyon Kartı Aç",
     fields: ["Oda", "Durum", "Açıklama"],
-    metrics: [{ label: "Kirli Oda", value: "14", tone: "pending" }, { label: "Blokajlı", value: "3", tone: "delayed" }],
+    metrics: [{ label: "Dolu", value: "0", tone: "urgent" }, { label: "Boş", value: "0", tone: "pending" }, { label: "Departmanda", value: "0", tone: "completed" }],
     records: [
       { title: "Oda 1008", meta: "Çıkış sonrası temizlik bekliyor", status: "Kirli" },
       { title: "Oda 1108", meta: "Teknik iş bekliyor", status: "Blokajlı" },
@@ -5089,7 +5078,7 @@ function SidebarNav({
   });
   const prioritizeRoomStatus = isHousekeepingStaff(session) || isHousekeepingChief(session) || isHousekeepingManager(session);
   const urgentJobsNavLabel = urgentJobsLabel();
-  const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Operasyon Takip", Home, undefined, "oda operasyon housekeeping önbüro");
+  const roomStatusEntry = entry("rooms", "roomStatus", "/modules/rooms", "Otel Operasyon", Home, undefined, "oda operasyon housekeeping önbüro kat toplantı");
   const priorityItems = [
     entry("dashboard", "dashboard", "/dashboard", "Ana Sayfa", LayoutDashboard, undefined, "dashboard ana ekran ozet"),
     ...(prioritizeRoomStatus ? [roomStatusEntry] : []),
@@ -5698,6 +5687,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [floorPlanFloors, setFloorPlanFloors] = useState<HotelFloorRecord[]>([]);
   const [selectedOperationFloorLevel, setSelectedOperationFloorLevel] = useState("");
+  const [showAllOperationFloors, setShowAllOperationFloors] = useState(false);
   const localRecordIds = useMemo(() => new Set(localRecords.map((record) => record.id)), [localRecords]);
   const records = [...localRecords, ...seedRecords.filter((record) => !localRecordIds.has(record.id))].filter((record) => (
     !completedRecordIds.includes(record.id) && !record.status.includes("Tamamlandı")
@@ -5727,6 +5717,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
     if (metric === "açık kayıt") return !["Tamamlandı", "Güncel", "Teslim edildi"].some((closedStatus) => record.status.includes(closedStatus));
     if (metric === "kirli oda") return status.includes("kirli");
     if (metric === "blokajlı") return status.includes("blokajlı");
+    if (metric === "departmanda") return ["operasyon", "kirli", "bakım", "arız", "kontrol", "blokaj", "dnd", "ooo", "ooi"].some((keyword) => status.includes(keyword));
     return status.includes(metric);
   };
   const metricCards = [
@@ -5738,7 +5729,6 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   const selected = visibleRecords.find((record) => record.id === selectedId) ?? visibleRecords[0];
   const detailPanelTitle = selected ? "Kayıt Detayı" : showCreatePanel ? module.primaryAction : "Kayıt Detayı";
   const operationFloorOptions = useMemo(() => visibleFloorPlanFloorsForUser(floorPlanFloors, session), [floorPlanFloors, session]);
-  const selectedOperationFloor = operationFloorOptions.find((floor) => String(floor.level) === selectedOperationFloorLevel) ?? operationFloorOptions[0];
 
   useEffect(() => {
     try {
@@ -5757,6 +5747,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
     setSelectedId("");
     setActiveMetric("");
     setDraft({});
+    setShowAllOperationFloors(false);
   }, [module.id, session.id]);
 
   useEffect(() => {
@@ -5919,7 +5910,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
 
   return (
     <div className={`module-workspace ${module.id === "announcements" ? "module-workspace-compact" : ""}`}>
-      <div className="kpi-grid ui-section-bottom-sm">
+      {!isRoomStatusModule && <div className="kpi-grid ui-section-bottom-sm">
         {metricCards.map((metric) => (
           <button
             key={metric.label}
@@ -5933,55 +5924,21 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
             <div className="kpi-label">{metric.label}</div>
           </button>
         ))}
-      </div>
+      </div>}
 
       {isRoomStatusModule && (
-        <div className="card operation-tracking-card">
-          <div className="card-header">
-            <span className="card-title">Kat Bazlı Operasyon Takip</span>
-            <div className="floor-selector-inline">
-              <label className="form-label" htmlFor="operationFloorSelect">Kat</label>
-              <select
-                id="operationFloorSelect"
-                className="form-control"
-                value={selectedOperationFloor ? String(selectedOperationFloor.level) : ""}
-                onChange={(event) => setSelectedOperationFloorLevel(event.target.value)}
-                disabled={!operationFloorOptions.length}
-              >
-                {operationFloorOptions.length ? operationFloorOptions.map((floor) => (
-                  <option key={floor.level} value={String(floor.level)}>
-                    {floor.name?.trim() || defaultFloorName(floor.level)}
-                  </option>
-                )) : (
-                  <option value="">Kat yok</option>
-                )}
-              </select>
-            </div>
-          </div>
-          <div className="card-body">
-            {selectedOperationFloor ? (
-              <div className="operation-room-grid">
-                {selectedOperationFloor.areas.map((area) => {
-                  const areaStatus = roomOperationStatusForArea(area, records);
-                  return (
-                    <button
-                      type="button"
-                      className={`operation-room-tile ${areaStatus.tone}`}
-                      key={`${selectedOperationFloor.level}-${area.id}-${area.label}`}
-                      onClick={() => selectOperationArea(area)}
-                    >
-                      <strong>{area.label}</strong>
-                      <span>{areaStatus.status}</span>
-                      <small>{area.kind === "ROOM" ? "Oda" : "Alan"}</small>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <EmptyState title="Görüntülenecek alan yok" description={canViewFullFloorPlan(session) ? "Kat Planı ekranından oda/alan tanımlayın." : "Teknik tarafından departmanlara açılan oda/alan bulunmuyor."} />
-            )}
-          </div>
-        </div>
+        <HotelOperationBoard
+          canViewFullPlan={canViewFullFloorPlan(session)}
+          departmentLabelFor={departmentLabelFor}
+          floors={operationFloorOptions}
+          jobs={visibleJobs}
+          records={records}
+          selectedFloorLevel={selectedOperationFloorLevel}
+          showAllFloors={showAllOperationFloors}
+          onSelectArea={selectOperationArea}
+          onSelectFloorLevel={setSelectedOperationFloorLevel}
+          onToggleShowAllFloors={() => setShowAllOperationFloors((current) => !current)}
+        />
       )}
 
       <div className="side-panel-grid">

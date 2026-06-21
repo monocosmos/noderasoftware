@@ -64,6 +64,14 @@
   .download-group-tab,
   .photo-actions,
   .room-status-grid,
+  .hotel-operation-board,
+  .hotel-operation-board-header,
+  .hotel-operation-summary-grid,
+  .hotel-operation-toolbar,
+  .hotel-operation-floor-tabs,
+  .hotel-operation-floor-stack,
+  .hotel-operation-area-grid,
+  .hotel-operation-area-tile,
   .module-mini-grid,
   .flow-steps,
   .calendar-grid,
@@ -97,6 +105,9 @@
   .kpi-card,
   .module-mini-card,
   .room-tile,
+  .hotel-operation-area-tile,
+  .hotel-operation-floor-tab,
+  .hotel-operation-summary-card,
   .job-card,
   .notif-item,
   .permission-preview,
@@ -5362,9 +5373,9 @@ textarea.form-control {
 .room-status-pill.inprogress { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
 .room-status-pill.urgent,
 .room-status-pill.delayed { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.room-status-pill.occupied { background: #dcfce7; border-color: #86efac; color: #166534; }
+.room-status-pill.occupied { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
 .room-status-pill.vacant { background: #f8fafc; border-color: #cbd5e1; color: #475569; }
-.room-status-pill.work { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
+.room-status-pill.work { background: #dcfce7; border-color: #86efac; color: #166534; }
 
 .room-approval-actions,
 .room-approval-panel {
@@ -5534,9 +5545,9 @@ textarea.form-control {
 .room-tile.urgent,
 .room-tile.delayed { background: #fef2f2; border-color: #fecaca; }
 .room-tile.inprogress { background: #eff6ff; border-color: #bfdbfe; }
-.room-tile.occupied { background: #dcfce7; border-color: #86efac; }
+.room-tile.occupied { background: #fef2f2; border-color: #fca5a5; }
 .room-tile.vacant { background: #f8fafc; border-color: #cbd5e1; }
-.room-tile.work { background: #fff7ed; border-color: #fed7aa; }
+.room-tile.work { background: #dcfce7; border-color: #86efac; }
 
 .operation-tracking-card {
   border-top: 3px solid #2563eb;
@@ -5593,8 +5604,8 @@ textarea.form-control {
 }
 
 .operation-room-tile.occupied {
-  background: #dcfce7;
-  border-color: #86efac;
+  background: #fef2f2;
+  border-color: #fca5a5;
 }
 
 .operation-room-tile.vacant {
@@ -5603,13 +5614,332 @@ textarea.form-control {
 }
 
 .operation-room-tile.work {
-  background: #fff7ed;
-  border-color: #fdba74;
+  background: #dcfce7;
+  border-color: #86efac;
 }
 
 .operation-room-tile:hover {
   border-color: var(--classic-primary);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.hotel-operation-board {
+  border: 1px solid var(--classic-border);
+  border-top: 3px solid #0f766e;
+  border-radius: var(--classic-radius);
+  background: #fff;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+}
+
+.hotel-operation-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.hotel-operation-board-header h2 {
+  margin: 2px 0 4px;
+  color: var(--classic-text);
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.hotel-operation-board-header p {
+  margin: 0;
+  color: var(--classic-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hotel-operation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.hotel-operation-legend-item {
+  border: 1px solid var(--classic-border);
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hotel-operation-legend-item.occupied { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+.hotel-operation-legend-item.vacant { background: #f8fafc; border-color: #cbd5e1; color: #475569; }
+.hotel-operation-legend-item.department { background: #dcfce7; border-color: #86efac; color: #166534; }
+
+.hotel-operation-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hotel-operation-summary-card {
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius);
+  background: #f8fafc;
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.hotel-operation-summary-card strong {
+  color: var(--classic-text);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.hotel-operation-summary-card span {
+  color: var(--classic-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.hotel-operation-summary-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--classic-radius);
+  display: grid;
+  place-items: center;
+  color: currentColor;
+}
+
+.hotel-operation-summary-card.occupied { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.hotel-operation-summary-card.vacant { background: #f8fafc; border-color: #cbd5e1; color: #475569; }
+.hotel-operation-summary-card.department { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.hotel-operation-summary-card.attention { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.hotel-operation-summary-card.meeting { background: #ecfeff; border-color: #a5f3fc; color: #0e7490; }
+
+.hotel-operation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hotel-operation-floor-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.hotel-operation-floor-tab {
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius);
+  background: #fff;
+  color: var(--classic-muted);
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.hotel-operation-floor-tab:hover,
+.hotel-operation-floor-tab.active {
+  border-color: var(--classic-primary);
+  background: var(--classic-primary-light);
+  color: var(--classic-primary-dark);
+}
+
+.hotel-operation-floor-tab.all.active {
+  border-color: #0f766e;
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
+.hotel-operation-plan-note {
+  color: var(--classic-muted);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.hotel-operation-floor-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.hotel-operation-floor-section {
+  border: 1px solid var(--classic-border-light);
+  border-radius: var(--classic-radius);
+  background: #f8fafc;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.hotel-operation-floor-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hotel-operation-floor-header strong {
+  color: var(--classic-text);
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.hotel-operation-floor-header small {
+  color: var(--classic-muted);
+  font-size: 12px;
+}
+
+.hotel-operation-area-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.hotel-operation-area-tile {
+  border: 1px solid var(--classic-border);
+  border-radius: var(--classic-radius);
+  background: #fff;
+  color: var(--classic-text);
+  min-height: 164px;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hotel-operation-area-tile.occupied { background: #fef2f2; border-color: #fca5a5; }
+.hotel-operation-area-tile.vacant { background: #f8fafc; border-color: #cbd5e1; }
+.hotel-operation-area-tile.department { background: #dcfce7; border-color: #86efac; }
+.hotel-operation-area-tile.meeting { background: #ecfeff; border-color: #67e8f9; }
+
+.hotel-operation-area-tile:hover {
+  border-color: var(--classic-primary);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.hotel-operation-tile-main {
+  display: grid;
+  gap: 7px;
+}
+
+.hotel-operation-tile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hotel-operation-tile-head strong {
+  font-size: 18px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.hotel-operation-status {
+  border: 1px solid var(--classic-border);
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.hotel-operation-status.occupied { background: #fff; border-color: #fca5a5; color: #b91c1c; }
+.hotel-operation-status.vacant { background: #fff; border-color: #cbd5e1; color: #475569; }
+.hotel-operation-status.department { background: #fff; border-color: #86efac; color: #166534; }
+.hotel-operation-status.meeting { background: #fff; border-color: #67e8f9; color: #0e7490; }
+
+.hotel-operation-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hotel-operation-meta-row span {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 4px 7px;
+  color: var(--classic-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hotel-operation-note {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--classic-text);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.hotel-operation-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.hotel-operation-note.meeting {
+  color: #0e7490;
+}
+
+.hotel-operation-issue-list {
+  display: grid;
+  gap: 6px;
+}
+
+.hotel-operation-issue-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-left: 3px solid #f59e0b;
+  border-radius: var(--classic-radius);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 7px 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.hotel-operation-issue-card.high,
+.hotel-operation-issue-card.urgent {
+  border-left-color: #ef4444;
+}
+
+.hotel-operation-issue-card.low {
+  border-left-color: #22c55e;
+}
+
+.hotel-operation-issue-card strong {
+  color: var(--classic-text);
+  font-size: 12px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.hotel-operation-issue-card small {
+  color: var(--classic-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.hotel-operation-issue-label {
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.hotel-operation-more-issues {
+  color: var(--classic-muted);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .floor-plan-output-card {
@@ -6652,6 +6982,29 @@ textarea.form-control {
   .room-status-grid,
   .module-mini-grid {
     grid-template-columns: 1fr;
+  }
+  .hotel-operation-board {
+    padding: 12px;
+  }
+  .hotel-operation-board-header,
+  .hotel-operation-toolbar {
+    display: grid;
+    justify-content: stretch;
+  }
+  .hotel-operation-legend {
+    justify-content: flex-start;
+  }
+  .hotel-operation-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hotel-operation-area-grid {
+    grid-template-columns: 1fr;
+  }
+  .hotel-operation-area-tile {
+    min-height: 0;
+  }
+  .hotel-operation-plan-note {
+    white-space: normal;
   }
   .operation-room-grid,
   .floor-plan-output-grid {
