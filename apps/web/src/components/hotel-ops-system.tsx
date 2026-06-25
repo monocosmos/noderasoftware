@@ -129,6 +129,8 @@ const STORAGE_LOGIN_CREDENTIALS = "hotelops.login.credentials";
 const STORAGE_LOGIN_PROFILE = "hotelops.login.profile";
 const STORAGE_LOGIN_ACCOUNTS = "hotelops.login.accounts";
 const STORAGE_LOGIN_REMEMBER = "hotelops.login.remember";
+const STORAGE_DEPARTMENT_SHORT_CODES = "hotelops.department.shortCodes";
+const STORAGE_MATERIAL_LISTS = "hotelops.materialLists.v1";
 const STORAGE_SHELL = "hotelops.shell";
 const HOTEL_BASE_PATH = "/hotel";
 const HOTEL_TIMEZONE_OPTIONS = [
@@ -1165,6 +1167,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "shiftPanels", label: "Vardiya Paneli", group: "Takvim & Hatırlatma" },
   { id: "managementRequests", label: "Talepler", group: "Takvim & Hatırlatma" },
   { id: "inventory", label: "Envanter ve Depo", group: "Yönetim" },
+  { id: "materialLists", label: "Malzeme Listesi", group: "Yönetim" },
   { id: "roomStatus", label: "Otel Operasyon", group: "Yönetim" },
   { id: "lostFound", label: "Kayıp Eşya", group: "Yönetim" },
   { id: "guestRequests", label: "Misafir Şikayet / Talep", group: "Yönetim" },
@@ -1571,6 +1574,52 @@ function departmentLabel(departmentId: string) {
   return departments[departmentId as DepartmentId]?.labelTR ?? departmentId.replace(/-/g, " ").replace(/\b\w/g, (letter) => letter.toLocaleUpperCase("tr-TR"));
 }
 
+function defaultDepartmentShortCode(departmentId: string, label: string) {
+  const fixed: Record<string, string> = {
+    executive: "GM",
+    hr: "IK",
+    technical: "TK",
+    housekeeping: "HK",
+    frontOffice: "OB",
+    security: "GUV",
+    spa: "SPA",
+    sales: "SAT",
+    fnb: "F&B"
+  };
+  if (fixed[departmentId]) return fixed[departmentId];
+  const parts = label.replace(/&/g, " ").split(/\s+/).filter(Boolean);
+  if (parts.length > 1) return parts.map((part) => part[0]).join("").slice(0, 3).toLocaleUpperCase("tr-TR");
+  return (label || departmentId).replace(/[^a-zA-Z0-9ığüşöçİĞÜŞÖÇ]/g, "").slice(0, 3).toLocaleUpperCase("tr-TR");
+}
+
+function normalizeDepartmentShortCode(value: string) {
+  return value.trim().replace(/\s+/g, "").slice(0, 3).toLocaleUpperCase("tr-TR");
+}
+
+function validDepartmentShortCode(value: string) {
+  return /^[A-Z0-9&İĞÜŞÖÇ]{2,3}$/.test(value);
+}
+
+function readDepartmentShortCodes() {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_DEPARTMENT_SHORT_CODES) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([departmentId, value]) => [departmentId, normalizeDepartmentShortCode(String(value))])
+        .filter(([, value]) => validDepartmentShortCode(value))
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeDepartmentShortCodes(shortCodes: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_DEPARTMENT_SHORT_CODES, JSON.stringify(shortCodes));
+}
+
 function departmentOptionsFromRecords(records: DepartmentRecord[]) {
   const options = new Map<string, string>();
   for (const department of departmentOptions) {
@@ -1591,6 +1640,16 @@ function departmentOptionsFromRecords(records: DepartmentRecord[]) {
 function createDepartmentLabeler(options: Array<{ id: string; label: string }>) {
   const labels = new Map(options.map((department) => [department.id, department.label]));
   return (departmentId: string) => labels.get(departmentId) ?? departmentLabel(departmentId);
+}
+
+function createDepartmentShortCodeLabeler(options: Array<{ id: string; label: string }>, shortCodes: Record<string, string>) {
+  const labels = new Map(options.map((department) => [department.id, department.label]));
+  return (departmentId: string) => {
+    const configured = normalizeDepartmentShortCode(shortCodes[departmentId] ?? "");
+    if (validDepartmentShortCode(configured)) return configured;
+    const label = labels.get(departmentId) ?? departmentLabel(departmentId);
+    return defaultDepartmentShortCode(departmentId, label);
+  };
 }
 
 function initials(name: string) {
@@ -1640,41 +1699,6 @@ function operationalRecordsFor(module: OperationalModuleConfig, visibleJobs: Job
   return seed;
 }
 
-function operationAreaLabelFromRecord(record: Pick<OperationalRecord, "title">) {
-  return record.title.replace(/^Oda\s+/i, "").trim();
-}
-
-function roomOperationTone(status: string) {
-  const normalized = status.toLocaleLowerCase("tr-TR");
-  if (normalized.includes("dolu")) return "occupied";
-  if (normalized.includes("boş") || normalized.includes("temiz") || normalized.includes("alan")) return "vacant";
-  if (
-    normalized.includes("bakım") ||
-    normalized.includes("kirli") ||
-    normalized.includes("arız") ||
-    normalized.includes("kontrol") ||
-    normalized.includes("blokaj") ||
-    normalized.includes("dnd") ||
-    normalized.includes("ooo") ||
-    normalized.includes("ooi") ||
-    normalized.includes("operasyon")
-  ) {
-    return "work";
-  }
-  return "vacant";
-}
-
-function roomOperationStatusForArea(area: HotelFloorAreaRecord, records: OperationalRecord[]) {
-  const areaKey = floorPlanAreaKey(area.label);
-  const record = records.find((item) => floorPlanAreaKey(operationAreaLabelFromRecord(item)) === areaKey);
-  const status = record?.status ?? (area.kind === "AREA" ? "Alan" : "Boş");
-  return {
-    record,
-    status,
-    tone: roomOperationTone(status)
-  };
-}
-
 function operationalStorageKey(moduleId: ModuleId, userId: string) {
   if (moduleId === "roomStatus") return "hotelops.operational.roomStatus.shared";
   return `hotelops.operational.${moduleId}.${userId}`;
@@ -1683,6 +1707,388 @@ function operationalStorageKey(moduleId: ModuleId, userId: string) {
 function completedOperationalStorageKey(moduleId: ModuleId, userId: string) {
   if (moduleId === "roomStatus") return "hotelops.operational.completed.roomStatus.shared";
   return `hotelops.operational.completed.${moduleId}.${userId}`;
+}
+
+type MaterialCategory = "Demirbaş" | "Sarf" | "Yedek Parça" | "Hizmet";
+type MaterialPurchaseStatus = "draft" | "requested" | "ordered" | "received";
+type MaterialRequestStatus = "sent" | "reviewing" | "ordered" | "received";
+
+type MaterialOrderLink = {
+  id: string;
+  label: string;
+  url: string;
+};
+
+type MaterialListRecord = {
+  id: string;
+  departmentId: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MaterialItemRecord = {
+  id: string;
+  listId: string;
+  departmentId: string;
+  name: string;
+  category: MaterialCategory;
+  unit: string;
+  quantity: number;
+  minQuantity: number;
+  priceMin: number;
+  priceMax: number;
+  currency: string;
+  photoUrl: string;
+  orderLinks: MaterialOrderLink[];
+  qrCode: string;
+  serialNo: string;
+  location: string;
+  notes: string;
+  purchaseStatus: MaterialPurchaseStatus;
+  purchaseRequestId?: string;
+  updatedAt: string;
+};
+
+type MaterialPurchaseRequestRecord = {
+  id: string;
+  departmentId: string;
+  itemIds: string[];
+  note: string;
+  status: MaterialRequestStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MaterialItemDraft = {
+  listId: string;
+  name: string;
+  category: MaterialCategory;
+  unit: string;
+  quantity: string;
+  minQuantity: string;
+  priceMin: string;
+  priceMax: string;
+  currency: string;
+  photoUrl: string;
+  orderLinksText: string;
+  qrCode: string;
+  serialNo: string;
+  location: string;
+  notes: string;
+};
+
+type MaterialStoragePayload = {
+  lists: MaterialListRecord[];
+  items: MaterialItemRecord[];
+  requests: MaterialPurchaseRequestRecord[];
+};
+
+const materialCategories: MaterialCategory[] = ["Demirbaş", "Sarf", "Yedek Parça", "Hizmet"];
+const materialCurrencies = ["TRY", "EUR", "USD"];
+const materialPurchaseStatusLabels: Record<MaterialPurchaseStatus, string> = {
+  draft: "Listeye alındı",
+  requested: "Satın Almaya gönderildi",
+  ordered: "Sipariş açıldı",
+  received: "Teslim alındı"
+};
+const materialRequestStatusLabels: Record<MaterialRequestStatus, string> = {
+  sent: "Satın Alma kuyruğunda",
+  reviewing: "İncelemede",
+  ordered: "Sipariş verildi",
+  received: "Teslim alındı"
+};
+
+function createMaterialId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function emptyMaterialPayload(): MaterialStoragePayload {
+  return { lists: [], items: [], requests: [] };
+}
+
+function createMaterialItemDraft(listId = ""): MaterialItemDraft {
+  return {
+    listId,
+    name: "",
+    category: "Sarf",
+    unit: "adet",
+    quantity: "0",
+    minQuantity: "0",
+    priceMin: "",
+    priceMax: "",
+    currency: "TRY",
+    photoUrl: "",
+    orderLinksText: "",
+    qrCode: "",
+    serialNo: "",
+    location: "",
+    notes: ""
+  };
+}
+
+function normalizeMaterialLinks(value: unknown): MaterialOrderLink[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (typeof item === "string") return { id: `link-${index}`, label: `Link ${index + 1}`, url: item };
+      if (!item || typeof item !== "object") return null;
+      const link = item as Partial<MaterialOrderLink>;
+      const url = String(link.url ?? "").trim();
+      if (!url) return null;
+      return {
+        id: String(link.id || `link-${index}`),
+        label: String(link.label || `Link ${index + 1}`),
+        url
+      };
+    })
+    .filter(Boolean) as MaterialOrderLink[];
+}
+
+function normalizeMaterialPayload(value: unknown): MaterialStoragePayload {
+  if (!value || typeof value !== "object") return emptyMaterialPayload();
+  const payload = value as Partial<MaterialStoragePayload>;
+  const lists = Array.isArray(payload.lists)
+    ? payload.lists
+        .map((list) => {
+          if (!list || typeof list !== "object") return null;
+          const record = list as Partial<MaterialListRecord>;
+          const id = String(record.id ?? "").trim();
+          const departmentId = String(record.departmentId ?? "").trim();
+          const name = String(record.name ?? "").trim();
+          if (!id || !departmentId || !name) return null;
+          return {
+            id,
+            departmentId,
+            name,
+            description: String(record.description ?? ""),
+            createdAt: String(record.createdAt || new Date().toISOString()),
+            updatedAt: String(record.updatedAt || new Date().toISOString())
+          } satisfies MaterialListRecord;
+        })
+        .filter(Boolean) as MaterialListRecord[]
+    : [];
+  const listIds = new Set(lists.map((list) => list.id));
+  const items = Array.isArray(payload.items)
+    ? payload.items
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const record = item as Partial<MaterialItemRecord>;
+          const id = String(record.id ?? "").trim();
+          const listId = String(record.listId ?? "").trim();
+          const departmentId = String(record.departmentId ?? "").trim();
+          const name = String(record.name ?? "").trim();
+          if (!id || !listId || !departmentId || !name || !listIds.has(listId)) return null;
+          const category = materialCategories.includes(record.category as MaterialCategory) ? record.category as MaterialCategory : "Sarf";
+          return {
+            id,
+            listId,
+            departmentId,
+            name,
+            category,
+            unit: String(record.unit || "adet"),
+            quantity: Number(record.quantity ?? 0),
+            minQuantity: Number(record.minQuantity ?? 0),
+            priceMin: Number(record.priceMin ?? 0),
+            priceMax: Number(record.priceMax ?? 0),
+            currency: materialCurrencies.includes(String(record.currency)) ? String(record.currency) : "TRY",
+            photoUrl: String(record.photoUrl ?? ""),
+            orderLinks: normalizeMaterialLinks(record.orderLinks),
+            qrCode: String(record.qrCode ?? ""),
+            serialNo: String(record.serialNo ?? ""),
+            location: String(record.location ?? ""),
+            notes: String(record.notes ?? ""),
+            purchaseStatus: (["draft", "requested", "ordered", "received"] as MaterialPurchaseStatus[]).includes(record.purchaseStatus as MaterialPurchaseStatus) ? record.purchaseStatus as MaterialPurchaseStatus : "draft",
+            purchaseRequestId: record.purchaseRequestId ? String(record.purchaseRequestId) : undefined,
+            updatedAt: String(record.updatedAt || new Date().toISOString())
+          } satisfies MaterialItemRecord;
+        })
+        .filter(Boolean) as MaterialItemRecord[]
+    : [];
+  const itemIds = new Set(items.map((item) => item.id));
+  const requests = Array.isArray(payload.requests)
+    ? payload.requests
+        .map((request) => {
+          if (!request || typeof request !== "object") return null;
+          const record = request as Partial<MaterialPurchaseRequestRecord>;
+          const id = String(record.id ?? "").trim();
+          const departmentId = String(record.departmentId ?? "").trim();
+          if (!id || !departmentId) return null;
+          const status = (["sent", "reviewing", "ordered", "received"] as MaterialRequestStatus[]).includes(record.status as MaterialRequestStatus) ? record.status as MaterialRequestStatus : "sent";
+          return {
+            id,
+            departmentId,
+            itemIds: Array.isArray(record.itemIds) ? record.itemIds.map(String).filter((itemId) => itemIds.has(itemId)) : [],
+            note: String(record.note ?? ""),
+            status,
+            createdBy: String(record.createdBy ?? ""),
+            createdAt: String(record.createdAt || new Date().toISOString()),
+            updatedAt: String(record.updatedAt || new Date().toISOString())
+          } satisfies MaterialPurchaseRequestRecord;
+        })
+        .filter((request): request is MaterialPurchaseRequestRecord => Boolean(request && request.itemIds.length))
+    : [];
+  return { lists, items, requests };
+}
+
+function readMaterialStorage(): MaterialStoragePayload {
+  if (typeof window === "undefined") return emptyMaterialPayload();
+  try {
+    const raw = localStorage.getItem(STORAGE_MATERIAL_LISTS);
+    if (!raw) return emptyMaterialPayload();
+    return normalizeMaterialPayload(JSON.parse(raw));
+  } catch {
+    return emptyMaterialPayload();
+  }
+}
+
+function writeMaterialStorage(payload: MaterialStoragePayload) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_MATERIAL_LISTS, JSON.stringify(payload));
+}
+
+function materialSeedForDepartment(departmentId: string, departmentLabel: string): MaterialStoragePayload {
+  const now = new Date().toISOString();
+  const listNames = departmentId === "technical"
+    ? ["Teknik demirbaş malzeme", "Teknik sarf malzeme", "Otel sarf malzeme", "Otel Demirbaş Malzeme"]
+    : [`${departmentLabel} sarf malzeme`, `${departmentLabel} demirbaş malzeme`];
+  const lists = listNames.map((name, index) => ({
+    id: `seed-${departmentId}-${index + 1}`,
+    departmentId,
+    name,
+    description: index === 0 ? `${departmentLabel} ana malzeme listesi` : "",
+    createdAt: now,
+    updatedAt: now
+  } satisfies MaterialListRecord));
+  const seedItems: MaterialItemRecord[] = departmentId === "technical"
+    ? [
+        {
+          id: "seed-technical-furnace",
+          listId: lists[0].id,
+          departmentId,
+          name: "Endüstriyel Rasyonel Fırın",
+          category: "Demirbaş",
+          unit: "adet",
+          quantity: 1,
+          minQuantity: 1,
+          priceMin: 180000,
+          priceMax: 260000,
+          currency: "TRY",
+          photoUrl: "",
+          orderLinks: [{ id: "seed-link-furnace", label: "Servis / sipariş", url: "https://example.com/rasyonel-firin" }],
+          qrCode: "QR-TECH-FIRIN-001",
+          serialNo: "RF-001",
+          location: "Mutfak / sıcak bölüm",
+          notes: "Demirbaş QR ile tanıtıldı; bakım ve sipariş takibi bu kaleme bağlanır.",
+          purchaseStatus: "draft",
+          updatedAt: now
+        },
+        {
+          id: "seed-technical-lamp",
+          listId: lists[1].id,
+          departmentId,
+          name: "Oda LED ampul E27",
+          category: "Sarf",
+          unit: "adet",
+          quantity: 18,
+          minQuantity: 30,
+          priceMin: 75,
+          priceMax: 130,
+          currency: "TRY",
+          photoUrl: "",
+          orderLinks: [{ id: "seed-link-lamp", label: "Tedarikçi", url: "https://example.com/led-ampul" }],
+          qrCode: "",
+          serialNo: "",
+          location: "Teknik depo",
+          notes: "Minimum stok altına düşünce satın almaya gönderilir.",
+          purchaseStatus: "draft",
+          updatedAt: now
+        },
+        {
+          id: "seed-technical-curtain",
+          listId: lists[1].id,
+          departmentId,
+          name: "Perde motoru 24V",
+          category: "Yedek Parça",
+          unit: "adet",
+          quantity: 3,
+          minQuantity: 4,
+          priceMin: 2400,
+          priceMax: 3900,
+          currency: "TRY",
+          photoUrl: "",
+          orderLinks: [],
+          qrCode: "",
+          serialNo: "",
+          location: "Teknik depo",
+          notes: "Oda arızalarında hızlı değişim için tutulur.",
+          purchaseStatus: "draft",
+          updatedAt: now
+        }
+      ]
+    : [
+        {
+          id: `seed-${departmentId}-starter`,
+          listId: lists[0].id,
+          departmentId,
+          name: `${departmentLabel} örnek sarf malzeme`,
+          category: "Sarf",
+          unit: "adet",
+          quantity: 12,
+          minQuantity: 10,
+          priceMin: 100,
+          priceMax: 250,
+          currency: "TRY",
+          photoUrl: "",
+          orderLinks: [],
+          qrCode: "",
+          serialNo: "",
+          location: `${departmentLabel} depo`,
+          notes: "Departman kendi liste ve malzeme tanımlarını buradan çoğaltabilir.",
+          purchaseStatus: "draft",
+          updatedAt: now
+        }
+      ];
+  return { lists, items: seedItems, requests: [] };
+}
+
+function ensureMaterialSeed(payload: MaterialStoragePayload, departmentId: string, departmentLabel: string) {
+  if (payload.lists.some((list) => list.departmentId === departmentId)) return payload;
+  const seed = materialSeedForDepartment(departmentId, departmentLabel);
+  return {
+    lists: [...payload.lists, ...seed.lists],
+    items: [...payload.items, ...seed.items],
+    requests: payload.requests
+  };
+}
+
+function materialLinksFromText(value: string): MaterialOrderLink[] {
+  return value
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((url, index) => {
+      let label = `Link ${index + 1}`;
+      try {
+        label = new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        label = `Sipariş linki ${index + 1}`;
+      }
+      return { id: `link-${index + 1}-${Date.now()}`, label, url };
+    });
+}
+
+function materialPriceLabel(item: Pick<MaterialItemRecord, "priceMin" | "priceMax" | "currency">) {
+  if (!item.priceMin && !item.priceMax) return "Fiyat aralığı yok";
+  const formatter = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  if (item.priceMin && item.priceMax) return `${formatter.format(item.priceMin)} - ${formatter.format(item.priceMax)} ${item.currency}`;
+  return `${formatter.format(item.priceMin || item.priceMax)} ${item.currency}`;
+}
+
+function canViewAllMaterialDepartments(user: Pick<DemoUser, "roleId" | "departmentId">) {
+  return user.roleId === "generalManager" || user.roleId === "siteAdmin" || user.departmentId === "purchasing";
 }
 
 function roomApprovalLabel(stage?: OperationalRecord["approvalStage"]) {
@@ -2253,6 +2659,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       reports: false,
       settings: false,
       inventory: false,
+      materialLists: false,
       roomStatus: false,
       lostFound: false,
       guestRequests: false,
@@ -2302,6 +2709,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     reminders: true,
     shiftPanels: true,
     inventory: isManager || ["technicalManager", "technicalAssistant", "technicalChief", "hkManager", "fnbManager"].includes(user.roleId),
+    materialLists: true,
     roomStatus: isManager || user.departmentId === "housekeeping" || ["hkManager", "floorChief", "frontOfficeManager"].includes(user.roleId),
     lostFound: isManager || ["frontOfficeManager", "securityManager", "hkManager", "floorChief"].includes(user.roleId),
     guestRequests: isManager || ["frontOfficeManager", "hkManager", "technicalManager", "fnbManager"].includes(user.roleId),
@@ -2828,6 +3236,7 @@ export function HotelOpsSystem() {
   const [departmentAssignees, setDepartmentAssignees] = useState<DemoUser[]>([]);
   const [departmentWorkPolicy, setDepartmentWorkPolicy] = useState<WorkOrderPolicyRecord | null>(null);
   const [departmentsList, setDepartmentsList] = useState<DepartmentRecord[]>([]);
+  const [departmentShortCodes, setDepartmentShortCodes] = useState<Record<string, string>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [alert, setAlertMessage] = useState<string>("");
@@ -3331,6 +3740,17 @@ export function HotelOpsSystem() {
   const queryParams = useMemo(() => new URLSearchParams(path.split("?")[1] ?? ""), [path]);
   const activeDepartmentOptions = useMemo(() => departmentOptionsFromRecords(departmentsList), [departmentsList]);
   const activeDepartmentLabel = useMemo(() => createDepartmentLabeler(activeDepartmentOptions), [activeDepartmentOptions]);
+  const activeDepartmentShortCode = useMemo(() => createDepartmentShortCodeLabeler(activeDepartmentOptions, departmentShortCodes), [activeDepartmentOptions, departmentShortCodes]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    setDepartmentShortCodes(readDepartmentShortCodes());
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    writeDepartmentShortCodes(departmentShortCodes);
+  }, [departmentShortCodes, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -4392,8 +4812,10 @@ export function HotelOpsSystem() {
                 departmentOptions: activeDepartmentOptions,
                 departmentAssignees,
                 departmentsList,
+                departmentShortCodes,
                 departmentTables,
                 departmentLabelFor: activeDepartmentLabel,
+                departmentShortCodeFor: activeDepartmentShortCode,
                 jobDraft,
                 jobCreateInProgress,
                 jobPagination,
@@ -4416,6 +4838,7 @@ export function HotelOpsSystem() {
                 showCredentialNotice,
                 setChecklistText,
                 setDepartmentsList,
+                setDepartmentShortCodes,
                 setDepartmentTables,
                 setFilters,
                 setJobDraft,
@@ -5109,6 +5532,7 @@ function SidebarNav({
       title: "Departman",
       items: [
         entry("requests", "managementRequests", "/modules/requests", "Talepler", MessageSquareText, requestCount, "müdür şef genel müdür"),
+        entry("materials", "materialLists", "/department/materials", "Malzeme Listesi", ClipboardList, undefined, "malzeme satın alma demirbaş sarf qr sipariş tedarik"),
         entry("operation-documents", "operationDocuments", "/modules/operation-documents", "Operasyon Belgeleri", FileText, unreadDocumentCount, "satış fnb pdf excel office operasyon okundu"),
         entry("guest", "guestRequests", "/modules/guest-requests", "Misafir Talebi", MessageSquareText, undefined, "şikayet istek"),
         entry("lost", "lostFound", "/modules/lost-found", "Kayıp Eşya", Search, undefined, "eşya"),
@@ -5294,6 +5718,7 @@ function getPageTitle(path: string) {
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
   if (pathname === "/hotelpanel") return { title: "Otel Paneli", subtitle: "Çoklu otel kaydı ve tenant yönetimi" };
   if (pathname === "/meter-tracking") return { title: "Sayaç Takibi", subtitle: "Teknik departman aylık sayaç formu" };
+  if (pathname === "/department/materials") return { title: "Malzeme Listesi", subtitle: "Departman bazlı malzeme, QR ve satın alma takibi" };
   if (pathname === "/modules/requests") return { title: "Talep Modülü", subtitle: "Müdür, şef ve genel müdür arasında özel talep akışı" };
   if (pathname === "/modules/operation-documents") return { title: "Operasyon Belgeleri", subtitle: "Satış ve F&B doküman yayını, okundu takibi" };
   const operationalModule = operationalModules.find((module) => module.path === pathname);
@@ -5321,8 +5746,10 @@ type RenderContext = {
   departmentOptions: Array<{ id: string; label: string }>;
   departmentAssignees: DemoUser[];
   departmentsList: DepartmentRecord[];
+  departmentShortCodes: Record<string, string>;
   departmentTables: DepartmentTableRecord[];
   departmentLabelFor: (departmentId: string) => string;
+  departmentShortCodeFor: (departmentId: string) => string;
   jobDraft: JobDraft;
   jobCreateInProgress: boolean;
   jobPagination: PaginationMeta;
@@ -5346,6 +5773,7 @@ type RenderContext = {
   setChecklistText: (value: string) => void;
   setFilters: (value: RenderContext["filters"] | ((value: RenderContext["filters"]) => RenderContext["filters"])) => void;
   setDepartmentsList: (value: DepartmentRecord[] | ((value: DepartmentRecord[]) => DepartmentRecord[])) => void;
+  setDepartmentShortCodes: (value: Record<string, string> | ((value: Record<string, string>) => Record<string, string>)) => void;
   setDepartmentTables: (value: DepartmentTableRecord[] | ((value: DepartmentTableRecord[]) => DepartmentTableRecord[])) => void;
   setJobDraft: (value: JobDraft | ((value: JobDraft) => JobDraft)) => void;
   setManagementRequestDraft: (value: ManagementRequestDraft | ((value: ManagementRequestDraft) => ManagementRequestDraft)) => void;
@@ -5390,6 +5818,7 @@ function accessForPath(path: string): AccessId {
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders" || path === "/notifications") return "reminders";
   if (path === "/shift-panels") return "shiftPanels";
+  if (path === "/department/materials") return "materialLists";
   if (path === "/users") return "users";
   if (path === "/reports") return "reports";
   if (path === "/app-settings") return "dashboard";
@@ -5418,6 +5847,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
   if (currentPath.startsWith("/calendar")) return <CalendarPage {...context} />;
   if (currentPath === "/shift-panels") return <ShiftPanelsPage {...context} />;
+  if (currentPath === "/department/materials") return <MaterialListsPage {...context} />;
   if (currentPath === "/users") return <UsersPage {...context} />;
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
@@ -5450,7 +5880,7 @@ function ShiftControlCard({ activeShift, onEndShift, onStartShift }: { activeShi
   );
 }
 
-function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, departmentsList, endShift, managementRequests, navigate, refreshData, session, setAlert, setDepartmentsList, startShift, users, visibleJobs }: RenderContext) {
+function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, departmentsList, departmentShortCodeFor, endShift, managementRequests, navigate, refreshData, session, setAlert, setDepartmentShortCodes, setDepartmentsList, startShift, users, visibleJobs }: RenderContext) {
   const isHotelWideRole = session.roleId === "generalManager" || session.roleId === "hrManager";
   const isDepartmentManager = ["technicalManager", "technicalAssistant", "hkManager", "frontOfficeManager", "securityManager", "spaManager", "salesManager", "fnbManager"].includes(session.roleId);
   const isChief = ["technicalChief", "floorChief"].includes(session.roleId);
@@ -5628,9 +6058,11 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
             departmentLabelFor={departmentLabelFor}
             departmentOptions={departmentOptions}
             departmentsList={departmentsList}
+            departmentShortCodeFor={departmentShortCodeFor}
             refreshData={refreshData}
             session={session}
             setAlert={setAlert}
+            setDepartmentShortCodes={setDepartmentShortCodes}
             setDepartmentsList={setDepartmentsList}
             title="Departman Oluştur"
           />
@@ -5676,7 +6108,7 @@ function DashboardPage({ activeShift, departmentLabelFor, departmentOptions, dep
   );
 }
 
-function OperationalModulePage({ departmentLabelFor, session, setAlert, users, visibleJobs, module }: RenderContext & { module: OperationalModuleConfig }) {
+function OperationalModulePage({ departmentLabelFor, departmentShortCodeFor, navigate, session, setAlert, users, visibleJobs, module }: RenderContext & { module: OperationalModuleConfig }) {
   const seedRecords = useMemo(() => operationalRecordsFor(module, visibleJobs, users, departmentLabelFor), [departmentLabelFor, module, users, visibleJobs]);
   const [localRecords, setLocalRecords] = useState<OperationalRecord[]>([]);
   const [completedRecordIds, setCompletedRecordIds] = useState<string[]>([]);
@@ -5899,11 +6331,14 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
   };
 
   const selectOperationArea = (area: HotelFloorAreaRecord) => {
-    const areaStatus = roomOperationStatusForArea(area, records);
-    setActiveMetric("");
-    setSelectedId(areaStatus.record?.id ?? "");
-    setDraft((current) => ({ ...current, Oda: area.label }));
-    setAlert(areaStatus.record ? `${area.label} operasyon kaydı açıldı.` : `${area.label} seçildi.`);
+    const params = new URLSearchParams({
+      type: "Job",
+      title: `${area.label} düzenleme`,
+      priority: "Normal"
+    });
+    if (area.kind === "ROOM") params.set("room", area.label);
+    else params.set("location", area.label);
+    navigate(`/jobs/new?${params.toString()}`);
   };
 
   return (
@@ -5928,6 +6363,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
         <HotelOperationBoard
           canViewFullPlan={canViewFullFloorPlan(session)}
           departmentLabelFor={departmentLabelFor}
+          departmentShortCodeFor={departmentShortCodeFor}
           floors={operationFloorOptions}
           jobs={visibleJobs}
           records={records}
@@ -5939,7 +6375,7 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
         />
       )}
 
-      <div className="side-panel-grid">
+      {!isRoomStatusModule && <div className="side-panel-grid">
         <div className="card">
           <div className="card-header">
             <span className="card-title">{module.title}</span>
@@ -6127,6 +6563,576 @@ function OperationalModulePage({ departmentLabelFor, session, setAlert, users, v
             </div>
           </div>
         </div>}
+      </div>}
+    </div>
+  );
+}
+
+function MaterialListsPage({ departmentLabelFor, departmentOptions, departmentShortCodeFor, session, setAlert }: RenderContext) {
+  const canViewAllDepartments = canViewAllMaterialDepartments(session);
+  const defaultDepartmentId = canViewAllDepartments && departmentOptions.some((department) => department.id === "technical")
+    ? "technical"
+    : session.departmentId;
+  const [materialData, setMaterialData] = useState<MaterialStoragePayload>(() => emptyMaterialPayload());
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(defaultDepartmentId);
+  const [selectedListId, setSelectedListId] = useState("");
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [selectedMaterialId, setSelectedMaterialId] = useState("");
+  const [listName, setListName] = useState("");
+  const [listDescription, setListDescription] = useState("");
+  const [draft, setDraft] = useState<MaterialItemDraft>(() => createMaterialItemDraft());
+  const [purchaseNote, setPurchaseNote] = useState("");
+  const [qrScanCode, setQrScanCode] = useState("");
+  const [qrScanItemId, setQrScanItemId] = useState("");
+
+  useEffect(() => {
+    const loaded = readMaterialStorage();
+    const seeded = ensureMaterialSeed(loaded, defaultDepartmentId, departmentLabelFor(defaultDepartmentId));
+    setMaterialData(seeded);
+    writeMaterialStorage(seeded);
+    setSelectedDepartmentId(defaultDepartmentId);
+  }, [defaultDepartmentId, departmentLabelFor]);
+
+  useEffect(() => {
+    setMaterialData((current) => {
+      const seeded = ensureMaterialSeed(current, selectedDepartmentId, departmentLabelFor(selectedDepartmentId));
+      if (seeded !== current) writeMaterialStorage(seeded);
+      return seeded;
+    });
+  }, [departmentLabelFor, selectedDepartmentId]);
+
+  const departmentChoices = useMemo(() => {
+    const rows = new Map<string, string>();
+    const addDepartment = (departmentId: string) => {
+      if (!departmentId) return;
+      rows.set(departmentId, departmentOptions.find((department) => department.id === departmentId)?.label ?? departmentLabelFor(departmentId));
+    };
+    if (canViewAllDepartments) {
+      departmentOptions.forEach((department) => addDepartment(department.id));
+      materialData.lists.forEach((list) => addDepartment(list.departmentId));
+      materialData.items.forEach((item) => addDepartment(item.departmentId));
+      materialData.requests.forEach((request) => addDepartment(request.departmentId));
+    } else {
+      addDepartment(session.departmentId);
+    }
+    return Array.from(rows, ([id, label]) => ({ id, label })).sort((left, right) => left.label.localeCompare(right.label, "tr-TR"));
+  }, [canViewAllDepartments, departmentLabelFor, departmentOptions, materialData.items, materialData.lists, materialData.requests, session.departmentId]);
+
+  useEffect(() => {
+    if (!departmentChoices.length) return;
+    if (!departmentChoices.some((department) => department.id === selectedDepartmentId)) {
+      setSelectedDepartmentId(departmentChoices[0].id);
+    }
+  }, [departmentChoices, selectedDepartmentId]);
+
+  const departmentLists = useMemo(
+    () => materialData.lists.filter((list) => list.departmentId === selectedDepartmentId),
+    [materialData.lists, selectedDepartmentId]
+  );
+  const departmentItems = useMemo(
+    () => materialData.items.filter((item) => item.departmentId === selectedDepartmentId),
+    [materialData.items, selectedDepartmentId]
+  );
+  const selectedListItems = useMemo(
+    () => departmentItems.filter((item) => item.listId === selectedListId),
+    [departmentItems, selectedListId]
+  );
+  const visibleRequests = useMemo(
+    () => materialData.requests.filter((request) => request.departmentId === selectedDepartmentId),
+    [materialData.requests, selectedDepartmentId]
+  );
+  const selectedList = departmentLists.find((list) => list.id === selectedListId);
+  const selectedMaterial = departmentItems.find((item) => item.id === selectedMaterialId);
+  const requestedCount = departmentItems.filter((item) => item.purchaseStatus === "requested" || item.purchaseStatus === "ordered").length;
+  const qrTrackedCount = departmentItems.filter((item) => item.qrCode).length;
+  const canUpdatePurchaseRequests = canViewAllDepartments;
+
+  useEffect(() => {
+    if (!departmentLists.length) {
+      setSelectedListId("");
+      setDraft((current) => ({ ...current, listId: "" }));
+      return;
+    }
+    if (!departmentLists.some((list) => list.id === selectedListId)) {
+      setSelectedListId(departmentLists[0].id);
+      setDraft((current) => ({ ...current, listId: departmentLists[0].id }));
+    }
+  }, [departmentLists, selectedListId]);
+
+  useEffect(() => {
+    setSelectedItemIds((current) => current.filter((itemId) => selectedListItems.some((item) => item.id === itemId)));
+    if (selectedListId) setDraft((current) => ({ ...current, listId: selectedListId }));
+  }, [selectedListId, selectedListItems]);
+
+  const persistMaterialData = (next: MaterialStoragePayload) => {
+    setMaterialData(next);
+    writeMaterialStorage(next);
+  };
+
+  const createMaterialList = () => {
+    const name = listName.trim();
+    if (!name) {
+      setAlert("Liste adı zorunludur.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const record: MaterialListRecord = {
+      id: createMaterialId("mlist"),
+      departmentId: selectedDepartmentId,
+      name,
+      description: listDescription.trim(),
+      createdAt: now,
+      updatedAt: now
+    };
+    const next = { ...materialData, lists: [record, ...materialData.lists] };
+    persistMaterialData(next);
+    setSelectedListId(record.id);
+    setDraft(createMaterialItemDraft(record.id));
+    setListName("");
+    setListDescription("");
+    setAlert(`${name} listesi oluşturuldu.`);
+  };
+
+  const handlePhotoFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setAlert("Malzeme fotoğrafı için görsel dosyası seçin.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setDraft((current) => ({ ...current, photoUrl: String(reader.result ?? "") }));
+      setAlert("Fotoğraf taslağa eklendi.");
+    };
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const createMaterialItem = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const listId = draft.listId || selectedListId;
+    const list = materialData.lists.find((item) => item.id === listId && item.departmentId === selectedDepartmentId);
+    if (!list) {
+      setAlert("Önce malzeme listesi seçin.");
+      return;
+    }
+    const name = draft.name.trim();
+    if (!name) {
+      setAlert("Malzeme adı zorunludur.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const record: MaterialItemRecord = {
+      id: createMaterialId("mat"),
+      listId,
+      departmentId: selectedDepartmentId,
+      name,
+      category: draft.category,
+      unit: draft.unit.trim() || "adet",
+      quantity: Number(draft.quantity || 0),
+      minQuantity: Number(draft.minQuantity || 0),
+      priceMin: Number(draft.priceMin || 0),
+      priceMax: Number(draft.priceMax || 0),
+      currency: draft.currency,
+      photoUrl: draft.photoUrl.trim(),
+      orderLinks: materialLinksFromText(draft.orderLinksText),
+      qrCode: draft.qrCode.trim(),
+      serialNo: draft.serialNo.trim(),
+      location: draft.location.trim(),
+      notes: draft.notes.trim(),
+      purchaseStatus: "draft",
+      updatedAt: now
+    };
+    persistMaterialData({ ...materialData, items: [record, ...materialData.items] });
+    setSelectedListId(listId);
+    setSelectedMaterialId(record.id);
+    setDraft(createMaterialItemDraft(listId));
+    setAlert(`${record.name} malzemesi listeye eklendi.`);
+  };
+
+  const sendPurchaseRequest = (itemIds: string[]) => {
+    const uniqueItemIds = Array.from(new Set(itemIds)).filter((itemId) => departmentItems.some((item) => item.id === itemId));
+    if (!uniqueItemIds.length) {
+      setAlert("Satın Almaya göndermek için malzeme seçin.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const request: MaterialPurchaseRequestRecord = {
+      id: createMaterialId("mpr"),
+      departmentId: selectedDepartmentId,
+      itemIds: uniqueItemIds,
+      note: purchaseNote.trim(),
+      status: "sent",
+      createdBy: session.fullName,
+      createdAt: now,
+      updatedAt: now
+    };
+    const nextItems = materialData.items.map((item) => uniqueItemIds.includes(item.id)
+      ? { ...item, purchaseStatus: "requested" as MaterialPurchaseStatus, purchaseRequestId: request.id, updatedAt: now }
+      : item);
+    persistMaterialData({ ...materialData, items: nextItems, requests: [request, ...materialData.requests] });
+    setSelectedItemIds([]);
+    setPurchaseNote("");
+    setAlert(`${uniqueItemIds.length} malzeme Satın Alma kuyruğuna gönderildi.`);
+  };
+
+  const updatePurchaseRequestStatus = (requestId: string, status: MaterialRequestStatus) => {
+    const request = materialData.requests.find((item) => item.id === requestId);
+    if (!request) return;
+    const now = new Date().toISOString();
+    const itemStatus: MaterialPurchaseStatus = status === "received" ? "received" : status === "ordered" ? "ordered" : "requested";
+    const nextRequests = materialData.requests.map((item) => item.id === requestId ? { ...item, status, updatedAt: now } : item);
+    const nextItems = materialData.items.map((item) => request.itemIds.includes(item.id) ? { ...item, purchaseStatus: itemStatus, updatedAt: now } : item);
+    persistMaterialData({ ...materialData, requests: nextRequests, items: nextItems });
+    setAlert(`Satın Alma durumu ${materialRequestStatusLabels[status].toLocaleLowerCase("tr-TR")} olarak güncellendi.`);
+  };
+
+  const generateDraftQr = () => {
+    const prefix = departmentShortCodeFor(selectedDepartmentId).replace(/[^A-Z0-9]/g, "") || "DEP";
+    setDraft((current) => ({ ...current, qrCode: current.qrCode || `QR-${prefix}-${Math.floor(1000 + Math.random() * 9000)}` }));
+  };
+
+  const registerQrCode = () => {
+    const code = qrScanCode.trim();
+    if (!qrScanItemId || !code) {
+      setAlert("QR tanıtmak için malzeme ve okunan kod gerekir.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextItems = materialData.items.map((item) => item.id === qrScanItemId ? { ...item, qrCode: code, updatedAt: now } : item);
+    persistMaterialData({ ...materialData, items: nextItems });
+    setSelectedMaterialId(qrScanItemId);
+    setQrScanCode("");
+    setAlert("QR kod malzemeye tanıtıldı.");
+  };
+
+  const findQrCode = () => {
+    const code = qrScanCode.trim().toLocaleLowerCase("tr-TR");
+    if (!code) {
+      setAlert("Okunan QR veya seri kodunu girin.");
+      return;
+    }
+    const item = materialData.items.find((record) => record.qrCode.toLocaleLowerCase("tr-TR") === code || record.serialNo.toLocaleLowerCase("tr-TR") === code);
+    if (!item) {
+      setAlert("Bu QR / seri koduyla kayıtlı malzeme bulunamadı.");
+      return;
+    }
+    setSelectedDepartmentId(item.departmentId);
+    setSelectedListId(item.listId);
+    setSelectedMaterialId(item.id);
+    setQrScanItemId(item.id);
+    setAlert(`${item.name} QR kaydı açıldı.`);
+  };
+
+  const toggleSelectedItem = (itemId: string) => {
+    setSelectedItemIds((current) => current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]);
+  };
+
+  return (
+    <div className="material-list-page">
+      <div className="kpi-grid material-kpi-grid ui-section-bottom-sm">
+        <div className="kpi-card inprogress">
+          <div className="kpi-icon"><ClipboardList size={20} /></div>
+          <div className="kpi-value">{departmentLists.length}</div>
+          <div className="kpi-label">Liste</div>
+        </div>
+        <div className="kpi-card completed">
+          <div className="kpi-icon"><Tags size={20} /></div>
+          <div className="kpi-value">{departmentItems.length}</div>
+          <div className="kpi-label">Malzeme</div>
+        </div>
+        <div className="kpi-card pending">
+          <div className="kpi-icon"><Send size={20} /></div>
+          <div className="kpi-value">{requestedCount}</div>
+          <div className="kpi-label">Satın Alma</div>
+        </div>
+        <div className="kpi-card high">
+          <div className="kpi-icon"><Search size={20} /></div>
+          <div className="kpi-value">{qrTrackedCount}</div>
+          <div className="kpi-label">QR Tanımlı</div>
+        </div>
+      </div>
+
+      <div className="material-layout">
+        <aside className="material-sidebar">
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Departman Listeleri</span>
+              <span className="ui-meta">{departmentLabelFor(selectedDepartmentId)}</span>
+            </div>
+            <div className="card-body ui-body-form">
+              {canViewAllDepartments && (
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Departman</label>
+                  <select className="form-control" value={selectedDepartmentId} onChange={(event) => setSelectedDepartmentId(event.target.value)}>
+                    {departmentChoices.map((department) => (
+                      <option key={department.id} value={department.id}>{department.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="material-list-tabs">
+                {departmentLists.map((list) => {
+                  const count = departmentItems.filter((item) => item.listId === list.id).length;
+                  return (
+                    <button
+                      key={list.id}
+                      type="button"
+                      className={`material-list-tab ${selectedListId === list.id ? "active" : ""}`}
+                      onClick={() => setSelectedListId(list.id)}
+                    >
+                      <span>
+                        <strong>{list.name}</strong>
+                        {list.description ? <small>{list.description}</small> : <small>{count} malzeme</small>}
+                      </span>
+                      <em>{count}</em>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="material-list-create">
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Yeni liste adı</label>
+                  <input className="form-control" value={listName} onChange={(event) => setListName(event.target.value)} placeholder="Teknik sarf malzeme" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Kısa açıklama</label>
+                  <input className="form-control" value={listDescription} onChange={(event) => setListDescription(event.target.value)} placeholder="Liste notu" />
+                </div>
+                <button type="button" className="btn btn-primary btn-full" onClick={createMaterialList}><Plus size={15} /> Liste Oluştur</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header"><span className="card-title">QR Okuma</span></div>
+            <div className="card-body ui-body-form">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Okunan QR / seri kodu</label>
+                <input className="form-control" value={qrScanCode} onChange={(event) => setQrScanCode(event.target.value)} placeholder="QR-TECH-FIRIN-001" />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Malzemeye tanıt</label>
+                <select className="form-control" value={qrScanItemId} onChange={(event) => setQrScanItemId(event.target.value)}>
+                  <option value="">Malzeme seçin</option>
+                  {departmentItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="material-qr-actions">
+                <button type="button" className="btn btn-outline btn-sm" onClick={findQrCode}><Search size={14} /> Bul</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={registerQrCode}><KeyRound size={14} /> QR Tanıt</button>
+              </div>
+              {selectedMaterial && (
+                <div className="material-qr-match">
+                  <strong>{selectedMaterial.name}</strong>
+                  <span>{selectedMaterial.qrCode || selectedMaterial.serialNo || "QR bekliyor"}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        <main className="material-main">
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Malzeme Tanımla</span>
+              <span className="ui-meta">{selectedList?.name ?? "Liste seçilmedi"}</span>
+            </div>
+            <div className="card-body">
+              <form className="material-form-grid" onSubmit={createMaterialItem}>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Liste</label>
+                  <select className="form-control" value={draft.listId} onChange={(event) => setDraft((current) => ({ ...current, listId: event.target.value }))}>
+                    {departmentLists.map((list) => (
+                      <option key={list.id} value={list.id}>{list.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Malzeme adı <span className="required">*</span></label>
+                  <input className="form-control" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Perde motoru 24V" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Kategori</label>
+                  <select className="form-control" value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value as MaterialCategory }))}>
+                    {materialCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Birim</label>
+                  <input className="form-control" value={draft.unit} onChange={(event) => setDraft((current) => ({ ...current, unit: event.target.value }))} placeholder="adet" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Stok</label>
+                  <input className="form-control" type="number" min="0" value={draft.quantity} onChange={(event) => setDraft((current) => ({ ...current, quantity: event.target.value }))} />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Minimum stok</label>
+                  <input className="form-control" type="number" min="0" value={draft.minQuantity} onChange={(event) => setDraft((current) => ({ ...current, minQuantity: event.target.value }))} />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Min fiyat</label>
+                  <input className="form-control" type="number" min="0" value={draft.priceMin} onChange={(event) => setDraft((current) => ({ ...current, priceMin: event.target.value }))} />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Max fiyat</label>
+                  <input className="form-control" type="number" min="0" value={draft.priceMax} onChange={(event) => setDraft((current) => ({ ...current, priceMax: event.target.value }))} />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Para birimi</label>
+                  <select className="form-control" value={draft.currency} onChange={(event) => setDraft((current) => ({ ...current, currency: event.target.value }))}>
+                    {materialCurrencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                  </select>
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Konum</label>
+                  <input className="form-control" value={draft.location} onChange={(event) => setDraft((current) => ({ ...current, location: event.target.value }))} placeholder="Teknik depo" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">Seri kodu</label>
+                  <input className="form-control" value={draft.serialNo} onChange={(event) => setDraft((current) => ({ ...current, serialNo: event.target.value }))} placeholder="RF-001" />
+                </div>
+                <div className="form-group ui-form-compact">
+                  <label className="form-label">QR kod</label>
+                  <div className="material-inline-control">
+                    <input className="form-control" value={draft.qrCode} onChange={(event) => setDraft((current) => ({ ...current, qrCode: event.target.value }))} placeholder="QR-..." />
+                    <button type="button" className="btn btn-outline btn-sm" onClick={generateDraftQr}>Üret</button>
+                  </div>
+                </div>
+                <div className="form-group ui-form-compact material-photo-field">
+                  <label className="form-label">Fotoğraf</label>
+                  <label className="photo-input-trigger material-photo-trigger">
+                    <Camera size={15} />
+                    Fotoğraf ekle
+                    <input className="native-photo-input" type="file" accept="image/*" onChange={handlePhotoFile} />
+                  </label>
+                  {draft.photoUrl && <span className="material-photo-preview" role="img" aria-label="Malzeme fotoğrafı" style={{ backgroundImage: `url(${draft.photoUrl})` }} />}
+                </div>
+                <div className="form-group ui-form-compact material-links-field">
+                  <label className="form-label">Sipariş linkleri</label>
+                  <textarea className="form-control" rows={3} value={draft.orderLinksText} onChange={(event) => setDraft((current) => ({ ...current, orderLinksText: event.target.value }))} placeholder="Her satıra bir sipariş linki" />
+                </div>
+                <div className="form-group ui-form-compact material-notes-field">
+                  <label className="form-label">Not</label>
+                  <textarea className="form-control" rows={3} value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Garanti, servis, kullanım veya sipariş notu" />
+                </div>
+                <button type="submit" className="btn btn-primary material-form-submit"><Plus size={15} /> Malzeme Ekle</button>
+              </form>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">{selectedList?.name ?? "Malzemeler"}</span>
+              <div className="material-header-actions">
+                <input className="form-control form-control-sm" value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} placeholder="Satın alma notu" />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => sendPurchaseRequest(selectedItemIds)} disabled={!selectedItemIds.length}>
+                  <Send size={14} /> Seçilenleri Gönder
+                </button>
+              </div>
+            </div>
+            <div className="card-body">
+              {selectedListItems.length ? (
+                <div className="material-item-grid">
+                  {selectedListItems.map((item) => {
+                    const isLowStock = item.quantity <= item.minQuantity;
+                    const selected = selectedItemIds.includes(item.id);
+                    return (
+                      <article key={item.id} className={`material-item ${selectedMaterialId === item.id ? "focused" : ""}`}>
+                        <div className="material-item-media" onClick={() => setSelectedMaterialId(item.id)}>
+                          {item.photoUrl ? <span className="material-item-photo" role="img" aria-label={item.name} style={{ backgroundImage: `url(${item.photoUrl})` }} /> : <Upload size={22} />}
+                        </div>
+                        <div className="material-item-main">
+                          <div className="material-item-title">
+                            <label className="material-item-check">
+                              <input type="checkbox" checked={selected} onChange={() => toggleSelectedItem(item.id)} />
+                            </label>
+                            <button type="button" onClick={() => setSelectedMaterialId(item.id)}>{item.name}</button>
+                          </div>
+                          <div className="material-badges">
+                            <span className={`badge ${item.category === "Demirbaş" ? "badge-inprogress" : item.category === "Sarf" ? "badge-completed" : "badge-pending"}`}>{item.category}</span>
+                            <span className={`badge ${isLowStock ? "badge-danger" : "badge-pending"}`}>{item.quantity} {item.unit}</span>
+                            <span className="badge badge-pending">{materialPurchaseStatusLabels[item.purchaseStatus]}</span>
+                          </div>
+                          <div className="material-item-detail">
+                            <span>{materialPriceLabel(item)}</span>
+                            {item.location ? <span>{item.location}</span> : null}
+                            {item.qrCode ? <span>QR: {item.qrCode}</span> : null}
+                          </div>
+                          {item.notes ? <p>{item.notes}</p> : null}
+                          {item.orderLinks.length ? (
+                            <div className="material-link-list">
+                              {item.orderLinks.map((link) => (
+                                <a key={link.id} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="material-item-actions">
+                          <button type="button" className="btn btn-outline btn-sm" onClick={() => sendPurchaseRequest([item.id])}><Send size={14} /> Satın Almaya Gönder</button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => {
+                              setQrScanItemId(item.id);
+                              setQrScanCode(item.qrCode || item.serialNo || "");
+                              setSelectedMaterialId(item.id);
+                            }}
+                          >
+                            <KeyRound size={14} /> QR
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState title="Bu listede malzeme yok" description="Malzeme eklediğinizde fotoğraf, sipariş linki, fiyat ve QR bilgileriyle burada görünür." />
+              )}
+            </div>
+          </div>
+
+          <div className="card material-purchase-card">
+            <div className="card-header">
+              <span className="card-title">Satın Alma Kuyruğu</span>
+              <span className="ui-meta">{visibleRequests.length} talep</span>
+            </div>
+            <div className="card-body">
+              {visibleRequests.length ? (
+                <div className="material-request-list">
+                  {visibleRequests.map((request) => {
+                    const requestItems = materialData.items.filter((item) => request.itemIds.includes(item.id));
+                    return (
+                      <div className="material-request-row" key={request.id}>
+                        <div>
+                          <strong>{requestItems.map((item) => item.name).join(", ")}</strong>
+                          <span>{departmentLabelFor(request.departmentId)} / {request.createdBy} / {formatDateTime(request.createdAt)}</span>
+                          {request.note ? <small>{request.note}</small> : null}
+                        </div>
+                        <span className="badge badge-inprogress">{materialRequestStatusLabels[request.status]}</span>
+                        {canUpdatePurchaseRequests ? (
+                          <div className="material-request-actions">
+                            <button type="button" className="btn btn-outline btn-sm" onClick={() => updatePurchaseRequestStatus(request.id, "reviewing")}>İncele</button>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => updatePurchaseRequestStatus(request.id, "ordered")}>Sipariş</button>
+                            <button type="button" className="btn btn-success btn-sm" onClick={() => updatePurchaseRequestStatus(request.id, "received")}>Teslim</button>
+                          </div>
+                        ) : (
+                          <span className="muted-inline">Satın Alma işlemi bekleniyor</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState title="Satın Alma kuyruğu boş" description="Tekil veya toplu gönderilen malzemeler burada satın alma takibine düşer." />
+              )}
+            </div>
+          </div>
+        </main>
       </div>
     </div>
   );
@@ -10570,15 +11576,18 @@ function DepartmentManagementCard({
   departmentLabelFor,
   departmentOptions,
   departmentsList,
+  departmentShortCodeFor,
   refreshData,
   session,
   setAlert,
+  setDepartmentShortCodes,
   setDepartmentsList,
   title = "Departmanlar"
-}: Pick<RenderContext, "departmentLabelFor" | "departmentOptions" | "departmentsList" | "refreshData" | "session" | "setAlert" | "setDepartmentsList"> & { title?: string }) {
+}: Pick<RenderContext, "departmentLabelFor" | "departmentOptions" | "departmentsList" | "departmentShortCodeFor" | "refreshData" | "session" | "setAlert" | "setDepartmentShortCodes" | "setDepartmentsList"> & { title?: string }) {
   const [customDepartmentName, setCustomDepartmentName] = useState("");
   const [editingDepartmentId, setEditingDepartmentId] = useState("");
   const [editingDepartmentName, setEditingDepartmentName] = useState("");
+  const [editingDepartmentShortCode, setEditingDepartmentShortCode] = useState("");
   const [savingDepartmentId, setSavingDepartmentId] = useState("");
 
   useEffect(() => {
@@ -10652,11 +11661,13 @@ function DepartmentManagementCard({
   const startEditDepartment = (department: { id: string; label: string }) => {
     setEditingDepartmentId(department.id);
     setEditingDepartmentName(department.label);
+    setEditingDepartmentShortCode(departmentShortCodeFor(department.id));
   };
 
   const cancelEditDepartment = () => {
     setEditingDepartmentId("");
     setEditingDepartmentName("");
+    setEditingDepartmentShortCode("");
   };
 
   const saveDepartmentName = async (departmentId: string) => {
@@ -10669,6 +11680,11 @@ function DepartmentManagementCard({
       setAlert("Departman adı boş olamaz.");
       return;
     }
+    const shortCode = normalizeDepartmentShortCode(editingDepartmentShortCode);
+    if (!validDepartmentShortCode(shortCode)) {
+      setAlert("Departman kısaltması 2 veya 3 karakter olmalıdır.");
+      return;
+    }
     setSavingDepartmentId(departmentId);
     try {
       const updated = await apiRequest<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`, {
@@ -10678,8 +11694,9 @@ function DepartmentManagementCard({
       setDepartmentsList((current) => current.map((department) => (
         department.departmentId === updated.departmentId ? updated : department
       )));
+      setDepartmentShortCodes((current) => ({ ...current, [departmentId]: shortCode }));
       cancelEditDepartment();
-      setAlert(`${updated.name} departmanı güncellendi.`);
+      setAlert(`${updated.name} departmanı ve ${shortCode} kısaltması güncellendi.`);
       await refreshData();
     } catch {
       setAlert("Departman güncellenemedi. İK yetkisini ve API bağlantısını kontrol edin.");
@@ -10691,15 +11708,15 @@ function DepartmentManagementCard({
   const existingDepartmentIds = useMemo(() => new Set(departmentsList.map((department) => department.departmentId)), [departmentsList]);
 
   const visibleDepartmentRows = useMemo(() => {
-    const rows = new Map<string, { id: string; label: string; active: boolean; custom: boolean; code: string }>();
+    const rows = new Map<string, { id: string; label: string; active: boolean; custom: boolean; code: string; shortCode: string }>();
     for (const department of departmentOptions) {
-      rows.set(department.id, { id: department.id, label: department.label, active: existingDepartmentIds.has(department.id), custom: false, code: "" });
+      rows.set(department.id, { id: department.id, label: department.label, active: existingDepartmentIds.has(department.id), custom: false, code: "", shortCode: departmentShortCodeFor(department.id) });
     }
     for (const department of departmentsList) {
-      rows.set(department.departmentId, { id: department.departmentId, label: department.name, active: true, custom: !departmentOptions.some((item) => item.id === department.departmentId), code: department.code });
+      rows.set(department.departmentId, { id: department.departmentId, label: department.name, active: true, custom: !departmentOptions.some((item) => item.id === department.departmentId), code: department.code, shortCode: departmentShortCodeFor(department.departmentId) });
     }
     return Array.from(rows.values()).sort((left, right) => left.label.localeCompare(right.label, "tr-TR"));
-  }, [departmentOptions, departmentsList, existingDepartmentIds]);
+  }, [departmentOptions, departmentShortCodeFor, departmentsList, existingDepartmentIds]);
 
   if (!canManageDepartments(session)) return null;
 
@@ -10730,15 +11747,26 @@ function DepartmentManagementCard({
             <div className="stat-row dept-row" key={department.id}>
               <span className="stat-label">
                 {editing ? (
-                  <input
-                    className="form-control"
-                    value={editingDepartmentName}
-                    onChange={(event) => setEditingDepartmentName(event.target.value)}
-                    disabled={saving}
-                  />
+                  <span className="dept-edit-fields">
+                    <input
+                      className="form-control"
+                      value={editingDepartmentName}
+                      onChange={(event) => setEditingDepartmentName(event.target.value)}
+                      disabled={saving}
+                    />
+                    <input
+                      className="form-control dept-short-code-input"
+                      value={editingDepartmentShortCode}
+                      onChange={(event) => setEditingDepartmentShortCode(normalizeDepartmentShortCode(event.target.value))}
+                      disabled={saving}
+                      maxLength={3}
+                      aria-label="Departman kısaltması"
+                    />
+                  </span>
                 ) : department.label}
               </span>
               <span className="ui-cluster-end">
+                <span className="badge badge-inprogress">{department.shortCode}</span>
                 {department.code && <span className="badge badge-inprogress">ID {department.code}</span>}
                 <span className={`badge ${department.active ? "badge-completed" : "badge-pending"}`}>
                   {department.active ? "Aktif" : "Oluşturulmadı"}

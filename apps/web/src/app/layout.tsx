@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { PendingButtonController } from "@/components/pending-button-controller";
 import "./globals.css";
 import "./classic.css";
 
@@ -31,7 +32,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="tr" suppressHydrationWarning>
-      <body>{children}</body>
+      <body>
+        <PendingButtonController />
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,6 +1,10 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return Boolean(value && typeof (value as PromiseLike<unknown>).then === "function");
+}
+
 export function Card({
   className,
   ...props
@@ -20,15 +24,32 @@ export function Button({
   className,
   variant = "primary",
   size = "default",
+  disabled,
+  onClick,
+  children,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "default" | "icon" | "sm";
 }) {
+  const [pending, setPending] = React.useState(false);
+  const isBusy = pending || props["aria-busy"] === true || props["aria-busy"] === "true";
+
+  function handleClick(event: React.MouseEvent<HTMLButtonElement>) {
+    if (!onClick) return;
+    const result = onClick(event) as unknown;
+
+    if (isPromiseLike(result)) {
+      setPending(true);
+      Promise.resolve(result).finally(() => setPending(false));
+    }
+  }
+
   return (
     <button
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-md border text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
+        isBusy && "opacity-70",
         variant === "primary" && "border-transparent bg-primary text-primary-foreground hover:opacity-90",
         variant === "secondary" && "border-border bg-surface text-foreground hover:bg-muted",
         variant === "ghost" && "border-transparent bg-transparent text-foreground hover:bg-muted",
@@ -39,7 +60,13 @@ export function Button({
         className
       )}
       {...props}
-    />
+      aria-busy={isBusy || undefined}
+      disabled={disabled || pending}
+      onClick={handleClick}
+    >
+      {isBusy && <span className="ui-button-spinner" aria-hidden="true" />}
+      {children}
+    </button>
   );
 }
 

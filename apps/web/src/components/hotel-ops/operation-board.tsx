@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, CalendarDays, ClipboardList, Clock, Home, X, Users, Wrench } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, LogIn, PenLine, X, Users, Wrench } from "lucide-react";
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
 
@@ -52,6 +52,7 @@ type AreaView = {
 export function HotelOperationBoard({
   canViewFullPlan,
   departmentLabelFor,
+  departmentShortCodeFor,
   floors,
   jobs,
   onSelectArea,
@@ -63,6 +64,7 @@ export function HotelOperationBoard({
 }: {
   canViewFullPlan: boolean;
   departmentLabelFor: (departmentId: string) => string;
+  departmentShortCodeFor?: (departmentId: string) => string;
   floors: HotelFloorRecord[];
   jobs: JobRecord[];
   onSelectArea: (area: HotelFloorAreaRecord) => void;
@@ -74,6 +76,11 @@ export function HotelOperationBoard({
 }) {
   const [expandedAreaKey, setExpandedAreaKey] = useState("");
   const [detailAreaKey, setDetailAreaKey] = useState("");
+  const [entryAreaKey, setEntryAreaKey] = useState("");
+  const shortCodeFor = useMemo(
+    () => departmentShortCodeFor ?? ((departmentId: string) => departmentAbbreviationFor(departmentId, departmentLabelFor)),
+    [departmentLabelFor, departmentShortCodeFor]
+  );
   const selectedFloor = floors.find((floor) => String(floor.level) === selectedFloorLevel) ?? floors[0];
   const displayedFloors = showAllFloors ? floors : selectedFloor ? [selectedFloor] : [];
   const areaSummaries = floors.flatMap((floor) => floor.areas.map((area) => {
@@ -83,7 +90,7 @@ export function HotelOperationBoard({
       area,
       floor,
       status: statusForArea(area, areaRecords, areaJobs, departmentLabelFor),
-      issueCount: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor).length,
+      issueCount: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor, shortCodeFor).length,
       meetingPlan: meetingPlanForArea(area, areaRecords, areaJobs)
     };
   }));
@@ -96,10 +103,18 @@ export function HotelOperationBoard({
     if (!detailAreaKey) return null;
     for (const floor of floors) {
       const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === detailAreaKey);
-      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
     }
     return null;
-  }, [departmentLabelFor, detailAreaKey, floors, jobs, records]);
+  }, [departmentLabelFor, detailAreaKey, floors, jobs, records, shortCodeFor]);
+  const entryView = useMemo(() => {
+    if (!entryAreaKey) return null;
+    for (const floor of floors) {
+      const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === entryAreaKey);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
+    }
+    return null;
+  }, [departmentLabelFor, entryAreaKey, floors, jobs, records, shortCodeFor]);
 
   return (
     <section className="hotel-operation-board" aria-label="Otel operasyon kat ve oda haritası">
@@ -169,7 +184,7 @@ export function HotelOperationBoard({
                     .slice()
                     .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
                     .map((area) => {
-                      const view = areaViewFor(floor, area, records, jobs, departmentLabelFor);
+                      const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
                       const isExpanded = expandedAreaKey === view.key;
                       return (
                         <div
@@ -209,8 +224,9 @@ export function HotelOperationBoard({
                         {isExpanded ? (
                           <AreaNotePaper
                             view={view}
+                            onEdit={() => onSelectArea(area)}
+                            onOpenEntry={() => setEntryAreaKey(view.key)}
                             onDetails={() => {
-                              onSelectArea(area);
                               setDetailAreaKey(view.key);
                             }}
                           />
@@ -232,6 +248,7 @@ export function HotelOperationBoard({
         />
       )}
       {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
+      {entryView ? <RoomEntryModal view={entryView} onClose={() => setEntryAreaKey("")} /> : null}
     </section>
   );
 }
@@ -246,38 +263,116 @@ function SummaryCard({ icon, label, tone, value }: { icon: ReactNode; label: str
   );
 }
 
-function AreaNotePaper({ onDetails, view }: { onDetails: () => void; view: AreaView }) {
-  const primaryIssue = view.issueCards[0];
-  const primaryActivity = view.activities[0];
+function AreaNotePaper({
+  onDetails,
+  onEdit,
+  onOpenEntry,
+  view
+}: {
+  onDetails: () => void;
+  onEdit: () => void;
+  onOpenEntry: () => void;
+  view: AreaView;
+}) {
+  const visibleIssues = view.issueCards.slice(0, 4);
 
   return (
     <div className="hotel-operation-note-paper">
-      <div className="hotel-operation-note-paper-head">
+      <div className="hotel-operation-note-paper-status">
         <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
-        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-details" onClick={onDetails}>
-          <ClipboardList size={14} /> Detaylar
+        <span>{view.area.label}</span>
+      </div>
+      <div className="hotel-operation-note-actions">
+        <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry}>
+          <LogIn size={13} /> Oda girişi aç
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
+          <PenLine size={13} /> Odayı düzenlemeye al
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onDetails}>
+          <ClipboardList size={13} /> Detaylar
         </button>
       </div>
       <div className="hotel-operation-note-paper-body">
-        <strong>{view.area.label} notu</strong>
         <p>{noteSummaryForArea(view)}</p>
       </div>
-      <div className="hotel-operation-note-paper-meta">
-        {view.guestPlan ? (
-          <span><Clock size={13} /> {view.guestPlan}</span>
-        ) : null}
-        {view.meetingPlan ? (
-          <span><CalendarDays size={13} /> {view.meetingPlan.time} · {view.meetingPlan.needs}</span>
-        ) : null}
-        {primaryIssue ? (
-          <span><AlertTriangle size={13} /> {primaryIssue.label}: {primaryIssue.title}</span>
-        ) : (
-          <span>Açık aksiyon yok</span>
-        )}
-      </div>
-      {primaryActivity ? (
-        <small className="hotel-operation-note-paper-foot">Son aktivite: {primaryActivity.sourceLabel} · {primaryActivity.title}</small>
-      ) : null}
+      {visibleIssues.length ? (
+        <div className="hotel-operation-request-timeline" aria-label="Açık iş talepleri">
+          {visibleIssues.map((issue) => (
+            <span className={`hotel-operation-request-row ${issue.risk}`} key={issue.id}>
+              <span className="hotel-operation-request-dot" />
+              <span>
+                <strong>{issue.label}</strong>
+                <small>{issue.title}</small>
+              </span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="hotel-operation-note-paper-empty">
+          <CheckCircle2 size={14} /> Açık iş talebi yok
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoomEntryModal({ onClose, view }: { onClose: () => void; view: AreaView }) {
+  const titleId = `hotel-operation-entry-${view.key}`;
+  const plannedEntry = view.guestPlan && view.guestPlan !== "Giriş planı yok" ? view.guestPlan : "";
+
+  return (
+    <div className="app-modal-overlay hotel-operation-entry-overlay" role="presentation" onClick={onClose}>
+      <section className="app-modal hotel-operation-entry-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
+        <header className="app-modal-header">
+          <div className="app-modal-title-row">
+            <span className="app-modal-title-icon">
+              <LogIn size={20} />
+            </span>
+            <div>
+              <span className="app-modal-eyebrow">{view.floor.name || defaultFloorName(view.floor.level)}</span>
+              <h3 className="app-modal-title" id={titleId}>{view.area.label} oda girişi</h3>
+            </div>
+          </div>
+          <button type="button" className="app-modal-close" onClick={onClose} aria-label="Oda girişi penceresini kapat">
+            <X size={18} />
+          </button>
+        </header>
+        <form className="app-modal-body hotel-operation-entry-form" onSubmit={(event) => {
+          event.preventDefault();
+          onClose();
+        }}>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Oda</span>
+            <input className="form-control" value={view.area.label} readOnly />
+          </label>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Misafir adı</span>
+            <input className="form-control" placeholder="Misafir adı" />
+          </label>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Giriş planı</span>
+            <input className="form-control" defaultValue={plannedEntry} placeholder="Bugün 14:00" />
+          </label>
+          <label className="form-group ui-form-compact">
+            <span className="form-label">Kaynak departman</span>
+            <select className="form-control" defaultValue="frontOffice">
+              <option value="frontOffice">Ön Büro</option>
+              <option value="housekeeping">Housekeeping</option>
+              <option value="technical">Teknik</option>
+              <option value="fnb">Yiyecek & İçecek</option>
+            </select>
+          </label>
+          <label className="form-group hotel-operation-entry-note">
+            <span className="form-label">Not</span>
+            <textarea className="form-control" rows={3} placeholder="Giriş notu" />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Vazgeç</button>
+            <button type="submit" className="btn btn-primary">Kaydet</button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -384,7 +479,8 @@ function areaViewFor(
   area: HotelFloorAreaRecord,
   records: OperationalRecord[],
   jobs: JobRecord[],
-  departmentLabelFor: (departmentId: string) => string
+  departmentLabelFor: (departmentId: string) => string,
+  departmentShortCodeFor: (departmentId: string) => string
 ): AreaView {
   const areaRecords = recordsForArea(area, records);
   const areaJobs = activeJobsForArea(area, jobs);
@@ -395,23 +491,24 @@ function areaViewFor(
     floor,
     area,
     status,
-    issueCards: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor),
+    issueCards: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor, departmentShortCodeFor),
     meetingPlan: meetingPlanForArea(area, areaRecords, areaJobs),
     guestPlan: guestPlanForArea(area, status, areaRecords, areaJobs),
     records: areaRecords,
     jobs: areaJobs,
-    activities: activityItemsForArea(areaRecords, areaJobs, departmentLabelFor)
+    activities: activityItemsForArea(areaRecords, areaJobs, departmentLabelFor, departmentShortCodeFor)
   };
 }
 
 function activityItemsForArea(
   records: OperationalRecord[],
   jobs: JobRecord[],
-  departmentLabelFor: (departmentId: string) => string
+  departmentLabelFor: (departmentId: string) => string,
+  departmentShortCodeFor: (departmentId: string) => string
 ): AreaActivity[] {
   const jobActivities = jobs.map((job) => ({
     id: `job-activity-${job.id}`,
-    sourceLabel: issueLabelForJob(job),
+    sourceLabel: departmentRouteLabelForJob(job, departmentShortCodeFor),
     title: job.title,
     detail: job.description || job.tags,
     owner: [departmentLabelFor(job.departmentId), job.assignee].filter(Boolean).join(" · "),
@@ -500,13 +597,14 @@ function statusForArea(
 function issueCardsForArea(
   records: OperationalRecord[],
   jobs: JobRecord[],
-  departmentLabelFor: (departmentId: string) => string
+  departmentLabelFor: (departmentId: string) => string,
+  departmentShortCodeFor: (departmentId: string) => string
 ): AreaIssueCard[] {
   const jobCards = jobs.map((job) => ({
     id: `job-${job.id}`,
-    label: issueLabelForJob(job),
+    label: departmentRouteLabelForJob(job, departmentShortCodeFor),
     title: job.title,
-    detail: departmentLabelFor(job.departmentId),
+    detail: `${issueLabelForJob(job)} · ${departmentLabelFor(job.departmentId)}`,
     due: job.due ? `Hedef ${formatBoardDate(job.due)}` : "Hedef bugün",
     risk: job.priority === "Urgent" || job.slaRisk ? "urgent" : job.priority === "High" || job.status === "Delayed" ? "high" : "normal"
   } satisfies AreaIssueCard));
@@ -560,6 +658,38 @@ function meetingPlanForArea(area: HotelFloorAreaRecord, records: OperationalReco
     time: time ? `${day} ${time}` : `${day} / saat bekliyor`,
     needs
   };
+}
+
+function departmentRouteLabelForJob(job: JobRecord, departmentShortCodeFor: (departmentId: string) => string) {
+  const target = departmentShortCodeFor(job.departmentId);
+  const source = job.createdByDepartmentId
+    ? departmentShortCodeFor(job.createdByDepartmentId)
+    : target;
+  return source === target ? source : `${source} > ${target}`;
+}
+
+function departmentAbbreviationFor(departmentId: string, departmentLabelFor: (departmentId: string) => string) {
+  const fixed: Record<string, string> = {
+    executive: "GM",
+    hr: "IK",
+    technical: "TK",
+    housekeeping: "HK",
+    frontOffice: "OB",
+    security: "GUV",
+    spa: "SPA",
+    sales: "SAT",
+    fnb: "F&B"
+  };
+  if (fixed[departmentId]) return fixed[departmentId];
+  const label = departmentLabelFor(departmentId).trim();
+  const parts = label
+    .replace(/&/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length > 1) {
+    return parts.map((part) => part[0]).join("").slice(0, 3).toLocaleUpperCase("tr-TR");
+  }
+  return (label || departmentId).replace(/[^a-zA-Z0-9ığüşöçİĞÜŞÖÇ]/g, "").slice(0, 3).toLocaleUpperCase("tr-TR");
 }
 
 function issueLabelForJob(job: JobRecord) {

@@ -19,6 +19,7 @@ export type ModuleId =
   | "reports"
   | "settings"
   | "inventory"
+  | "materialLists"
   | "roomStatus"
   | "lostFound"
   | "guestRequests"

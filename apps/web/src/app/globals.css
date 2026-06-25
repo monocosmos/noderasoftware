@@ -68,6 +68,30 @@ button {
   cursor: pointer;
 }
 
+.ui-button-spinner,
+.btn[aria-busy="true"]::before,
+button[data-auto-pending="true"]::before {
+  width: 0.95em;
+  height: 0.95em;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: button-loading-spin 0.7s linear infinite;
+  content: "";
+}
+
+button[aria-busy="true"],
+button[data-auto-pending="true"] {
+  cursor: progress;
+}
+
+@keyframes button-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
