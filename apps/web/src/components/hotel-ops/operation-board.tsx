@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, LogIn, PenLine, X, Users, Wrench } from "lucide-react";
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
@@ -36,6 +36,13 @@ type AreaActivity = {
   risk: AreaIssueCard["risk"];
 };
 
+type ScheduledRoomEntry = {
+  scheduledAt: number;
+  guestName: string;
+  note: string;
+  activatedAt?: number;
+};
+
 type AreaView = {
   key: string;
   floor: HotelFloorRecord;
@@ -47,6 +54,7 @@ type AreaView = {
   records: OperationalRecord[];
   jobs: JobRecord[];
   activities: AreaActivity[];
+  roomEntry?: ScheduledRoomEntry;
 };
 
 export function HotelOperationBoard({
@@ -77,6 +85,12 @@ export function HotelOperationBoard({
   const [expandedAreaKey, setExpandedAreaKey] = useState("");
   const [detailAreaKey, setDetailAreaKey] = useState("");
   const [entryAreaKey, setEntryAreaKey] = useState("");
+  const [roomEntries, setRoomEntries] = useState<Record<string, ScheduledRoomEntry>>({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const shortCodeFor = useMemo(
     () => departmentShortCodeFor ?? ((departmentId: string) => departmentAbbreviationFor(departmentId, departmentLabelFor)),
     [departmentLabelFor, departmentShortCodeFor]
@@ -84,14 +98,13 @@ export function HotelOperationBoard({
   const selectedFloor = floors.find((floor) => String(floor.level) === selectedFloorLevel) ?? floors[0];
   const displayedFloors = showAllFloors ? floors : selectedFloor ? [selectedFloor] : [];
   const areaSummaries = floors.flatMap((floor) => floor.areas.map((area) => {
-    const areaRecords = recordsForArea(area, records);
-    const areaJobs = activeJobsForArea(area, jobs);
+    const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
     return {
       area,
       floor,
-      status: statusForArea(area, areaRecords, areaJobs, departmentLabelFor),
-      issueCount: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor, shortCodeFor).length,
-      meetingPlan: meetingPlanForArea(area, areaRecords, areaJobs)
+      status: view.status,
+      issueCount: view.issueCards.length,
+      meetingPlan: view.meetingPlan
     };
   }));
   const occupiedCount = areaSummaries.filter((item) => item.status.tone === "occupied").length;
@@ -103,18 +116,18 @@ export function HotelOperationBoard({
     if (!detailAreaKey) return null;
     for (const floor of floors) {
       const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === detailAreaKey);
-      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
     }
     return null;
-  }, [departmentLabelFor, detailAreaKey, floors, jobs, records, shortCodeFor]);
+  }, [departmentLabelFor, detailAreaKey, floors, jobs, nowTick, records, roomEntries, shortCodeFor]);
   const entryView = useMemo(() => {
     if (!entryAreaKey) return null;
     for (const floor of floors) {
       const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === entryAreaKey);
-      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
     }
     return null;
-  }, [departmentLabelFor, entryAreaKey, floors, jobs, records, shortCodeFor]);
+  }, [departmentLabelFor, entryAreaKey, floors, jobs, nowTick, records, roomEntries, shortCodeFor]);
 
   return (
     <section className="hotel-operation-board" aria-label="Otel operasyon kat ve oda haritası">
@@ -184,7 +197,7 @@ export function HotelOperationBoard({
                     .slice()
                     .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
                     .map((area) => {
-                      const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor);
+                      const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
                       const isExpanded = expandedAreaKey === view.key;
                       return (
                         <div
@@ -248,7 +261,25 @@ export function HotelOperationBoard({
         />
       )}
       {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
-      {entryView ? <RoomEntryModal view={entryView} onClose={() => setEntryAreaKey("")} /> : null}
+      {entryView ? (
+        <RoomEntryModal
+          view={entryView}
+          onActivate={(entry) => {
+            setRoomEntries((current) => ({
+              ...current,
+              [entryView.key]: { ...entry, scheduledAt: Math.min(entry.scheduledAt, Date.now()), activatedAt: Date.now() }
+            }));
+            setNowTick(Date.now());
+            setEntryAreaKey("");
+          }}
+          onClose={() => setEntryAreaKey("")}
+          onSchedule={(entry) => {
+            setRoomEntries((current) => ({ ...current, [entryView.key]: entry }));
+            setNowTick(Date.now());
+            setEntryAreaKey("");
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -317,9 +348,31 @@ function AreaNotePaper({
   );
 }
 
-function RoomEntryModal({ onClose, view }: { onClose: () => void; view: AreaView }) {
+function RoomEntryModal({
+  onActivate,
+  onClose,
+  onSchedule,
+  view
+}: {
+  onActivate: (entry: ScheduledRoomEntry) => void;
+  onClose: () => void;
+  onSchedule: (entry: ScheduledRoomEntry) => void;
+  view: AreaView;
+}) {
   const titleId = `hotel-operation-entry-${view.key}`;
-  const plannedEntry = view.guestPlan && view.guestPlan !== "Giriş planı yok" ? view.guestPlan : "";
+  const defaultScheduledAt = view.roomEntry?.scheduledAt ?? nextWholeHourTimestamp();
+  const [guestName, setGuestName] = useState(view.roomEntry?.guestName ?? "");
+  const [note, setNote] = useState(view.roomEntry?.note ?? "");
+  const [scheduledAt, setScheduledAt] = useState(datetimeLocalValueForDate(defaultScheduledAt));
+  const entryDraft = (): ScheduledRoomEntry => {
+    const parsedScheduledAt = new Date(scheduledAt).getTime();
+    return {
+      scheduledAt: Number.isNaN(parsedScheduledAt) ? Date.now() : parsedScheduledAt,
+      guestName: guestName.trim(),
+      note: note.trim(),
+      activatedAt: view.roomEntry?.activatedAt
+    };
+  };
 
   return (
     <div className="app-modal-overlay hotel-operation-entry-overlay" role="presentation" onClick={onClose}>
@@ -340,7 +393,7 @@ function RoomEntryModal({ onClose, view }: { onClose: () => void; view: AreaView
         </header>
         <form className="app-modal-body hotel-operation-entry-form" onSubmit={(event) => {
           event.preventDefault();
-          onClose();
+          onSchedule(entryDraft());
         }}>
           <label className="form-group ui-form-compact">
             <span className="form-label">Oda</span>
@@ -348,28 +401,27 @@ function RoomEntryModal({ onClose, view }: { onClose: () => void; view: AreaView
           </label>
           <label className="form-group ui-form-compact">
             <span className="form-label">Misafir adı</span>
-            <input className="form-control" placeholder="Misafir adı" />
+            <input className="form-control" value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Misafir adı" />
           </label>
           <label className="form-group ui-form-compact">
-            <span className="form-label">Giriş planı</span>
-            <input className="form-control" defaultValue={plannedEntry} placeholder="Bugün 14:00" />
+            <span className="form-label">Planlanan giriş tarihi ve saati</span>
+            <input className="form-control" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required />
           </label>
-          <label className="form-group ui-form-compact">
-            <span className="form-label">Kaynak departman</span>
-            <select className="form-control" defaultValue="frontOffice">
-              <option value="frontOffice">Ön Büro</option>
-              <option value="housekeeping">Housekeeping</option>
-              <option value="technical">Teknik</option>
-              <option value="fnb">Yiyecek & İçecek</option>
-            </select>
-          </label>
+          <div className="hotel-operation-entry-authority" aria-label="Oda girişi yetkilendirme bilgisi">
+            <span>Operasyon sahibi</span>
+            <strong>Ön Büro</strong>
+            <small>Bu yetki İnsan Kaynakları tarafından verilir.</small>
+          </div>
           <label className="form-group hotel-operation-entry-note">
             <span className="form-label">Not</span>
-            <textarea className="form-control" rows={3} placeholder="Giriş notu" />
+            <textarea className="form-control" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Giriş notu" />
           </label>
-          <div className="modal-actions">
+          <div className="modal-actions hotel-operation-entry-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Vazgeç</button>
-            <button type="submit" className="btn btn-primary">Kaydet</button>
+            <button type="submit" className="btn btn-secondary">Planı Kaydet</button>
+            <button type="button" className="btn btn-primary hotel-operation-entry-now" onClick={() => onActivate(entryDraft())}>
+              <LogIn size={14} /> Oda girişini yap
+            </button>
           </div>
         </form>
       </section>
@@ -480,11 +532,16 @@ function areaViewFor(
   records: OperationalRecord[],
   jobs: JobRecord[],
   departmentLabelFor: (departmentId: string) => string,
-  departmentShortCodeFor: (departmentId: string) => string
+  departmentShortCodeFor: (departmentId: string) => string,
+  roomEntry?: ScheduledRoomEntry,
+  nowMs = Date.now()
 ): AreaView {
   const areaRecords = recordsForArea(area, records);
   const areaJobs = activeJobsForArea(area, jobs);
-  const status = statusForArea(area, areaRecords, areaJobs, departmentLabelFor);
+  const baseStatus = statusForArea(area, areaRecords, areaJobs, departmentLabelFor);
+  const status = isRoomEntryActive(roomEntry, nowMs)
+    ? { label: "ODA MİSAFİR AĞIRLIYOR", tone: "occupied" as const }
+    : baseStatus;
 
   return {
     key: areaKeyFor(floor, area),
@@ -493,10 +550,11 @@ function areaViewFor(
     status,
     issueCards: issueCardsForArea(areaRecords, areaJobs, departmentLabelFor, departmentShortCodeFor),
     meetingPlan: meetingPlanForArea(area, areaRecords, areaJobs),
-    guestPlan: guestPlanForArea(area, status, areaRecords, areaJobs),
+    guestPlan: guestPlanForArea(area, status, areaRecords, areaJobs, roomEntry, nowMs),
     records: areaRecords,
     jobs: areaJobs,
-    activities: activityItemsForArea(areaRecords, areaJobs, departmentLabelFor, departmentShortCodeFor)
+    activities: activityItemsForArea(areaRecords, areaJobs, departmentLabelFor, departmentShortCodeFor),
+    roomEntry
   };
 }
 
@@ -621,8 +679,20 @@ function issueCardsForArea(
   return [...jobCards, ...recordCards];
 }
 
-function guestPlanForArea(area: HotelFloorAreaRecord, status: AreaStatus, records: OperationalRecord[], jobs: JobRecord[]) {
+function guestPlanForArea(
+  area: HotelFloorAreaRecord,
+  status: AreaStatus,
+  records: OperationalRecord[],
+  jobs: JobRecord[],
+  roomEntry?: ScheduledRoomEntry,
+  nowMs = Date.now()
+) {
   if (area.kind !== "ROOM") return "";
+  if (roomEntry) {
+    const guestLabel = roomEntry.guestName ? ` · ${roomEntry.guestName}` : "";
+    if (isRoomEntryActive(roomEntry, nowMs)) return `ODA MİSAFİR AĞIRLIYOR${guestLabel}`;
+    return `Planlanan giriş · ${formatScheduledEntryDate(roomEntry.scheduledAt)}${guestLabel}`;
+  }
   const sourceText = [
     records[0]?.due,
     records[0]?.meta,
@@ -751,6 +821,32 @@ function defaultFloorName(level: number) {
   if (level === 0) return "L Zemin Kat";
   if (level > 0) return `${level}. Kat`;
   return `${level}. Kat`;
+}
+
+function isRoomEntryActive(entry: ScheduledRoomEntry | undefined, nowMs: number) {
+  return Boolean(entry && (entry.activatedAt || entry.scheduledAt <= nowMs));
+}
+
+function nextWholeHourTimestamp() {
+  const date = new Date();
+  date.setHours(date.getHours() + 1, 0, 0, 0);
+  return date.getTime();
+}
+
+function datetimeLocalValueForDate(timestamp: number) {
+  const date = new Date(timestamp);
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function formatScheduledEntryDate(timestamp: number) {
+  return new Intl.DateTimeFormat("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(timestamp));
 }
 
 function findTime(value: string) {

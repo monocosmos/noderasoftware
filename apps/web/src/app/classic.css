@@ -6141,6 +6141,41 @@ textarea.form-control {
   grid-column: 1 / -1;
 }
 
+.hotel-operation-entry-authority {
+  align-self: end;
+  border: 1px solid var(--classic-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  display: grid;
+  gap: 2px;
+  min-height: 63px;
+}
+
+.hotel-operation-entry-authority span,
+.hotel-operation-entry-authority small {
+  color: var(--classic-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.hotel-operation-entry-authority strong {
+  color: var(--classic-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.hotel-operation-entry-form .hotel-operation-entry-actions {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(118px, auto) minmax(160px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.hotel-operation-entry-now {
+  justify-content: center;
+}
+
 .hotel-operation-detail-modal {
   width: min(96vw, 860px);
   max-height: min(92dvh, 760px);
@@ -7689,6 +7724,9 @@ textarea.form-control {
     grid-template-columns: 1fr;
   }
   .hotel-operation-entry-form {
+    grid-template-columns: 1fr;
+  }
+  .hotel-operation-entry-form .hotel-operation-entry-actions {
     grid-template-columns: 1fr;
   }
   .hotel-operation-activity-row {
