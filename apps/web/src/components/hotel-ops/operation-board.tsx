@@ -709,7 +709,7 @@ function activityItemsForArea(
   } satisfies AreaActivity));
 
   const recordActivities = records
-    .filter((record) => !isVacantStatus(record.status) || Boolean(record.detail || record.meta))
+    .filter((record) => shouldShowOperationalRecordForArea(record, jobs) && (!isVacantStatus(record.status) || Boolean(record.detail || record.meta)))
     .map((record) => ({
       id: `record-activity-${record.id}`,
       sourceLabel: issueLabelForStatus(record.status),
@@ -800,7 +800,7 @@ function issueCardsForArea(
     risk: job.priority === "Urgent" || job.slaRisk ? "urgent" : job.priority === "High" || job.status === "Delayed" ? "high" : "normal"
   } satisfies AreaIssueCard));
   const recordCards = records
-    .filter((record) => !isVacantStatus(record.status) && !record.status.includes("Tamamlandı"))
+    .filter((record) => shouldShowOperationalRecordForArea(record, jobs) && !isVacantStatus(record.status) && !record.status.includes("Tamamlandı"))
     .map((record) => ({
       id: `record-${record.id}`,
       label: issueLabelForStatus(record.status),
@@ -810,6 +810,24 @@ function issueCardsForArea(
       risk: record.risk
     } satisfies AreaIssueCard));
   return [...jobCards, ...recordCards];
+}
+
+function shouldShowOperationalRecordForArea(record: OperationalRecord, jobs: JobRecord[]) {
+  if (!jobs.length) return true;
+  return !jobs.some((job) => operationalRecordMatchesJob(record, job));
+}
+
+function operationalRecordMatchesJob(record: OperationalRecord, job: JobRecord) {
+  const recordText = searchableOperationText(record.title, record.meta, record.detail, record.status);
+  const jobText = searchableOperationText(job.title, job.description, job.tags, job.room, job.location, job.locationDetail);
+  const recordPhrases = [record.meta, record.detail, operationAreaLabelFromRecord(record.title)]
+    .map((value) => searchableOperationText(value))
+    .filter((phrase) => phrase.length >= 6);
+  const jobPhrases = [job.title, job.description]
+    .map((value) => searchableOperationText(value))
+    .filter((phrase) => phrase.length >= 6);
+
+  return recordPhrases.some((phrase) => jobText.includes(phrase)) || jobPhrases.some((phrase) => recordText.includes(phrase));
 }
 
 function guestPlanForArea(
@@ -950,6 +968,15 @@ function operationAreaLabelFromRecord(title: string) {
 
 function floorPlanAreaKey(label: string) {
   return label.trim().toLocaleLowerCase("tr-TR");
+}
+
+function searchableOperationText(...values: Array<string | undefined>) {
+  return values
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("tr-TR");
 }
 
 function defaultFloorName(level: number) {
