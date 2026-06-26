@@ -299,10 +299,13 @@ deploy_section_from_github() {
   local build_dir
   local origin_url
   stage_root="$(mktemp -d "/tmp/noderasoftware-section-${SECTION}-XXXXXX")"
+  SECTION_STAGE_ROOT="${stage_root}"
   build_dir="${stage_root}/repo"
 
   cleanup_section() {
-    rm -rf "${stage_root}"
+    if [ -n "${SECTION_STAGE_ROOT:-}" ]; then
+      rm -rf "${SECTION_STAGE_ROOT}"
+    fi
   }
   trap cleanup_section EXIT
 
