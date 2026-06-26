@@ -8,9 +8,9 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir --win",
-    "dist": "npm run dist:installer && npm run dist:portable",
-    "dist:installer": "electron-builder --win nsis --config.win.artifactName=HotelOps-Setup-V1-${arch}.${ext}",
-    "dist:portable": "electron-builder --win portable --config.win.artifactName=HotelOps-Portable-V1-${arch}.${ext}",
+    "dist": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/workstation/build-windows-desktop-release.ps1",
+    "dist:installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/workstation/build-windows-desktop-release.ps1 -Target installer",
+    "dist:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/workstation/build-windows-desktop-release.ps1 -Target portable",
     "mac:icon": "bash scripts/create-mac-icon.sh",
     "dist:mac": "npm run mac:icon && electron-builder --mac dmg zip --x64 --arm64 --config.mac.identity=null",
     "dist:mac:x64": "npm run mac:icon && electron-builder --mac dmg zip --x64 --config.mac.identity=null",
