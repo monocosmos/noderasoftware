@@ -8,6 +8,7 @@ BRANCH="${BRANCH:-master}"
 REPO_URL="${REPO_URL:-}"
 PORT="${PORT:-4000}"
 SECTION="${SECTION:-all}"
+SOURCE_DIR="${SOURCE_DIR:-}"
 ALLOW_APP_DIR_RECREATE="${ALLOW_APP_DIR_RECREATE:-0}"
 
 die() {
@@ -310,20 +311,35 @@ deploy_section_from_github() {
   require_command npx "npx bulunamadi. Once Node.js kurulumunu tamamlayin."
   require_command rsync "rsync bulunamadi."
 
-  echo "==> ${SECTION} bolumu icin GitHub kaynaklari hazirlaniyor"
-  git -C "${APP_DIR}" fetch --prune origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
-  origin_url="$(git -C "${APP_DIR}" config --get remote.origin.url || true)"
-  git clone --shared "${APP_DIR}" "${build_dir}"
-  if [ -n "${origin_url}" ]; then
-    git -C "${build_dir}" remote set-url origin "${origin_url}"
-  fi
+  if [ -n "${SOURCE_DIR}" ]; then
+    case "${SOURCE_DIR}" in
+      /*) ;;
+      *) die "SOURCE_DIR mutlak Linux yolu olmali: ${SOURCE_DIR}" ;;
+    esac
+    if [ ! -d "${SOURCE_DIR}" ]; then
+      die "SOURCE_DIR bulunamadi: ${SOURCE_DIR}"
+    fi
 
-  cd "${build_dir}"
-  GIT_LFS_SKIP_SMUDGE=1 git checkout -f -B "${BRANCH}" "origin/${BRANCH}"
-  GIT_LFS_SKIP_SMUDGE=1 git reset --hard "origin/${BRANCH}"
-  git lfs install --local
-  git lfs pull
-  git clean -fd -e .env -e node_modules/ -e apps/web/public/downloads/
+    echo "==> ${SECTION} bolumu icin yerel kaynak arsivi hazirlaniyor"
+    mkdir -p "${build_dir}"
+    rsync -a --delete "${SOURCE_DIR}/" "${build_dir}/"
+    cd "${build_dir}"
+  else
+    echo "==> ${SECTION} bolumu icin GitHub kaynaklari hazirlaniyor"
+    git -C "${APP_DIR}" fetch --prune origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+    origin_url="$(git -C "${APP_DIR}" config --get remote.origin.url || true)"
+    git clone --shared "${APP_DIR}" "${build_dir}"
+    if [ -n "${origin_url}" ]; then
+      git -C "${build_dir}" remote set-url origin "${origin_url}"
+    fi
+
+    cd "${build_dir}"
+    GIT_LFS_SKIP_SMUDGE=1 git checkout -f -B "${BRANCH}" "origin/${BRANCH}"
+    GIT_LFS_SKIP_SMUDGE=1 git reset --hard "origin/${BRANCH}"
+    git lfs install --local
+    git lfs pull
+    git clean -fd -e .env -e node_modules/ -e apps/web/public/downloads/
+  fi
 
   if [ -f "${APP_DIR}/.env" ]; then
     cp "${APP_DIR}/.env" "${build_dir}/.env"
