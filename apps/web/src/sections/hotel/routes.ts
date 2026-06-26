@@ -71,6 +71,10 @@ export const legacyHotelRouteSlugs = [
 
 type RouteSlug = readonly string[];
 
+export const hotelRouteSubSlugs = hotelRouteSlugs
+  .map((slug) => slug.slice(1))
+  .filter((slug) => slug.length > 0);
+
 function sameSlug(left: RouteSlug, right: RouteSlug) {
   return left.length === right.length && left.every((part, index) => part === right[index]);
 }
@@ -111,6 +115,10 @@ export function isKnownHotelAppPath(path: string) {
 
 export function isKnownHotelRouteSlug(slug: RouteSlug) {
   return hotelRouteSlugs.some((route) => sameSlug(route, slug));
+}
+
+export function isKnownHotelRouteSubSlug(slug: RouteSlug) {
+  return isKnownHotelRouteSlug(["hotel", ...slug]);
 }
 
 export function isKnownLegacyHotelRouteSlug(slug: RouteSlug) {

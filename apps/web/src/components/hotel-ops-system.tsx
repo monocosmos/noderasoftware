@@ -42,7 +42,7 @@ import {
   XCircle,
   type LucideIcon
 } from "lucide-react";
-import { isKnownHotelAppPath, normalizeHotelAppPath } from "@/lib/hotel-routes";
+import { isKnownHotelAppPath, normalizeHotelAppPath } from "@/sections/hotel/routes";
 import { departments, getRole, type DepartmentId, type RoleId } from "@/lib/rbac";
 import { MeterTrackingPage } from "./meter-tracking-page";
 import { AccessDenied, EmptyState, Info } from "./hotel-ops/ui-common";
@@ -102,6 +102,7 @@ import {
   type ShiftPanelRecord,
   type ShiftRecord,
   type UserDraft,
+  type WebBuildManifest,
   type WorkOrderPolicyRecord,
   isActiveManagementRequestStatus,
   isClosedManagementRequestStatus
@@ -145,6 +146,7 @@ const MOBILE_TAB_PATHS = ["/dashboard", "/jobs", "/calendar/department", "/notif
 const ALERT_AUTO_DISMISS_SECONDS = 5;
 const MAX_SAVED_LOGIN_ACCOUNTS = 8;
 const CONNECTION_HEALTH_INTERVAL_MS = 15000;
+const WEB_BUILD_CHECK_INTERVAL_MS = 15000;
 
 type LoginResponse = {
   token: string;
@@ -405,6 +407,18 @@ async function fetchMaintenanceStatus() {
       return DEFAULT_MAINTENANCE_STATUS;
     }
   }
+}
+
+function webBuildSignature(value: Partial<WebBuildManifest> | null | undefined) {
+  const buildId = typeof value?.buildId === "string" ? value.buildId.trim() : "";
+  if (!buildId) return "";
+  const generatedAt = typeof value?.generatedAt === "string" ? value.generatedAt.trim() : "";
+  return generatedAt ? `${buildId}|${generatedAt}` : buildId;
+}
+
+async function fetchWebBuildManifest() {
+  const manifest = await fetchJsonWithTimeout(`/web-build.json?t=${Date.now()}`, 5000) as Partial<WebBuildManifest>;
+  return webBuildSignature(manifest) ? manifest : null;
 }
 
 function isShellRuntime(value: unknown): value is ShellRuntime {
@@ -3277,6 +3291,8 @@ export function HotelOpsSystem() {
   const lastAuthenticatedPasswordRef = useRef("");
   const jobCreateInProgressRef = useRef(false);
   const syncEtagRef = useRef("");
+  const webBuildSignatureRef = useRef("");
+  const webBuildReloadingRef = useRef(false);
 
   const setAlert = useCallback((value: string) => {
     setAlertMessage(value);
@@ -3506,6 +3522,58 @@ export function HotelOpsSystem() {
       window.clearInterval(connectionIntervalId);
     };
   }, [refreshLoginCacheState, rememberBootstrapState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const retryIds: number[] = [];
+
+    const checkWebBuild = async () => {
+      if (webBuildReloadingRef.current) return;
+
+      try {
+        const manifest = await fetchWebBuildManifest();
+        if (cancelled || !manifest) return;
+
+        const signature = webBuildSignature(manifest);
+        if (!signature) return;
+
+        if (!webBuildSignatureRef.current) {
+          webBuildSignatureRef.current = signature;
+          return;
+        }
+
+        if (signature === webBuildSignatureRef.current) return;
+
+        webBuildReloadingRef.current = true;
+        window.location.reload();
+      } catch {
+        // Offline clients keep their current bundle and retry on the next app entry/check.
+      }
+    };
+
+    const checkWhenVisible = () => {
+      if (document.visibilityState === "hidden") return;
+      void checkWebBuild();
+    };
+
+    void checkWebBuild();
+    const intervalId = window.setInterval(checkWhenVisible, WEB_BUILD_CHECK_INTERVAL_MS);
+    window.addEventListener("focus", checkWhenVisible);
+    window.addEventListener("pageshow", checkWhenVisible);
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    [2500, 10000].forEach((delay) => {
+      retryIds.push(window.setTimeout(checkWhenVisible, delay));
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", checkWhenVisible);
+      window.removeEventListener("pageshow", checkWhenVisible);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
+      retryIds.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

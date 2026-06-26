@@ -123,6 +123,13 @@ export type AppVersionManifest = {
   platforms: Partial<Record<"desktop" | "android" | "androidDirect" | "androidPlay", AppVersionPlatformManifest>>;
 };
 
+export type WebBuildManifest = {
+  schema: number;
+  buildId: string;
+  generatedAt?: string;
+  source?: string;
+};
+
 export type ShellAppInfo = {
   runtime: Extract<ShellRuntime, "desktop" | "android">;
   channel?: "direct" | "play";
