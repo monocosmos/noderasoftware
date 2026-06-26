@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, LogIn, PenLine, X, Users, Wrench } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, LogIn, LogOut, PenLine, X, Users, Wrench } from "lucide-react";
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
 
@@ -41,6 +41,14 @@ type ScheduledRoomEntry = {
   guestName: string;
   note: string;
   activatedAt?: number;
+  exitScheduledAt?: number;
+  exitActivatedAt?: number;
+  exitNote?: string;
+};
+
+type ScheduledRoomExit = {
+  scheduledAt: number;
+  note: string;
 };
 
 type AreaView = {
@@ -272,9 +280,43 @@ export function HotelOperationBoard({
             setNowTick(Date.now());
             setEntryAreaKey("");
           }}
+          onActivateExit={(exit) => {
+            setRoomEntries((current) => {
+              const currentEntry = current[entryView.key] ?? entryView.roomEntry;
+              if (!currentEntry) return current;
+              return {
+                ...current,
+                [entryView.key]: {
+                  ...currentEntry,
+                  exitScheduledAt: Date.now(),
+                  exitActivatedAt: Date.now(),
+                  exitNote: exit.note
+                }
+              };
+            });
+            setNowTick(Date.now());
+            setEntryAreaKey("");
+          }}
           onClose={() => setEntryAreaKey("")}
           onSchedule={(entry) => {
             setRoomEntries((current) => ({ ...current, [entryView.key]: entry }));
+            setNowTick(Date.now());
+            setEntryAreaKey("");
+          }}
+          onScheduleExit={(exit) => {
+            setRoomEntries((current) => {
+              const currentEntry = current[entryView.key] ?? entryView.roomEntry;
+              if (!currentEntry) return current;
+              return {
+                ...current,
+                [entryView.key]: {
+                  ...currentEntry,
+                  exitScheduledAt: exit.scheduledAt,
+                  exitActivatedAt: undefined,
+                  exitNote: exit.note
+                }
+              };
+            });
             setNowTick(Date.now());
             setEntryAreaKey("");
           }}
@@ -306,6 +348,8 @@ function AreaNotePaper({
   view: AreaView;
 }) {
   const visibleIssues = view.issueCards.slice(0, 4);
+  const hasOpenEntry = hasRoomEntryDefined(view.roomEntry);
+  const noteSummary = noteSummaryForArea(view);
 
   return (
     <div className="hotel-operation-note-paper">
@@ -314,9 +358,12 @@ function AreaNotePaper({
         <span>{view.area.label}</span>
       </div>
       <div className="hotel-operation-note-actions">
-        <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry}>
-          <LogIn size={13} /> Oda girişi aç
-        </button>
+        {view.area.kind === "ROOM" ? (
+          <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry}>
+            {hasOpenEntry ? <LogOut size={13} /> : <LogIn size={13} />}
+            {hasOpenEntry ? "Oda çıkışı aç" : "Oda girişi aç"}
+          </button>
+        ) : null}
         <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
           <PenLine size={13} /> Odayı düzenlemeye al
         </button>
@@ -324,9 +371,11 @@ function AreaNotePaper({
           <ClipboardList size={13} /> Detaylar
         </button>
       </div>
-      <div className="hotel-operation-note-paper-body">
-        <p>{noteSummaryForArea(view)}</p>
-      </div>
+      {noteSummary ? (
+        <div className="hotel-operation-note-paper-body">
+          <p>{noteSummary}</p>
+        </div>
+      ) : null}
       {visibleIssues.length ? (
         <div className="hotel-operation-request-timeline" aria-label="Açık iş talepleri">
           {visibleIssues.map((issue) => (
@@ -350,28 +399,82 @@ function AreaNotePaper({
 
 function RoomEntryModal({
   onActivate,
+  onActivateExit,
   onClose,
   onSchedule,
+  onScheduleExit,
   view
 }: {
   onActivate: (entry: ScheduledRoomEntry) => void;
+  onActivateExit: (exit: ScheduledRoomExit) => void;
   onClose: () => void;
   onSchedule: (entry: ScheduledRoomEntry) => void;
+  onScheduleExit: (exit: ScheduledRoomExit) => void;
   view: AreaView;
 }) {
   const titleId = `hotel-operation-entry-${view.key}`;
-  const defaultScheduledAt = view.roomEntry?.scheduledAt ?? nextWholeHourTimestamp();
-  const [guestName, setGuestName] = useState(view.roomEntry?.guestName ?? "");
-  const [note, setNote] = useState(view.roomEntry?.note ?? "");
+  const nowMs = Date.now();
+  const hasOpenEntry = hasRoomEntryDefined(view.roomEntry, nowMs);
+  const defaultScheduledAt = hasOpenEntry ? view.roomEntry?.scheduledAt ?? nextWholeHourTimestamp() : nextWholeHourTimestamp();
+  const [guestName, setGuestName] = useState(hasOpenEntry ? "" : view.roomEntry?.guestName ?? "");
+  const [note, setNote] = useState(hasOpenEntry ? "" : view.roomEntry?.note ?? "");
   const [scheduledAt, setScheduledAt] = useState(datetimeLocalValueForDate(defaultScheduledAt));
+  const [plannedExitAt, setPlannedExitAt] = useState(hasOpenEntry || !view.roomEntry?.exitScheduledAt ? "" : datetimeLocalValueForDate(view.roomEntry.exitScheduledAt));
+  const [exitScheduledAt, setExitScheduledAt] = useState(datetimeLocalValueForDate(view.roomEntry?.exitScheduledAt && !isRoomStayExited(view.roomEntry, nowMs) ? view.roomEntry.exitScheduledAt : nextWholeHourTimestamp()));
+  const [exitNote, setExitNote] = useState(view.roomEntry?.exitNote ?? "");
+  const [error, setError] = useState("");
   const entryDraft = (): ScheduledRoomEntry => {
-    const parsedScheduledAt = new Date(scheduledAt).getTime();
-    return {
-      scheduledAt: Number.isNaN(parsedScheduledAt) ? Date.now() : parsedScheduledAt,
+    const parsedScheduledAt = timestampForDatetimeLocal(scheduledAt, Date.now());
+    const draft: ScheduledRoomEntry = {
+      scheduledAt: parsedScheduledAt,
       guestName: guestName.trim(),
-      note: note.trim(),
-      activatedAt: view.roomEntry?.activatedAt
+      note: note.trim()
     };
+    if (plannedExitAt) {
+      draft.exitScheduledAt = timestampForDatetimeLocal(plannedExitAt, parsedScheduledAt);
+    }
+    return draft;
+  };
+  const exitDraft = (): ScheduledRoomExit => ({
+    scheduledAt: timestampForDatetimeLocal(exitScheduledAt, nextWholeHourTimestamp()),
+    note: exitNote.trim()
+  });
+  const validateEntryDraft = (entry: ScheduledRoomEntry, immediate: boolean) => {
+    const effectiveEntryAt = immediate ? Date.now() : entry.scheduledAt;
+    if (entry.exitScheduledAt && entry.exitScheduledAt <= effectiveEntryAt) {
+      setError("Planlanan çıkış saati giriş saatinden sonra olmalı.");
+      return false;
+    }
+    setError("");
+    return true;
+  };
+  const validateExitDraft = (exit: ScheduledRoomExit) => {
+    const earliestExitAt = Math.max(Date.now(), view.roomEntry?.activatedAt ?? view.roomEntry?.scheduledAt ?? Date.now());
+    if (exit.scheduledAt <= earliestExitAt) {
+      setError("Planlanan çıkış saati şu andan ve giriş saatinden sonra olmalı.");
+      return false;
+    }
+    setError("");
+    return true;
+  };
+  const modalTitle = hasOpenEntry ? `${view.area.label} oda çıkışı` : `${view.area.label} oda girişi`;
+  const modalIcon = hasOpenEntry ? <LogOut size={20} /> : <LogIn size={20} />;
+  const closeLabel = hasOpenEntry ? "Oda çıkışı penceresini kapat" : "Oda girişi penceresini kapat";
+  const handleScheduleEntry = () => {
+    const draft = entryDraft();
+    if (validateEntryDraft(draft, false)) onSchedule(draft);
+  };
+  const handleActivateEntry = () => {
+    const draft = entryDraft();
+    if (validateEntryDraft(draft, true)) onActivate(draft);
+  };
+  const handleScheduleExit = () => {
+    const draft = exitDraft();
+    if (validateExitDraft(draft)) onScheduleExit(draft);
+  };
+  const handleActivateExit = () => {
+    setError("");
+    onActivateExit({ scheduledAt: Date.now(), note: exitNote.trim() });
   };
 
   return (
@@ -380,47 +483,77 @@ function RoomEntryModal({
         <header className="app-modal-header">
           <div className="app-modal-title-row">
             <span className="app-modal-title-icon">
-              <LogIn size={20} />
+              {modalIcon}
             </span>
             <div>
               <span className="app-modal-eyebrow">{view.floor.name || defaultFloorName(view.floor.level)}</span>
-              <h3 className="app-modal-title" id={titleId}>{view.area.label} oda girişi</h3>
+              <h3 className="app-modal-title" id={titleId}>{modalTitle}</h3>
             </div>
           </div>
-          <button type="button" className="app-modal-close" onClick={onClose} aria-label="Oda girişi penceresini kapat">
+          <button type="button" className="app-modal-close" onClick={onClose} aria-label={closeLabel}>
             <X size={18} />
           </button>
         </header>
         <form className="app-modal-body hotel-operation-entry-form" onSubmit={(event) => {
           event.preventDefault();
-          onSchedule(entryDraft());
+          if (hasOpenEntry) {
+            handleScheduleExit();
+          } else {
+            handleScheduleEntry();
+          }
         }}>
           <label className="form-group ui-form-compact">
             <span className="form-label">Oda</span>
             <input className="form-control" value={view.area.label} readOnly />
           </label>
-          <label className="form-group ui-form-compact">
-            <span className="form-label">Misafir adı</span>
-            <input className="form-control" value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Misafir adı" />
-          </label>
-          <label className="form-group ui-form-compact">
-            <span className="form-label">Planlanan giriş tarihi ve saati</span>
-            <input className="form-control" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required />
-          </label>
-          <div className="hotel-operation-entry-authority" aria-label="Oda girişi yetkilendirme bilgisi">
-            <span>Operasyon sahibi</span>
-            <strong>Ön Büro</strong>
-            <small>Bu yetki İnsan Kaynakları tarafından verilir.</small>
-          </div>
-          <label className="form-group hotel-operation-entry-note">
-            <span className="form-label">Not</span>
-            <textarea className="form-control" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Giriş notu" />
-          </label>
+          {hasOpenEntry ? (
+            <>
+              <div className="hotel-operation-entry-authority" aria-label="Tanımlı oda girişi">
+                <span>Tanımlı giriş</span>
+                <strong>{formatScheduledEntryDate(view.roomEntry?.activatedAt ?? view.roomEntry?.scheduledAt ?? Date.now())}</strong>
+                <small>{view.roomEntry?.activatedAt ? "Anında giriş yapıldı" : "Saatli giriş planı"}</small>
+              </div>
+              <label className="form-group ui-form-compact">
+                <span className="form-label">Planlanan çıkış tarihi ve saati</span>
+                <input className="form-control" type="datetime-local" value={exitScheduledAt} onChange={(event) => setExitScheduledAt(event.target.value)} required />
+              </label>
+              <label className="form-group hotel-operation-entry-note">
+                <span className="form-label">Çıkış notu</span>
+                <textarea className="form-control" rows={3} value={exitNote} onChange={(event) => setExitNote(event.target.value)} placeholder="Çıkış notu" />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="form-group ui-form-compact">
+                <span className="form-label">Misafir adı</span>
+                <input className="form-control" value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Misafir adı" />
+              </label>
+              <label className="form-group ui-form-compact">
+                <span className="form-label">Planlanan giriş tarihi ve saati</span>
+                <input className="form-control" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required />
+              </label>
+              <label className="form-group ui-form-compact">
+                <span className="form-label">Planlanan çıkış tarihi ve saati</span>
+                <input className="form-control" type="datetime-local" value={plannedExitAt} onChange={(event) => setPlannedExitAt(event.target.value)} />
+              </label>
+              <div className="hotel-operation-entry-authority" aria-label="Oda girişi yetkilendirme bilgisi">
+                <span>Operasyon sahibi</span>
+                <strong>Ön Büro</strong>
+                <small>Bu yetki İnsan Kaynakları tarafından verilir.</small>
+              </div>
+              <label className="form-group hotel-operation-entry-note">
+                <span className="form-label">Giriş notu</span>
+                <textarea className="form-control" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Giriş notu" />
+              </label>
+            </>
+          )}
+          {error ? <div className="hotel-operation-entry-error">{error}</div> : null}
           <div className="modal-actions hotel-operation-entry-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Vazgeç</button>
-            <button type="submit" className="btn btn-secondary">Planı Kaydet</button>
-            <button type="button" className="btn btn-primary hotel-operation-entry-now" onClick={() => onActivate(entryDraft())}>
-              <LogIn size={14} /> Oda girişini yap
+            <button type="submit" className="btn btn-secondary">{hasOpenEntry ? "Çıkışı Planla" : "Girişi Planla"}</button>
+            <button type="button" className="btn btn-primary hotel-operation-entry-now" onClick={hasOpenEntry ? handleActivateExit : handleActivateEntry}>
+              {hasOpenEntry ? <LogOut size={14} /> : <LogIn size={14} />}
+              {hasOpenEntry ? "Oda çıkışını yap" : "Oda girişini yap"}
             </button>
           </div>
         </form>
@@ -540,7 +673,7 @@ function areaViewFor(
   const areaJobs = activeJobsForArea(area, jobs);
   const baseStatus = statusForArea(area, areaRecords, areaJobs, departmentLabelFor);
   const status = isRoomEntryActive(roomEntry, nowMs)
-    ? { label: "ODA MİSAFİR AĞIRLIYOR", tone: "occupied" as const }
+    ? { label: "Dolu", tone: "occupied" as const }
     : baseStatus;
 
   return {
@@ -594,7 +727,7 @@ function activityItemsForArea(
 function noteSummaryForArea(view: AreaView) {
   const leadIssue = view.issueCards[0];
   if (view.meetingPlan) return `${view.meetingPlan.time} planı var. İhtiyaç: ${view.meetingPlan.needs}`;
-  if (view.status.tone === "occupied") return view.guestPlan || "Misafir konaklaması aktif.";
+  if (view.status.tone === "occupied") return view.guestPlan;
   if (leadIssue) return `${leadIssue.label} bekliyor: ${leadIssue.title}.`;
   if (view.status.tone === "department") return `${view.status.departmentLabel || "Departman"} üzerinde işlemde.`;
   return view.area.kind === "ROOM" ? "Oda boş, açık aksiyon görünmüyor." : "Alan hazır, açık aksiyon görünmüyor.";
@@ -689,9 +822,11 @@ function guestPlanForArea(
 ) {
   if (area.kind !== "ROOM") return "";
   if (roomEntry) {
-    const guestLabel = roomEntry.guestName ? ` · ${roomEntry.guestName}` : "";
-    if (isRoomEntryActive(roomEntry, nowMs)) return `ODA MİSAFİR AĞIRLIYOR${guestLabel}`;
-    return `Planlanan giriş · ${formatScheduledEntryDate(roomEntry.scheduledAt)}${guestLabel}`;
+    if (isRoomStayExited(roomEntry, nowMs)) return "";
+    const guestLabel = roomEntry.guestName ? `Misafir · ${roomEntry.guestName}` : "";
+    const exitLabel = roomEntry.exitScheduledAt ? `Çıkış planı · ${formatScheduledEntryDate(roomEntry.exitScheduledAt)}` : "";
+    if (isRoomEntryActive(roomEntry, nowMs)) return [exitLabel, guestLabel].filter(Boolean).join(" · ");
+    return [`Planlanan giriş · ${formatScheduledEntryDate(roomEntry.scheduledAt)}`, exitLabel, guestLabel].filter(Boolean).join(" · ");
   }
   const sourceText = [
     records[0]?.due,
@@ -824,7 +959,15 @@ function defaultFloorName(level: number) {
 }
 
 function isRoomEntryActive(entry: ScheduledRoomEntry | undefined, nowMs: number) {
-  return Boolean(entry && (entry.activatedAt || entry.scheduledAt <= nowMs));
+  return Boolean(entry && !isRoomStayExited(entry, nowMs) && (entry.activatedAt || entry.scheduledAt <= nowMs));
+}
+
+function hasRoomEntryDefined(entry: ScheduledRoomEntry | undefined, nowMs = Date.now()) {
+  return Boolean(entry && !isRoomStayExited(entry, nowMs));
+}
+
+function isRoomStayExited(entry: ScheduledRoomEntry | undefined, nowMs: number) {
+  return Boolean(entry && (entry.exitActivatedAt || (entry.exitScheduledAt && entry.exitScheduledAt <= nowMs)));
 }
 
 function nextWholeHourTimestamp() {
@@ -837,6 +980,11 @@ function datetimeLocalValueForDate(timestamp: number) {
   const date = new Date(timestamp);
   const offsetMs = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function timestampForDatetimeLocal(value: string, fallback: number) {
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 function formatScheduledEntryDate(timestamp: number) {

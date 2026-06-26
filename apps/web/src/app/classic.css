@@ -5868,6 +5868,7 @@ textarea.form-control {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -5884,7 +5885,10 @@ textarea.form-control {
   padding: 3px 6px;
   font-size: 10px;
   font-weight: 850;
-  white-space: nowrap;
+  line-height: 1.15;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .hotel-operation-status.occupied { background: #fff; border-color: #fca5a5; color: #b91c1c; }
@@ -6137,6 +6141,7 @@ textarea.form-control {
 }
 
 .hotel-operation-entry-note,
+.hotel-operation-entry-error,
 .hotel-operation-entry-form .modal-actions {
   grid-column: 1 / -1;
 }
@@ -6163,6 +6168,16 @@ textarea.form-control {
   color: var(--classic-text);
   font-size: 13px;
   font-weight: 900;
+}
+
+.hotel-operation-entry-error {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .hotel-operation-entry-form .hotel-operation-entry-actions {
