@@ -10,6 +10,29 @@ Raspberry Pi = GitHub'dan cekip canliya alan yayin sunucusu
 
 Kalici bir degisiklik artik Raspberry Pi'de elle duzenlenmez. Once yerel bilgisayarda yapilir, test edilir, GitHub'a push edilir, sonra Pi GitHub'dan deploy eder.
 
+## Yayin Kanali Kurali
+
+Bu projede iki ayri yayin kanali kullanilir:
+
+- Web sitesi, kaynak kodu, script ve kucuk config degisiklikleri: once GitHub'a push edilir, sonra Raspberry Pi GitHub'dan deploy eder.
+- APK, EXE, ZIP, DMG, TAR.GZ gibi buyuk uygulama/build ciktilari: GitHub'a yuklenmez; Windows/Codex makinesinden Raspberry Pi'ye ayni modem/ag icinden SFTP ile gonderilir.
+- Buyuk cikti aktariminda `noderapi` SSH profili LAN/private IP'ye bakmalidir. Public domain, port-forward veya dis port uzerinden buyuk paket gonderilmez.
+
+Buyuk cikti hatti:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\publish-to-pi.ps1 -SkipBuild -IncludeDownloads
+```
+
+Site/script hatti:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\publish-local-to-github.ps1 -Section hotel -Message "fix: update hotel site"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\deploy-pi-from-github.ps1 -Section hotel
+```
+
+`publish-local-to-github.ps1`, `apps/web/public/downloads` ve `apps/web/out/downloads` altindaki buyuk uygulama ciktilarini stage disinda birakir. Bu dosyalar LAN ici SFTP deploy hattiyla guncellenir.
+
 ## 1. Tek Local Proje Kuralı
 
 Bu bilgisayardaki tek aktif proje klasoru:
@@ -31,6 +54,15 @@ Local degisikligi build edip GitHub'a yuklemek icin:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\publish-local-to-github.ps1 -Message "chore: sync local project"
 ```
+
+Sadece bir bolumu GitHub'a gondermek icin:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\publish-local-to-github.ps1 -Section videowallplayer -Message "chore: publish videowallplayer section"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\publish-local-to-github.ps1 -Section hotel -Message "chore: publish hotel section"
+```
+
+Bolum mimarisi ve klasor agaci icin `docs/SECTIONED_SITE_ARCHITECTURE.md` dosyasini kullanin.
 
 ## 2. Windows Bilgisayarda Calisma
 
@@ -93,6 +125,17 @@ Windows bilgisayardan SSH kisayolu varsa:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\deploy-pi-from-github.ps1
 ```
 
+Bu Windows wrapper, Pi'deki eski deploy scriptine guvenmez. Once GitHub'daki hedef branch'ten `scripts/pi/deploy-from-github.sh` dosyasinin guncel halini `/tmp` altina alir, sonra onu calistirir.
+
+GitHub deploy basarisiz olursa wrapper otomatik lokal kaynak upload yapmaz. Site/script hatti once GitHub, sonra Pi oldugu icin once GitHub erisimi duzeltilir. Sadece acil ve bilincli istisnada `-ForceSourceFallback` kullanilir.
+
+Sadece bir bolumu GitHub'dan Pi'ye almak icin:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\deploy-pi-from-github.ps1 -Section videowallplayer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\deploy-pi-from-github.ps1 -Section hotel
+```
+
 Farkli dal deploy etmek icin:
 
 ```powershell
@@ -113,6 +156,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\workstation\de
 - `hotelops-api` systemd servisini restart eder.
 - Nginx config testini yapar ve Nginx'i reload eder.
 - `http://127.0.0.1:4000/health` ile canli saglik kontrolu yapar.
+
+`SECTION=home|hotel|videowallplayer` verildiginde script tam deploy yapmaz. Gecici build klasoru acar, GitHub'daki hedef branch'i orada build eder ve sadece secilen bolumun `apps/web/out` dosyalarini canliya uygular. `hotel` bolumu API ve Prisma adimlarini da kapsar; `videowallplayer` bolumu Hotel dosyalarina dokunmaz.
 
 ## 6. Kurallar
 

@@ -16,7 +16,7 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
-import { canCreateForDepartment, departmentCodeToId, departmentIdToCode, rolePermissions, visibleDepartmentIds } from "./security.js";
+import { canCreateForDepartment, departmentCodeToId, departmentIdToCode, roleLabels, rolePermissions, visibleDepartmentIds } from "./security.js";
 const app = express();
 const server = http.createServer(app);
 const port = Number(process.env.PORT ?? 4000);
@@ -562,7 +562,7 @@ function requirePermission(permission) {
 function hasFeatureAccess(req, featureId) {
     try {
         const access = JSON.parse(req.user?.moduleAccessJson || "{}");
-        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit")
+        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit" || featureId === "accountDeleteRequest")
             return access[featureId] === true;
         if (req.auth?.roleId === "generalManager")
             return true;
@@ -571,7 +571,7 @@ function hasFeatureAccess(req, featureId) {
         return access[featureId] !== false;
     }
     catch {
-        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit")
+        if (featureId === "featureHotelFloorPlanning" || featureId === "featureMeterTrackingEdit" || featureId === "accountDeleteRequest")
             return false;
         if (req.auth?.roleId === "generalManager")
             return true;
@@ -581,7 +581,10 @@ function hasFeatureAccess(req, featureId) {
     }
 }
 function canViewFullHotelFloorPlan(req) {
-    return req.auth?.roleId === "siteAdmin" || req.auth?.departmentId === "technical" || hasFeatureAccess(req, "featureHotelFloorPlanning");
+    return req.auth?.roleId === "siteAdmin" || req.auth?.roleId === "hrManager" || req.auth?.departmentId === "technical" || hasFeatureAccess(req, "featureHotelFloorPlanning");
+}
+function canManageHotelFloorPlan(req) {
+    return req.auth?.roleId === "siteAdmin" || req.auth?.roleId === "hrManager" || hasFeatureAccess(req, "featureHotelFloorPlanning");
 }
 function requireFeatureAccess(featureId) {
     return (req, res, next) => {
@@ -799,6 +802,17 @@ function parseUserIdArray(value) {
         return [];
     }
 }
+function parseStringArray(value) {
+    if (!value)
+        return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? Array.from(new Set(parsed.map(String).map((item) => item.trim()).filter(Boolean))) : [];
+    }
+    catch {
+        return [];
+    }
+}
 function serializeDepartment(department) {
     return {
         id: department.id ?? "",
@@ -807,6 +821,27 @@ function serializeDepartment(department) {
         name: department.name,
         createdAt: department.createdAt?.toISOString() ?? ""
     };
+}
+function serializeHotelFloorArea(area) {
+    const visibleDepartmentIds = parseStringArray(area.visibleDepartmentIdsJson);
+    const roomEntryDepartmentIds = parseStringArray(area.roomEntryDepartmentIdsJson);
+    return {
+        id: area.id,
+        label: area.label,
+        kind: area.kind,
+        sortOrder: area.sortOrder,
+        visibleToDepartments: area.visibleToDepartments,
+        visibleDepartmentIds,
+        roomEntryDepartmentIds,
+        allowGuestAssignmentDuringWork: area.allowGuestAssignmentDuringWork
+    };
+}
+function hotelFloorAreaVisibleForDepartment(area, departmentId) {
+    if (!area.visibleToDepartments)
+        return area.visibleDepartmentIds.includes(departmentId);
+    if (!area.visibleDepartmentIds.length)
+        return true;
+    return area.visibleDepartmentIds.includes(departmentId);
 }
 function serializeHotelFloor(floor) {
     return {
@@ -817,13 +852,7 @@ function serializeHotelFloor(floor) {
         areas: floor.areas
             .slice()
             .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
-            .map((area) => ({
-            id: area.id,
-            label: area.label,
-            kind: area.kind,
-            sortOrder: area.sortOrder,
-            visibleToDepartments: area.visibleToDepartments
-        }))
+            .map(serializeHotelFloorArea)
     };
 }
 function serializeHotel(hotel) {
@@ -1255,14 +1284,18 @@ function parseNotificationPreferences(value) {
         return { ...defaultNotificationPreferences };
     }
 }
-function serializeUser(user) {
-    let moduleAccess = {};
+function parseModuleAccessJson(value) {
     try {
-        moduleAccess = JSON.parse(user.moduleAccessJson || "{}");
+        const parsed = JSON.parse(value || "{}");
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return {};
+        return Object.fromEntries(Object.entries(parsed).filter(([, enabled]) => typeof enabled === "boolean"));
     }
     catch {
-        moduleAccess = {};
+        return {};
     }
+}
+function serializeUser(user) {
     return {
         id: user.id,
         accountId: user.accountId ?? "",
@@ -1275,11 +1308,26 @@ function serializeUser(user) {
         email: user.email,
         roleId: user.role.code,
         departmentId: clientDepartmentIdFromCode(user.department.code),
-        moduleAccess,
+        moduleAccess: parseModuleAccessJson(user.moduleAccessJson),
         notificationPreferences: parseNotificationPreferences(user.notificationPreferencesJson),
         shiftTrackingEnabled: user.shiftTrackingEnabled,
         active: user.isActive,
         lastLogin: formatLastLogin(user.lastLoginAt)
+    };
+}
+function serializeUserProfileTemplate(template) {
+    return {
+        id: template.id,
+        name: template.name,
+        description: template.description ?? "",
+        roleId: template.role.code,
+        departmentId: clientDepartmentIdFromCode(template.department.code),
+        shiftTrackingEnabled: template.shiftTrackingEnabled,
+        moduleAccess: parseModuleAccessJson(template.moduleAccessJson),
+        createdById: template.createdBy?.id ?? "",
+        createdByName: template.createdBy?.fullName ?? "",
+        createdAt: template.createdAt.toISOString(),
+        updatedAt: template.updatedAt.toISOString()
     };
 }
 function serializeAttachment(attachment, options = {}) {
@@ -1381,6 +1429,7 @@ async function audit(req, entityType, entityId, action, before, after, workOrder
     emitHotelDataChanged(req.auth, entityType, action);
 }
 const userInclude = { hotel: true, role: true, department: true };
+const userProfileTemplateInclude = { role: true, department: true, createdBy: { select: { id: true, fullName: true } } };
 const workOrderInclude = {
     department: true,
     createdBy: { include: { department: true } },
@@ -1426,6 +1475,19 @@ const userSchema = z.object({
     shiftTrackingEnabled: z.boolean().optional().default(true),
     moduleAccess: z.record(z.boolean()).optional()
 });
+const userProfileTemplateBaseSchema = z.object({
+    name: z.string().trim().min(2).max(80),
+    description: z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().trim().max(240).optional()),
+    roleId: z.string().min(1),
+    departmentId: z.string().min(1),
+    shiftTrackingEnabled: z.boolean().optional(),
+    moduleAccess: z.record(z.boolean()).optional()
+});
+const userProfileTemplateSchema = userProfileTemplateBaseSchema.extend({
+    shiftTrackingEnabled: z.boolean().optional().default(true),
+    moduleAccess: z.record(z.boolean()).optional().default({})
+});
+const userProfileTemplateUpdateSchema = userProfileTemplateBaseSchema.partial();
 const appSettingsSchema = z.object({
     soundFaultsOutsideShift: z.boolean()
 });
@@ -1658,7 +1720,10 @@ const hotelFloorAreaSchema = z.object({
     label: z.string().trim().min(1).max(120),
     kind: z.enum(["ROOM", "SALON", "DEPARTMENT_AREA", "GENERAL_AREA", "AREA"]).optional().default("ROOM"),
     sortOrder: z.number().int().min(0).max(9999).optional(),
-    visibleToDepartments: z.boolean().optional().default(true)
+    visibleToDepartments: z.boolean().optional().default(true),
+    visibleDepartmentIds: z.array(z.string().trim().min(1).max(80)).max(100).optional().default([]),
+    roomEntryDepartmentIds: z.array(z.string().trim().min(1).max(80)).max(100).optional().default([]),
+    allowGuestAssignmentDuringWork: z.boolean().optional().default(false)
 });
 const hotelFloorSchema = z.object({
     id: z.string().optional(),
@@ -1707,16 +1772,8 @@ const managementRequestSchema = z.object({
     body: z.string().optional().default("")
 });
 const accountDeleteRequestSchema = z.object({
-    fullName: z.string().min(2).max(120),
-    username: z.string().min(2).max(80),
-    email: z.string().email().max(180),
-    accountId: z.string().max(80).optional().default(""),
-    phone: z.string().max(40).optional().default(""),
-    departmentName: z.string().max(120).optional().default(""),
-    title: z.string().max(120).optional().default(""),
     resignationConfirmed: z.literal(true),
-    confirmationText: z.string().min(10).max(240),
-    note: z.string().max(1200).optional().default("")
+    confirmationText: z.string().min(10).max(240)
 });
 const managementRequestStatusSchema = z.object({
     status: z.enum(["OPEN", "PENDING", "ACCEPTED", "REJECTED"])
@@ -2083,7 +2140,7 @@ async function buildSyncState(req) {
     const departmentTablesEnabled = hasFeatureAccess(req, "departmentTables");
     const activeDepartmentsWhere = { hotelId: auth.hotelId, deletedAt: null };
     const maintenance = readMaintenanceStatus();
-    const [workOrders, workOrderComments, workOrderAttachments, workOrderApprovals, calendarEvents, notifications, unreadNotifications, reminders, manageableUsers, departments, activeShifts, managementRequests, operationDocuments, operationDocumentReads, departmentTables, departmentTableRows, workOrderPolicy] = await Promise.all([
+    const [workOrders, workOrderComments, workOrderAttachments, workOrderApprovals, calendarEvents, notifications, unreadNotifications, reminders, manageableUsers, profileTemplates, departments, activeShifts, managementRequests, operationDocuments, operationDocumentReads, departmentTables, departmentTableRows, workOrderPolicy] = await Promise.all([
         prisma.workOrder.aggregate({
             where: workOrderWhere,
             _count: { _all: true },
@@ -2128,6 +2185,13 @@ async function buildSyncState(req) {
                 where: visibleManageableUsersWhere(auth),
                 _count: { _all: true },
                 _max: { createdAt: true, updatedAt: true, lastLoginAt: true }
+            })
+            : Promise.resolve(null),
+        canManageUsers(auth.roleId)
+            ? prisma.userProfileTemplate.aggregate({
+                where: { hotelId: auth.hotelId },
+                _count: { _all: true },
+                _max: { createdAt: true, updatedAt: true }
             })
             : Promise.resolve(null),
         prisma.department.aggregate({
@@ -2195,6 +2259,12 @@ async function buildSyncState(req) {
             ? {
                 count: manageableUsers._count._all,
                 version: maxDateVersion(manageableUsers._max.createdAt, manageableUsers._max.updatedAt, manageableUsers._max.lastLoginAt)
+            }
+            : { count: 0, version: 0 },
+        profileTemplates: profileTemplates
+            ? {
+                count: profileTemplates._count._all,
+                version: maxDateVersion(profileTemplates._max.createdAt, profileTemplates._max.updatedAt)
             }
             : { count: 0, version: 0 },
         workOrders: {
@@ -4639,7 +4709,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
     const tableRowsPageSize = Math.min(listPage.pageSize, defaultListPageSize);
     const workOrderWhere = workOrderVisibilityWhere(req.auth);
     const reminderWhere = reminderVisibilityWhere(req.auth);
-    const [workOrders, workOrdersTotal, notifications, notificationsTotal, reminders, remindersTotal, users, activeDepartments, activeShift, departmentTables] = await Promise.all([
+    const [workOrders, workOrdersTotal, notifications, notificationsTotal, reminders, remindersTotal, users, profileTemplates, activeDepartments, activeShift, departmentTables] = await Promise.all([
         prisma.workOrder.findMany({
             where: workOrderWhere,
             include: workOrderInclude,
@@ -4664,6 +4734,13 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
         prisma.reminder.count({ where: reminderWhere }),
         canManageUsers(req.auth.roleId)
             ? prisma.user.findMany({ where: visibleManageableUsersWhere(req.auth), include: userInclude, orderBy: { fullName: "asc" } })
+            : Promise.resolve([]),
+        canManageUsers(req.auth.roleId)
+            ? prisma.userProfileTemplate.findMany({
+                where: { hotelId: req.auth.hotelId },
+                include: userProfileTemplateInclude,
+                orderBy: [{ name: "asc" }]
+            })
             : Promise.resolve([]),
         prisma.department.findMany({
             where: { hotelId: req.auth.hotelId, deletedAt: null },
@@ -4692,6 +4769,7 @@ app.get("/bootstrap", authenticate, asyncHandler(async (req, res) => {
         scope: departments,
         jobs: workOrders.map((workOrder) => serializeWorkOrder(workOrder)),
         users: users.map(serializeUser),
+        profileTemplates: profileTemplates.map(serializeUserProfileTemplate),
         reminders: reminders.map(serializeReminder),
         departments: activeDepartments.map(serializeDepartment),
         departmentTables: departmentTables.map((table) => serializeDepartmentTable(table, req.auth)),
@@ -4726,6 +4804,120 @@ app.get("/sync/state", authenticate, asyncHandler(async (req, res) => {
         ...snapshot,
         changed: !since || snapshot.etag !== since
     });
+}));
+app.get("/profile-templates", authenticate, requirePermission("users:read"), asyncHandler(async (req, res) => {
+    if (!canManageUsers(req.auth.roleId)) {
+        res.status(403).json({ error: "FORBIDDEN" });
+        return;
+    }
+    const templates = await prisma.userProfileTemplate.findMany({
+        where: { hotelId: req.auth.hotelId },
+        include: userProfileTemplateInclude,
+        orderBy: [{ name: "asc" }]
+    });
+    res.json({ items: templates.map(serializeUserProfileTemplate) });
+}));
+app.post("/profile-templates", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
+    if (!canManageUsers(req.auth.roleId)) {
+        res.status(403).json({ error: "FORBIDDEN" });
+        return;
+    }
+    const payload = userProfileTemplateSchema.parse(req.body);
+    if (rejectReservedPlatformRole(payload.roleId, res))
+        return;
+    const role = await prisma.role.findUniqueOrThrow({ where: { code: payload.roleId } });
+    const department = await departmentForClientId(req.auth.hotelId, payload.departmentId);
+    try {
+        const created = await prisma.userProfileTemplate.create({
+            data: {
+                hotelId: req.auth.hotelId,
+                name: payload.name,
+                description: payload.description ?? null,
+                roleId: role.id,
+                departmentId: department.id,
+                shiftTrackingEnabled: payload.shiftTrackingEnabled,
+                moduleAccessJson: JSON.stringify(payload.moduleAccess),
+                createdById: req.auth.userId
+            },
+            include: userProfileTemplateInclude
+        });
+        const serialized = serializeUserProfileTemplate(created);
+        await audit(req, "UserProfileTemplate", created.id, "CREATE", null, serialized);
+        res.status(201).json(serialized);
+    }
+    catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            res.status(409).json({ error: "PROFILE_TEMPLATE_NAME_EXISTS" });
+            return;
+        }
+        throw error;
+    }
+}));
+app.patch("/profile-templates/:id", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
+    if (!canManageUsers(req.auth.roleId)) {
+        res.status(403).json({ error: "FORBIDDEN" });
+        return;
+    }
+    const payload = userProfileTemplateUpdateSchema.parse(req.body);
+    if (rejectReservedPlatformRole(payload.roleId, res))
+        return;
+    const existing = await prisma.userProfileTemplate.findUnique({
+        where: { id: routeParam(req, "id") },
+        include: userProfileTemplateInclude
+    });
+    if (!existing || existing.hotelId !== req.auth.hotelId) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+    }
+    const data = {};
+    if (payload.name)
+        data.name = payload.name;
+    if (payload.description !== undefined)
+        data.description = payload.description ?? null;
+    if (payload.shiftTrackingEnabled !== undefined)
+        data.shiftTrackingEnabled = payload.shiftTrackingEnabled;
+    if (payload.moduleAccess !== undefined)
+        data.moduleAccessJson = JSON.stringify(payload.moduleAccess);
+    if (payload.roleId)
+        data.role = { connect: { code: payload.roleId } };
+    if (payload.departmentId) {
+        const department = await departmentForClientId(req.auth.hotelId, payload.departmentId);
+        data.department = { connect: { id: department.id } };
+    }
+    try {
+        const updated = await prisma.userProfileTemplate.update({
+            where: { id: existing.id },
+            data,
+            include: userProfileTemplateInclude
+        });
+        const serialized = serializeUserProfileTemplate(updated);
+        await audit(req, "UserProfileTemplate", updated.id, "UPDATE", serializeUserProfileTemplate(existing), serialized);
+        res.json(serialized);
+    }
+    catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            res.status(409).json({ error: "PROFILE_TEMPLATE_NAME_EXISTS" });
+            return;
+        }
+        throw error;
+    }
+}));
+app.delete("/profile-templates/:id", authenticate, requirePermission("users:write"), asyncHandler(async (req, res) => {
+    if (!canManageUsers(req.auth.roleId)) {
+        res.status(403).json({ error: "FORBIDDEN" });
+        return;
+    }
+    const existing = await prisma.userProfileTemplate.findUnique({
+        where: { id: routeParam(req, "id") },
+        include: userProfileTemplateInclude
+    });
+    if (!existing || existing.hotelId !== req.auth.hotelId) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+    }
+    await prisma.userProfileTemplate.delete({ where: { id: existing.id } });
+    await audit(req, "UserProfileTemplate", existing.id, "DELETE", serializeUserProfileTemplate(existing), null);
+    res.json({ ok: true });
 }));
 app.get("/users", authenticate, requirePermission("users:read"), async (req, res) => {
     await ensureHotelUserAccountIds(req.auth.hotelId);
@@ -4971,11 +5163,15 @@ app.get("/hotel-floor-plan", authenticate, asyncHandler(async (req, res) => {
     const canViewFullPlan = canViewFullHotelFloorPlan(req);
     const serialized = floors.map(serializeHotelFloor).map((floor) => ({
         ...floor,
-        areas: canViewFullPlan ? floor.areas : floor.areas.filter((area) => area.visibleToDepartments)
+        areas: canViewFullPlan ? floor.areas : floor.areas.filter((area) => hotelFloorAreaVisibleForDepartment(area, req.auth.departmentId))
     }));
     res.json({ floors: canViewFullPlan ? serialized : serialized.filter((floor) => floor.areas.length > 0) });
 }));
-app.put("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFloorPlanning"), asyncHandler(async (req, res) => {
+app.put("/hotel-floor-plan", authenticate, asyncHandler(async (req, res) => {
+    if (!canManageHotelFloorPlan(req)) {
+        res.status(403).json({ error: "FEATURE_ACCESS_DENIED", featureId: "featureHotelFloorPlanning" });
+        return;
+    }
     const payload = hotelFloorPlanSchema.parse(req.body);
     const levels = new Set();
     for (const floor of payload.floors) {
@@ -5008,7 +5204,10 @@ app.put("/hotel-floor-plan", authenticate, requireFeatureAccess("featureHotelFlo
                             label: area.label,
                             kind: area.kind,
                             sortOrder: area.sortOrder ?? areaIndex,
-                            visibleToDepartments: area.visibleToDepartments
+                            visibleToDepartments: area.visibleToDepartments,
+                            visibleDepartmentIdsJson: JSON.stringify(Array.from(new Set(area.visibleDepartmentIds))),
+                            roomEntryDepartmentIdsJson: JSON.stringify(Array.from(new Set(area.roomEntryDepartmentIds))),
+                            allowGuestAssignmentDuringWork: area.allowGuestAssignmentDuringWork
                         }))
                     }
                 }
@@ -6056,29 +6255,26 @@ app.post("/management-requests", authenticate, requireModuleAccess("managementRe
     await audit(req, "ManagementRequest", created.id, "CREATE", null, serializeManagementRequest(created));
     res.status(201).json(serializeManagementRequest(created));
 }));
-app.post("/account-delete-requests", authenticate, asyncHandler(async (req, res) => {
+app.post("/account-delete-requests", authenticate, requireModuleAccess("accountDeleteRequest"), asyncHandler(async (req, res) => {
     const payload = accountDeleteRequestSchema.parse(req.body);
     const recipient = await accountDeleteRequestRecipient(req.auth);
     if (!recipient) {
         res.status(409).json({ error: "HR_RECIPIENT_NOT_FOUND" });
         return;
     }
+    const requestUser = req.user;
     const bodyLines = [
         "Hesap silme talebi oluşturuldu.",
         "",
-        `Ad soyad: ${payload.fullName}`,
-        `Kullanıcı adı: ${payload.username}`,
-        `E-posta: ${payload.email}`,
-        `Hesap ID: ${payload.accountId || req.user?.accountId || req.auth.userId}`,
-        `Departman: ${payload.departmentName || req.user?.department.code || "-"}`,
-        `Ünvan/Görev: ${payload.title || "-"}`,
-        payload.phone ? `Telefon: ${payload.phone}` : "",
+        `Ad soyad: ${requestUser.fullName}`,
+        `Kullanıcı adı: ${requestUser.username}`,
+        `E-posta: ${requestUser.email}`,
+        `Hesap ID: ${requestUser.accountId || req.auth.userId}`,
+        `Departman: ${requestUser.department.name || requestUser.department.code || "-"}`,
+        `Ünvan/Görev: ${roleLabels[requestUser.role.code] ?? requestUser.role.name ?? requestUser.role.code}`,
         "",
         "Onay beyanı:",
-        payload.confirmationText,
-        payload.note ? "" : "",
-        payload.note ? "Ek not:" : "",
-        payload.note || ""
+        payload.confirmationText
     ].filter((line) => line !== "").join("\n");
     const created = await prisma.managementRequest.create({
         data: {
@@ -6093,7 +6289,7 @@ app.post("/account-delete-requests", authenticate, asyncHandler(async (req, res)
     });
     await createNotificationsAndPush(await shiftAwareNotificationPayloads([recipient], {
         title: "Hesap silme talebi",
-        body: `${payload.fullName} hesabının silinmesi için talep oluşturdu.`
+        body: `${requestUser.fullName} hesabının silinmesi için talep oluşturdu.`
     }, {
         sound: notificationChannelOperationSound,
         silent: notificationChannelOperationSilent

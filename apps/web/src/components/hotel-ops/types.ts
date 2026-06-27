@@ -15,6 +15,7 @@ export type ModuleId =
   | "departmentCalendar"
   | "reminders"
   | "shiftPanels"
+  | "accountDeleteRequest"
   | "users"
   | "reports"
   | "settings"
@@ -408,6 +409,9 @@ export type HotelFloorAreaRecord = {
   kind: "ROOM" | "SALON" | "DEPARTMENT_AREA" | "GENERAL_AREA" | "AREA";
   sortOrder: number;
   visibleToDepartments: boolean;
+  visibleDepartmentIds: string[];
+  roomEntryDepartmentIds: string[];
+  allowGuestAssignmentDuringWork: boolean;
 };
 
 export type HotelFloorRecord = {
@@ -570,4 +574,18 @@ export type UserDraft = {
   departmentId: string;
   shiftTrackingEnabled: boolean;
   moduleAccess: ModuleAccess;
+};
+
+export type UserProfileTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  roleId: RoleId;
+  departmentId: string;
+  shiftTrackingEnabled: boolean;
+  moduleAccess: ModuleAccess;
+  createdById?: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
 };

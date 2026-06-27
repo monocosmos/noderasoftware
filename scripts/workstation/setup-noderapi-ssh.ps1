@@ -1,7 +1,7 @@
 param(
-  [string] $HostName = "noderasoftware.com",
+  [string] $HostName = "192.168.1.126",
   [string] $User = "raspberrypiserveradmin",
-  [int] $Port = 2222,
+  [int] $Port = 22,
   [string] $KeyPath = "$env:USERPROFILE\.ssh\noderasoftware_pi_ed25519"
 )
 
@@ -54,6 +54,7 @@ Set-Content -Path $configPath -Value $updated -Encoding utf8
 Write-Host "SSH profilleri hazir:" -ForegroundColor Green
 Write-Host "  noderapi      -> Codex/deploy profili"
 Write-Host "  noderapi-sftp -> sifreli manuel SFTP profili"
+Write-Host "  Varsayilan hedef LAN ici Pi baglantisidir: ${HostName}:$Port"
 Write-Host ""
 Write-Host "Kontrol:"
 Write-Host "  ssh -G noderapi | Select-String 'hostname|port|user'"

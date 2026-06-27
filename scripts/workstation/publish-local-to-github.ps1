@@ -180,6 +180,23 @@ function Get-StageablePaths {
   return $stageable.ToArray()
 }
 
+function Unstage-LargeBuildOutputs {
+  $downloadPaths = @(
+    "apps/web/public/downloads",
+    "apps/web/out/downloads"
+  )
+
+  $stagedDownloads = & $git diff --cached --name-only -- $downloadPaths
+  if ($LASTEXITCODE -ne 0) {
+    throw "Download stage kontrolu basarisiz oldu."
+  }
+
+  if ($stagedDownloads) {
+    Invoke-Checked $git (@("reset", "-q", "HEAD", "--") + $downloadPaths)
+    Write-Host "Buyuk uygulama ciktilari GitHub stage disinda birakildi. Bunlari LAN ici SFTP deploy hattiyla gonderin." -ForegroundColor Yellow
+  }
+}
+
 if (-not $Message.Trim()) {
   $Message = Read-Host "Commit mesaji"
 }
@@ -254,6 +271,8 @@ if ($Section -eq "all") {
   }
   Invoke-Checked $git (@("add", "-A", "-f", "--") + $stageablePaths)
 }
+
+Unstage-LargeBuildOutputs
 
 $staged = Invoke-Captured $git @("diff", "--cached", "--name-status")
 if (-not $staged) {

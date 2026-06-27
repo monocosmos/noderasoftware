@@ -79,26 +79,27 @@ enum PushPlatform {
 }
 
 model Hotel {
-  id                  String                      @id @default(cuid())
-  publicId            String?                     @unique
-  name                String
-  code                String                      @unique
-  timezone            String                      @default("Europe/Istanbul")
-  publicIdReservation HotelIdReservation?
-  departments         Department[]
-  floorPlanFloors     HotelFloor[]
-  rooms               Room[]
-  assets              Asset[]
-  users               User[]
-  shiftSessions       ShiftSession[]
-  shiftPanels         ShiftPanel[]
-  reminders           Reminder[]
-  managementRequests  ManagementRequest[]
-  operationDocuments  OperationDocument[]
-  workOrderPolicies   WorkOrderDepartmentPolicy[]
-  departmentTables    DepartmentTable[]
-  createdAt           DateTime                    @default(now())
-  updatedAt           DateTime                    @updatedAt
+  id                   String                      @id @default(cuid())
+  publicId             String?                     @unique
+  name                 String
+  code                 String                      @unique
+  timezone             String                      @default("Europe/Istanbul")
+  publicIdReservation  HotelIdReservation?
+  departments          Department[]
+  floorPlanFloors      HotelFloor[]
+  rooms                Room[]
+  assets               Asset[]
+  users                User[]
+  shiftSessions        ShiftSession[]
+  shiftPanels          ShiftPanel[]
+  reminders            Reminder[]
+  managementRequests   ManagementRequest[]
+  operationDocuments   OperationDocument[]
+  userProfileTemplates UserProfileTemplate[]
+  workOrderPolicies    WorkOrderDepartmentPolicy[]
+  departmentTables     DepartmentTable[]
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
 }
 
 model HotelFloor {
@@ -117,15 +118,18 @@ model HotelFloor {
 }
 
 model HotelFloorArea {
-  id                   String     @id @default(cuid())
-  floorId              String
-  label                String
-  kind                 String     @default("ROOM")
-  sortOrder            Int        @default(0)
-  visibleToDepartments Boolean    @default(true)
-  floor                HotelFloor @relation(fields: [floorId], references: [id], onDelete: Cascade)
-  createdAt            DateTime   @default(now())
-  updatedAt            DateTime   @updatedAt
+  id                             String     @id @default(cuid())
+  floorId                        String
+  label                          String
+  kind                           String     @default("ROOM")
+  sortOrder                      Int        @default(0)
+  visibleToDepartments           Boolean    @default(true)
+  visibleDepartmentIdsJson       String     @default("[]")
+  roomEntryDepartmentIdsJson     String     @default("[\"frontOffice\"]")
+  allowGuestAssignmentDuringWork Boolean    @default(false)
+  floor                          HotelFloor @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  createdAt                      DateTime   @default(now())
+  updatedAt                      DateTime   @updatedAt
 
   @@unique([floorId, label])
   @@index([floorId, sortOrder])
@@ -156,38 +160,40 @@ model HotelArchive {
 }
 
 model Department {
-  id              String                     @id @default(cuid())
-  hotelId         String
-  code            String
-  name            String
-  hotel           Hotel                      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  users           User[]
-  shiftSessions   ShiftSession[]
-  shiftPanels     ShiftPanel[]
-  workOrders      WorkOrder[]
-  workOrderPolicy WorkOrderDepartmentPolicy?
-  calendarEvents  CalendarEvent[]
-  reminders       Reminder[]
-  rooms           Room[]
-  assets          Asset[]
-  customTables    DepartmentTable[]
-  deletedAt       DateTime?
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
+  id               String                     @id @default(cuid())
+  hotelId          String
+  code             String
+  name             String
+  hotel            Hotel                      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  users            User[]
+  profileTemplates UserProfileTemplate[]
+  shiftSessions    ShiftSession[]
+  shiftPanels      ShiftPanel[]
+  workOrders       WorkOrder[]
+  workOrderPolicy  WorkOrderDepartmentPolicy?
+  calendarEvents   CalendarEvent[]
+  reminders        Reminder[]
+  rooms            Room[]
+  assets           Asset[]
+  customTables     DepartmentTable[]
+  deletedAt        DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
 
   @@unique([hotelId, code])
   @@index([hotelId, code])
 }
 
 model Role {
-  id             String           @id @default(cuid())
-  code           String           @unique
-  name           String
-  departmentCode DepartmentCode?
-  users          User[]
-  permissions    RolePermission[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id               String                @id @default(cuid())
+  code             String                @unique
+  name             String
+  departmentCode   DepartmentCode?
+  users            User[]
+  profileTemplates UserProfileTemplate[]
+  permissions      RolePermission[]
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 }
 
 model Permission {
@@ -256,12 +262,36 @@ model User {
   updatedDepartmentTables     DepartmentTable[]       @relation("UpdatedDepartmentTables")
   createdDepartmentTableRows  DepartmentTableRow[]    @relation("CreatedDepartmentTableRows")
   updatedDepartmentTableRows  DepartmentTableRow[]    @relation("UpdatedDepartmentTableRows")
+  createdProfileTemplates     UserProfileTemplate[]   @relation("CreatedUserProfileTemplates")
   accountIdReservation        AccountIdReservation?
   createdAt                   DateTime                @default(now())
   updatedAt                   DateTime                @updatedAt
 
   @@index([hotelId, departmentId])
   @@index([roleId])
+}
+
+model UserProfileTemplate {
+  id                   String     @id @default(cuid())
+  hotelId              String
+  name                 String
+  description          String?
+  departmentId         String
+  roleId               String
+  shiftTrackingEnabled Boolean    @default(true)
+  moduleAccessJson     String     @default("{}")
+  createdById          String?
+  hotel                Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  department           Department @relation(fields: [departmentId], references: [id])
+  role                 Role       @relation(fields: [roleId], references: [id])
+  createdBy            User?      @relation("CreatedUserProfileTemplates", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@unique([hotelId, name])
+  @@index([hotelId, departmentId])
+  @@index([roleId])
+  @@index([createdById])
 }
 
 model AccountIdReservation {

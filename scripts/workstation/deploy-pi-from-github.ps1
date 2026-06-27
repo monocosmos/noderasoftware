@@ -26,7 +26,7 @@ if ($AppDir -in @("/", "/opt", "/home", "/usr", "/var", "/etc", "/tmp")) {
 }
 
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
-$scp = (Get-Command scp -ErrorAction Stop).Source
+$sftp = (Get-Command sftp -ErrorAction Stop).Source
 $git = (Get-Command git -ErrorAction Stop).Source
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 
@@ -71,6 +71,52 @@ function Invoke-Captured {
     throw "Komut basarisiz oldu ($LASTEXITCODE): $Command $($Arguments -join ' ')"
   }
   return $output
+}
+
+function Quote-SftpPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path
+  )
+
+  if ($Path.Contains('"')) {
+    throw "SFTP yolu cift tirnak iceremez: $Path"
+  }
+
+  return '"' + ($Path -replace "\\", "/") + '"'
+}
+
+function Invoke-SftpBatch {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]] $Commands
+  )
+
+  $batchPath = Join-Path $env:TEMP "noderasoftware-sftp-$([System.Guid]::NewGuid().ToString("N")).txt"
+  [System.IO.File]::WriteAllLines($batchPath, $Commands, [System.Text.UTF8Encoding]::new($false))
+
+  try {
+    Invoke-External $sftp @("-b", $batchPath, $PiHost) | Out-Null
+  } finally {
+    if (Test-Path -LiteralPath $batchPath) {
+      Remove-Item -LiteralPath $batchPath -Force
+    }
+  }
+}
+
+function Copy-ToPiSftp {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $LocalPath,
+
+    [Parameter(Mandatory = $true)]
+    [string] $RemotePath
+  )
+
+  $resolvedLocalPath = (Resolve-Path -LiteralPath $LocalPath).Path
+  Invoke-SftpBatch -Commands @(
+    "put $(Quote-SftpPath -Path $resolvedLocalPath) $(Quote-SftpPath -Path $RemotePath)"
+  )
 }
 
 function Invoke-RemoteDeployFromGitHub {
@@ -139,9 +185,9 @@ function Invoke-SourceFallbackDeploy {
   }
   Invoke-External $git $archiveArgs | Out-Null
 
-  Write-Host "==> Kaynak arsivi Pi'ye aktariliyor"
-  Invoke-External $scp @($archive, "${PiHost}:$remoteArchive") | Out-Null
-  Invoke-External $scp @($localDeployScript, "${PiHost}:$remoteScript") | Out-Null
+  Write-Host "==> Kaynak arsivi Pi'ye SFTP ile aktariliyor"
+  Copy-ToPiSftp -LocalPath $archive -RemotePath $remoteArchive
+  Copy-ToPiSftp -LocalPath $localDeployScript -RemotePath $remoteScript
 
   $quotedArchive = Quote-BashValue -Value $remoteArchive
   $quotedSourceDir = Quote-BashValue -Value $remoteSourceDir
@@ -163,8 +209,7 @@ if ($ForceSourceFallback) {
   Write-Host "==> Pi GitHub deploy deneniyor"
   $exitCode = Invoke-RemoteDeployFromGitHub
   if ($exitCode -ne 0) {
-    Write-Host "GitHub deploy basarisiz oldu. Source fallback deneniyor..." -ForegroundColor Yellow
-    Invoke-SourceFallbackDeploy
+    throw "GitHub deploy basarisiz oldu. Site/script deploy'u icin otomatik lokal kaynak upload yapilmadi; once GitHub erisimini duzeltin. Acil durumda bilincli olarak -ForceSourceFallback kullanabilirsiniz."
   }
 }
 

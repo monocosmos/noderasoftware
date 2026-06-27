@@ -11,8 +11,9 @@ Bu dokuman, mevcut Node.js tabanli Noderasoftware/HotelOps projesini Raspberry P
 - Proje klasoru: `/opt/noderasoftware`
 - Web cikti klasoru: `/opt/noderasoftware/apps/web/out`
 - API portu: `127.0.0.1:4000`
-- Windows/Codex yonetim makinesi: SSH/SCP/SFTP ile Pi'ye komut ve dosya gonderir
+- Windows/Codex yonetim makinesi: SSH/SFTP ile Pi'ye komut ve dosya gonderir
 - Guvenli dosya duzenleme: klasik FTP yerine SFTP, port `22`
+- Buyuk uygulama/build ciktilari: sadece ayni modem/ag icindeki LAN IP veya LAN SSH alias'i uzerinden SFTP ile gonderilir
 - HTTPS: Nginx + Certbot + Let's Encrypt
 
 ## 1. Tek Komutla Windows'tan Pi'ye Deploy
@@ -56,7 +57,8 @@ Kisa kullanim:
 ```powershell
 ssh noderapi
 ssh noderapi "sudo systemctl status hotelops-api"
-scp "C:\path\file.txt" noderapi:/home/raspberrypiserveradmin/Desktop/
+sftp noderapi
+sftp> put "C:\path\file.txt" /home/raspberrypiserveradmin/Desktop/file.txt
 ```
 
 Interaktif SSH oturumu:
@@ -125,10 +127,11 @@ Bu paket sadece Git tarafindaki temiz kaynak dosyalarini icerir. `node_modules`,
 
 ## 5. Paketi Raspberry Pi'ye Kopyala
 
-PowerShell'den:
+PowerShell'den SFTP ile:
 
-```powershell
-scp "C:\Users\hfk47\Documents\noderasoftware\noderasoftware-pi-source.zip" pi@RASPBERRY_PI_IP:/tmp/
+```text
+sftp pi@RASPBERRY_PI_IP
+sftp> put "C:\Users\hfk47\Documents\noderasoftware\noderasoftware-pi-source.zip" /tmp/noderasoftware-pi-source.zip
 ```
 
 `RASPBERRY_PI_IP` yerine Pi'nin lokal IP adresini yazin.
@@ -145,10 +148,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Document
 
 Bu komut `db-backups` klasorunde `.dump` uzantili bir PostgreSQL yedegi olusturur.
 
-Pi'ye kopyalama ornegi:
+Pi'ye SFTP ile kopyalama ornegi:
 
-```powershell
-scp "C:\Users\hfk47\Documents\noderasoftware\db-backups\hotelops-TARIH.dump" pi@RASPBERRY_PI_IP:/tmp/
+```text
+sftp pi@RASPBERRY_PI_IP
+sftp> put "C:\Users\hfk47\Documents\noderasoftware\db-backups\hotelops-TARIH.dump" /tmp/hotelops-TARIH.dump
 ```
 
 ## 7. Raspberry Pi'de Dosyalari Ac
@@ -290,7 +294,9 @@ Sonra degisiklik yapilir ve canli Pi sunucusuna hizli deploy edilir:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\deploy-built-to-pi.ps1" -PiHost noderapi
 ```
 
-Bu hizli deploy build islemini Windows bilgisayarinda yapar. Raspberry Pi'ye sadece hazir `apps/web/out` ve `apps/api/dist` ciktisi gonderilir.
+Bu hizli deploy build islemini Windows bilgisayarinda yapar. Raspberry Pi'ye sadece hazir `apps/web/out` ve `apps/api/dist` ciktisi SFTP ile gonderilir.
+
+`deploy-built-to-pi.ps1` buyuk build ciktisi hatti oldugu icin `PiHost` hedefinin LAN/private IP veya `.local` hedef olmasini bekler. `noderapi` public domain/port-forward'a bakiyorsa script deploy'u baslatmadan durur. Normal kullanimda `setup-noderapi-ssh.ps1` ile `noderapi` profilini Pi'nin lokal IP adresine ve port `22`'ye ayarlayin.
 
 APK/Windows indirme dosyalari ilk kez yuklenecekse veya degistiyse:
 

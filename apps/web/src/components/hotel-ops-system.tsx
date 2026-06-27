@@ -103,6 +103,7 @@ import {
   type ShiftPanelRecord,
   type ShiftRecord,
   type UserDraft,
+  type UserProfileTemplate,
   type WebBuildManifest,
   type WorkOrderPolicyRecord,
   isActiveManagementRequestStatus,
@@ -173,6 +174,7 @@ type LoginSavedAccount = LoginProfileCache & {
 type BootstrapResponse = {
   user: DemoUser;
   users: DemoUser[];
+  profileTemplates?: UserProfileTemplate[];
   jobs: JobRecord[];
   reminders: ReminderRecord[];
   departments: DepartmentRecord[];
@@ -976,6 +978,26 @@ function userSaveErrorMessage(error: unknown) {
   return "Kullanıcı işlemi tamamlanamadı. Lütfen bilgileri kontrol edip tekrar deneyin.";
 }
 
+function profileTemplateErrorMessage(error: unknown) {
+  if (!isApiRequestError(error)) {
+    return "Profil şablonu kaydedilemedi. Bilgileri kontrol edip tekrar deneyin.";
+  }
+
+  if (error.code === "PROFILE_TEMPLATE_NAME_EXISTS" || error.status === 409) {
+    return "Bu isimde bir profil şablonu zaten var.";
+  }
+
+  if (error.code === "VALIDATION_ERROR" || error.status === 422) {
+    return "Profil şablonu adı, rolü ve departmanı geçerli olmalı.";
+  }
+
+  if (error.code === "NETWORK_ERROR" || error.status === 0) {
+    return "API servisine ulaşılamıyor. Sunucu veya ağ bağlantısını kontrol edin.";
+  }
+
+  return "Profil şablonu kaydedilemedi. Bilgileri kontrol edip tekrar deneyin.";
+}
+
 function passwordChangeErrorMessage(error: unknown) {
   if (!isApiRequestError(error)) {
     return "Şifre değiştirilemedi. Lütfen tekrar deneyin.";
@@ -1181,6 +1203,7 @@ const moduleOptions: Array<{ id: ModuleId; label: string; group: string }> = [
   { id: "reminders", label: "Hatırlatmalar", group: "Takvim & Hatırlatma" },
   { id: "shiftPanels", label: "Vardiya Paneli", group: "Takvim & Hatırlatma" },
   { id: "managementRequests", label: "Talepler", group: "Takvim & Hatırlatma" },
+  { id: "accountDeleteRequest", label: "Profilde Hesap Silme Talebi", group: "Yönetim" },
   { id: "inventory", label: "Envanter ve Depo", group: "Yönetim" },
   { id: "materialLists", label: "Malzeme Listesi", group: "Yönetim" },
   { id: "roomStatus", label: "Otel Operasyon", group: "Yönetim" },
@@ -2670,6 +2693,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       departmentCalendar: false,
       reminders: false,
       shiftPanels: false,
+      accountDeleteRequest: false,
       users: false,
       reports: false,
       settings: false,
@@ -2703,7 +2727,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       featureGuestImpact: false,
       featureAuditLogs: false,
       featureDailyReport: false,
-      featureHotelFloorPlanning: false,
+      featureHotelFloorPlanning: true,
       featureMeterTrackingEdit: false
     };
   }
@@ -2723,6 +2747,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     departmentCalendar: true,
     reminders: true,
     shiftPanels: true,
+    accountDeleteRequest: false,
     inventory: isManager || ["technicalManager", "technicalAssistant", "technicalChief", "hkManager", "fnbManager"].includes(user.roleId),
     materialLists: true,
     roomStatus: isManager || user.departmentId === "housekeeping" || ["hkManager", "floorChief", "frontOfficeManager"].includes(user.roleId),
@@ -2756,7 +2781,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     featureGuestImpact: true,
     featureAuditLogs: isManager || user.roleId === "hrManager",
     featureDailyReport: true,
-    featureHotelFloorPlanning: false,
+    featureHotelFloorPlanning: user.roleId === "hrManager",
     featureMeterTrackingEdit: false
   };
 }
@@ -2767,7 +2792,23 @@ function resolvedModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "
 }
 
 function canUseAccess(user: Pick<DemoUser, "roleId" | "departmentId" | "moduleAccess">, accessId: AccessId) {
+  if (user.roleId === "hrManager" && accessId === "featureHotelFloorPlanning") return true;
   return resolvedModuleAccess(user)[accessId];
+}
+
+function completeTemplateModuleAccess(template: Pick<UserProfileTemplate, "roleId" | "departmentId" | "moduleAccess">): ModuleAccess {
+  return {
+    ...defaultModuleAccess({ roleId: template.roleId, departmentId: template.departmentId }),
+    ...(template.moduleAccess ?? {})
+  };
+}
+
+function sortProfileTemplates(templates: UserProfileTemplate[]) {
+  return [...templates].sort((first, second) => first.name.localeCompare(second.name, "tr-TR"));
+}
+
+function normalizedProfileTemplateName(value: string) {
+  return value.trim().toLocaleLowerCase("tr-TR");
 }
 
 function canUseShiftTracking(user: Pick<DemoUser, "shiftTrackingEnabled">) {
@@ -3286,6 +3327,7 @@ export function HotelOpsSystem() {
   const [operationDocumentDraft, setOperationDocumentDraft] = useState<OperationDocumentDraft>(() => newOperationDocumentDraft());
   const [checklistText, setChecklistText] = useState("");
   const [userDraft, setUserDraft] = useState<UserDraft>(() => newUserDraft());
+  const [profileTemplates, setProfileTemplates] = useState<UserProfileTemplate[]>([]);
   const [shellAppInfo, setShellAppInfo] = useState<ShellAppInfo | null>(null);
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
   const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus>(DEFAULT_MAINTENANCE_STATUS);
@@ -3448,6 +3490,7 @@ export function HotelOpsSystem() {
         setManagementRequests([]);
         setOperationDocuments([]);
         setDepartmentTables([]);
+        setProfileTemplates([]);
         setNotifications([]);
         setActiveShift(null);
         setReminderRecipients([]);
@@ -3486,6 +3529,7 @@ export function HotelOpsSystem() {
         }
         setSession(bootstrap.user);
         setUsers(bootstrap.users);
+        setProfileTemplates(bootstrap.profileTemplates ?? []);
         setJobs(bootstrap.jobs);
         setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
         setReminders(bootstrap.reminders ?? []);
@@ -3508,6 +3552,7 @@ export function HotelOpsSystem() {
         setManagementRequests([]);
         setOperationDocuments([]);
         setDepartmentTables([]);
+        setProfileTemplates([]);
         setNotifications([]);
         setActiveShift(null);
         setReminderRecipients([]);
@@ -3845,6 +3890,7 @@ export function HotelOpsSystem() {
     const bootstrap = await apiRequestWithRetry<BootstrapResponse>("/bootstrap", { timeoutMs: 18_000 }, 3);
     setSession(bootstrap.user);
     setUsers(bootstrap.users);
+    setProfileTemplates(bootstrap.profileTemplates ?? []);
     setJobs(bootstrap.jobs);
     setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
     setReminders(bootstrap.reminders ?? []);
@@ -4259,6 +4305,7 @@ export function HotelOpsSystem() {
         return;
       }
       setUsers(bootstrap.users);
+      setProfileTemplates(bootstrap.profileTemplates ?? []);
       setJobs(bootstrap.jobs);
       setJobPagination(bootstrap.pagination?.jobs ?? DEFAULT_LIST_PAGINATION);
       setReminders(bootstrap.reminders ?? []);
@@ -4323,6 +4370,7 @@ export function HotelOpsSystem() {
     setManagementRequests([]);
     setOperationDocuments([]);
     setDepartmentTables([]);
+    setProfileTemplates([]);
     setNotifications([]);
     setActiveShift(null);
     setReminderRecipients([]);
@@ -4586,6 +4634,73 @@ export function HotelOpsSystem() {
       await refreshAppDataQuietly();
     } catch (error) {
       setAlert(userSaveErrorMessage(error));
+    }
+  }
+
+  async function saveProfileTemplateApi(name: string, description: string, templateId?: string) {
+    if (!session || !canManageUsers(session)) return false;
+    const templateName = name.trim();
+    if (templateName.length < 2) {
+      setAlert("Profil şablonu adı en az 2 karakter olmalı.");
+      return false;
+    }
+
+    const existing = templateId
+      ? profileTemplates.find((template) => template.id === templateId)
+      : profileTemplates.find((template) => normalizedProfileTemplateName(template.name) === normalizedProfileTemplateName(templateName));
+    const payload = {
+      name: templateName,
+      description: description.trim(),
+      roleId: userDraft.roleId,
+      departmentId: userDraft.departmentId,
+      shiftTrackingEnabled: userDraft.shiftTrackingEnabled,
+      moduleAccess: userDraft.moduleAccess
+    };
+
+    try {
+      const saved = await apiRequest<UserProfileTemplate>(existing ? `/profile-templates/${existing.id}` : "/profile-templates", {
+        method: existing ? "PATCH" : "POST",
+        body: JSON.stringify(payload)
+      });
+      setProfileTemplates((current) => sortProfileTemplates(existing
+        ? current.map((template) => (template.id === saved.id ? saved : template))
+        : [saved, ...current]
+      ));
+      setAlert(existing ? "Profil şablonu güncellendi." : "Profil şablonu oluşturuldu.");
+      await refreshAppDataQuietly();
+      return true;
+    } catch (error) {
+      setAlert(profileTemplateErrorMessage(error));
+      return false;
+    }
+  }
+
+  function applyProfileTemplate(templateId: string) {
+    const template = profileTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    setUserDraft((draft) => ({
+      ...draft,
+      roleId: template.roleId,
+      departmentId: template.departmentId,
+      shiftTrackingEnabled: template.shiftTrackingEnabled,
+      moduleAccess: completeTemplateModuleAccess(template)
+    }));
+    setAlert(`${template.name} şablonu profil taslağına uygulandı.`);
+  }
+
+  async function deleteProfileTemplateApi(templateId: string) {
+    const template = profileTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    const confirmed = window.confirm(`${template.name} profil şablonu silinsin mi?`);
+    if (!confirmed) return;
+
+    try {
+      await apiRequest<{ ok: boolean }>(`/profile-templates/${templateId}`, { method: "DELETE" });
+      setProfileTemplates((current) => current.filter((item) => item.id !== templateId));
+      setAlert("Profil şablonu silindi.");
+      await refreshAppDataQuietly();
+    } catch {
+      setAlert("Profil şablonu silinemedi.");
     }
   }
 
@@ -4896,6 +5011,7 @@ export function HotelOpsSystem() {
                 notifications,
                 operationDocumentDraft,
                 operationDocuments,
+                profileTemplates,
                 managementRequestDraft,
                 managementRequestRecipients,
                 managementRequests,
@@ -4941,7 +5057,10 @@ export function HotelOpsSystem() {
                 markNotificationsRead: markNotificationsReadApi,
                 rememberAuthenticatedPassword,
                 handleSaveUser: handleSaveUserApi,
+                applyProfileTemplate,
+                deleteProfileTemplate: deleteProfileTemplateApi,
                 editUser,
+                saveProfileTemplate: saveProfileTemplateApi,
                 deleteUser: deleteUserApi,
                 endShift: endShiftApi,
                 resetPassword: resetPasswordApi,
@@ -5629,7 +5748,6 @@ function SidebarNav({
         ...(isPlatformAdminUser(session) ? [entry("hotel-panel", "hotelPanel", "/hotelpanel", "Otel Paneli", LayoutDashboard, undefined, "otel tenant hotel admin panel")] : []),
         entry("hotel-floor-planning", "featureHotelFloorPlanning", "/hotel-floor-planning", "Kat Planı", Home, undefined, "otel kat plan mimari oda alan"),
         entry("reports", "reports", "/reports", "Raporlar", BarChart3, undefined, "kpi audit"),
-        entry("accountdelete", "dashboard", "/accountdelete", "Hesap Silme Talebi", UserX, undefined, "hesap silme istifa ik kullanici"),
         entry("settings", "settings", "/settings", "Ayarlar", Settings, undefined, "sistem departman")
       ]
     }
@@ -5788,7 +5906,7 @@ function getPageTitle(path: string) {
   if (pathname === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (pathname === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (pathname === "/notifications") return { title: "Bildirimler", subtitle: "" };
-  if (pathname === "/accountdelete") return { title: "Hesap Silme Talebi", subtitle: "İstifa sonrası hesap kapatma başvurusu" };
+  if (pathname === "/accountdelete") return { title: "Ayarlar", subtitle: "Profilim" };
   if (pathname === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
   if (pathname === "/app-settings") return { title: "Uygulama Ayarları", subtitle: "" };
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
@@ -5837,6 +5955,7 @@ type RenderContext = {
   notifications: NotificationRecord[];
   operationDocumentDraft: OperationDocumentDraft;
   operationDocuments: OperationDocumentRecord[];
+  profileTemplates: UserProfileTemplate[];
   queryParams: URLSearchParams;
   reminderDraft: ReminderDraft;
   reminderRecipients: DemoUser[];
@@ -5878,7 +5997,10 @@ type RenderContext = {
   markNotificationsRead: () => void | Promise<void>;
   rememberAuthenticatedPassword: (user: DemoUser, password: string) => void;
   handleSaveUser: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  applyProfileTemplate: (templateId: string) => void;
+  deleteProfileTemplate: (templateId: string) => void | Promise<void>;
   editUser: (user: DemoUser) => void;
+  saveProfileTemplate: (name: string, description: string, templateId?: string) => boolean | Promise<boolean>;
   deleteUser: (userId: string) => void | Promise<void>;
   endShift: () => void | Promise<void>;
   resetPassword: (userId: string) => void | Promise<void>;
@@ -5894,7 +6016,7 @@ function accessForPath(path: string): AccessId {
   if (path === "/housekeeping") return "housekeeping";
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders" || path === "/notifications") return "reminders";
-  if (path === "/accountdelete") return "dashboard";
+  if (path === "/accountdelete") return "accountDeleteRequest";
   if (path === "/shift-panels") return "shiftPanels";
   if (path === "/department/materials") return "materialLists";
   if (path === "/users") return "users";
@@ -5930,7 +6052,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
   if (currentPath === "/notifications") return <NotificationsPage {...context} />;
-  if (currentPath === "/accountdelete") return <AccountDeleteRequestPage {...context} />;
+  if (currentPath === "/accountdelete") return <AccessDenied message="Hesap silme talebi yalnızca profil ekranında görüntülenir. Sol alttaki kendi profilinize tıklayın." />;
   if (currentPath === "/app-settings") return <AndroidAppSettingsPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
@@ -6447,6 +6569,7 @@ function OperationalModulePage({ departmentLabelFor, departmentShortCodeFor, nav
           jobs={visibleJobs}
           records={records}
           selectedFloorLevel={selectedOperationFloorLevel}
+          sessionDepartmentId={session.departmentId}
           showAllFloors={showAllOperationFloors}
           onSelectArea={selectOperationArea}
           onSelectFloorLevel={setSelectedOperationFloorLevel}
@@ -7241,31 +7364,29 @@ function EquipmentPreview() {
   );
 }
 
-function AccountDeleteRequestPage({
+function AccountDeleteRequestPanel({
   departmentLabelFor,
   session,
   setAlert,
   setManagementRequests
-}: RenderContext) {
-  const [draft, setDraft] = useState(() => ({
-    fullName: session.fullName,
-    username: session.username,
-    email: session.email,
-    accountId: session.accountId || session.id,
-    phone: "",
-    departmentName: departmentLabelFor(session.departmentId),
-    title: roleLabel(session.roleId),
-    resignationConfirmed: false,
-    note: ""
-  }));
+}: Pick<RenderContext, "departmentLabelFor" | "session" | "setAlert" | "setManagementRequests">) {
+  const [resignationConfirmed, setResignationConfirmed] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const confirmationText = "İstifa durumumu onaylayarak hesap silme talebi oluşturdum.";
+  const confirmationText = "Yukarıdaki hesap bilgilerinin bana ait olduğunu kabul ederek istifa sonrası hesap silme talebi oluşturuyorum.";
+  const accountSummary = [
+    ["Ad Soyad", session.fullName],
+    ["Kullanıcı Adı", session.username],
+    ["E-posta", session.email],
+    ["Hesap ID", session.accountId || session.id],
+    ["Departman", departmentLabelFor(session.departmentId)],
+    ["Ünvan / Görev", roleLabel(session.roleId)]
+  ];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.resignationConfirmed) {
-      setAlert("Hesap silme talebi için istifa/onay kutusunu işaretleyin.");
+    if (!resignationConfirmed) {
+      setAlert("Hesap silme talebi için bilgi/onay kutusunu işaretleyin.");
       return;
     }
     setSubmitting(true);
@@ -7273,7 +7394,7 @@ function AccountDeleteRequestPage({
       const created = await apiRequest<ManagementRequestRecord>("/account-delete-requests", {
         method: "POST",
         body: JSON.stringify({
-          ...draft,
+          resignationConfirmed,
           confirmationText
         })
       });
@@ -7288,91 +7409,38 @@ function AccountDeleteRequestPage({
   }
 
   return (
-    <div className="settings-grid">
-      <div className="card">
-        <div className="card-header">
-          <span className="card-title">Hesap Silme Talebi</span>
-          <span className="ui-meta">İnsan Kaynakları&apos;na iletilir</span>
-        </div>
-        <div className="card-body">
-          {submitted ? (
-            <div className="module-helper strong">
-              Hesap silme talebiniz oluşturuldu. Talep, İnsan Kaynakları ekranındaki Talepler modülüne düşmüştür.
-            </div>
-          ) : null}
-          <form onSubmit={handleSubmit} className="ui-form-stack">
-            <div className="form-grid two-cols">
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Ad Soyad <span className="required">*</span></label>
-                <input className="form-control" value={draft.fullName} onChange={(event) => setDraft((value) => ({ ...value, fullName: event.target.value }))} required />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Kullanıcı Adı <span className="required">*</span></label>
-                <input className="form-control" value={draft.username} onChange={(event) => setDraft((value) => ({ ...value, username: event.target.value }))} required />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">E-posta <span className="required">*</span></label>
-                <input className="form-control" type="email" value={draft.email} onChange={(event) => setDraft((value) => ({ ...value, email: event.target.value }))} required />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Hesap ID</label>
-                <input className="form-control" value={draft.accountId} onChange={(event) => setDraft((value) => ({ ...value, accountId: event.target.value }))} />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Departman</label>
-                <input className="form-control" value={draft.departmentName} onChange={(event) => setDraft((value) => ({ ...value, departmentName: event.target.value }))} />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Ünvan / Görev</label>
-                <input className="form-control" value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} />
-              </div>
-              <div className="form-group ui-form-compact">
-                <label className="form-label">Telefon</label>
-                <input className="form-control" value={draft.phone} onChange={(event) => setDraft((value) => ({ ...value, phone: event.target.value }))} />
-              </div>
-            </div>
-            <div className="form-group ui-form-compact">
-              <label className="form-label">Ek Not</label>
-              <textarea className="form-control" rows={4} value={draft.note} onChange={(event) => setDraft((value) => ({ ...value, note: event.target.value }))} placeholder="İK'nın bilmesini istediğiniz ek bilgileri yazabilirsiniz." />
-            </div>
-            <label className="guest-impact-check">
-              <input
-                type="checkbox"
-                checked={draft.resignationConfirmed}
-                onChange={(event) => setDraft((value) => ({ ...value, resignationConfirmed: event.target.checked }))}
-              />
-              <span>{confirmationText}</span>
-            </label>
-            <button type="submit" className="btn btn-danger btn-full" disabled={submitting || submitted}>
-              <UserX size={15} /> {submitting ? "Talep oluşturuluyor..." : submitted ? "Talep Oluşturuldu" : "Hesap Silme Talebi Oluştur"}
-            </button>
-          </form>
-        </div>
+    <div className="card ui-danger-card">
+      <div className="card-header">
+        <span className="card-title"><UserX size={15} /> Hesap Silme Talebi</span>
+        <span className="ui-meta">İnsan Kaynakları&apos;na iletilir</span>
       </div>
-      <div className="card">
-        <div className="card-header"><span className="card-title">Süreç</span></div>
-        <div className="card-body">
-          <div className="compact-request-list">
-            <div className="compact-request-row">
-              <span className="compact-request-main">
-                <strong>Talep kaydı</strong>
-                <span>Form gönderildiğinde kayıt Talepler modülüne düşer.</span>
-              </span>
-            </div>
-            <div className="compact-request-row">
-              <span className="compact-request-main">
-                <strong>İK değerlendirmesi</strong>
-                <span>İnsan Kaynakları talebi kabul, bekleme veya red durumuna alır.</span>
-              </span>
-            </div>
-            <div className="compact-request-row">
-              <span className="compact-request-main">
-                <strong>Hesap işlemi</strong>
-                <span>Silme/kapatma işlemi yetkili personel tarafından tamamlanır.</span>
-              </span>
-            </div>
+      <div className="card-body ui-form-stack">
+        {submitted ? (
+          <div className="module-helper strong">
+            Hesap silme talebiniz oluşturuldu. Talep, İnsan Kaynakları ekranındaki Talepler modülüne düşmüştür.
           </div>
+        ) : null}
+        <div className="delete-confirm-summary" aria-label="Hesap bilgi özeti">
+          {accountSummary.map(([label, value]) => (
+            <div key={label}>
+              <span>{label}</span>
+              <strong>{value || "-"}</strong>
+            </div>
+          ))}
         </div>
+        <form onSubmit={handleSubmit} className="ui-form-stack">
+          <label className="guest-impact-check">
+            <input
+              type="checkbox"
+              checked={resignationConfirmed}
+              onChange={(event) => setResignationConfirmed(event.target.checked)}
+            />
+            <span>{confirmationText}</span>
+          </label>
+          <button type="submit" className="btn btn-danger btn-full" disabled={submitting || submitted}>
+            <UserX size={15} /> {submitting ? "Talep oluşturuluyor..." : submitted ? "Talep Oluşturuldu" : "Hesap Silme Talebi Oluştur"}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -9365,14 +9433,18 @@ function CalendarPage({ departmentAssignees, departmentLabelFor, departmentOptio
 }
 
 function UsersPage({
+  applyProfileTemplate,
   departmentLabelFor,
   departmentOptions,
+  deleteProfileTemplate,
   deleteUser,
   editUser,
   handleSaveUser,
   navigate,
+  profileTemplates,
   queryParams,
   resetPassword,
+  saveProfileTemplate,
   session,
   setUserDraft,
   toggleUser,
@@ -9380,6 +9452,10 @@ function UsersPage({
   userDraft
 }: RenderContext) {
   const [openDepartmentId, setOpenDepartmentId] = useState<string>("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [editingTemplateId, setEditingTemplateId] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
   const userFormRef = useRef<HTMLDivElement>(null);
   if (!canManageUsers(session)) return <AccessDenied message="Bu ekran sadece Genel Müdür ve İnsan Kaynakları tarafından görüntülenebilir." />;
   const isHrDepartmentView = session.roleId === "hrManager";
@@ -9409,8 +9485,41 @@ function UsersPage({
   const selectedPersonnelRoleLevel = availablePersonnelRoleOptions.some((option) => option.id === currentPersonnelRoleLevel)
     ? currentPersonnelRoleLevel
     : "staff";
+  const selectedTemplate = profileTemplates.find((template) => template.id === selectedTemplateId);
+  const saveCurrentTemplate = async () => {
+    const saved = await saveProfileTemplate(templateName, templateDescription, editingTemplateId || undefined);
+    if (!saved) return;
+    setEditingTemplateId("");
+    setTemplateName("");
+    setTemplateDescription("");
+  };
+  const applySelectedTemplate = () => {
+    if (!selectedTemplateId) return;
+    applyProfileTemplate(selectedTemplateId);
+  };
+  const editProfileTemplate = (template: UserProfileTemplate) => {
+    setEditingTemplateId(template.id);
+    setSelectedTemplateId(template.id);
+    setTemplateName(template.name);
+    setTemplateDescription(template.description);
+    setUserDraft((draft) => ({
+      ...draft,
+      roleId: template.roleId,
+      departmentId: template.departmentId,
+      shiftTrackingEnabled: template.shiftTrackingEnabled,
+      moduleAccess: completeTemplateModuleAccess(template)
+    }));
+    userFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const cancelTemplateEdit = () => {
+    setEditingTemplateId("");
+    setTemplateName("");
+    setTemplateDescription("");
+  };
   const startNewUserRecord = () => {
     setUserDraft(newUserDraft());
+    setSelectedTemplateId("");
+    cancelTemplateEdit();
     userFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -9541,6 +9650,25 @@ function UsersPage({
               <input className="form-control" type="password" value={userDraft.password} onChange={(event) => setUserDraft((draft) => ({ ...draft, password: event.target.value }))} placeholder="Yeni şifre" />
             </div>
             <div className="form-group">
+              <label className="form-label">Profil Şablonu</label>
+              <div className="ui-cluster">
+                <select className="form-control" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)}>
+                  <option value="">{profileTemplates.length ? "Şablon seçin" : "Kayıtlı şablon yok"}</option>
+                  {profileTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>{template.name}</option>
+                  ))}
+                </select>
+                <button type="button" className="btn btn-secondary" onClick={applySelectedTemplate} disabled={!selectedTemplateId}>
+                  <ShieldCheck size={15} /> Uygula
+                </button>
+              </div>
+              {selectedTemplate && (
+                <div className="ui-tiny-muted ui-section-top-xs">
+                  {departmentLabelFor(selectedTemplate.departmentId)} / {roleLabel(selectedTemplate.roleId)} / {moduleOptions.filter((module) => completeTemplateModuleAccess(selectedTemplate)[module.id]).length} erişim
+                </div>
+              )}
+            </div>
+            <div className="form-group">
               <label className="form-label">Rol <span className="required">*</span></label>
               <select className="form-control" value={selectedPersonnelRoleLevel} onChange={(event) => {
                 const roleLevel = event.target.value as PersonnelRoleLevel;
@@ -9576,7 +9704,7 @@ function UsersPage({
               <span className="ui-field-note">Bu personelde vardiya butonu görünsün</span>
             </label>
             <details className="permission-details" open>
-              <summary>Hamburger Menü Modülleri</summary>
+              <summary>Modül / Profil Erişimleri</summary>
               <div className="ui-body-compact">
                 {moduleGroups.map((group) => (
                   <div key={group} className="checklist-item checklist-item-top">
@@ -9645,10 +9773,61 @@ function UsersPage({
                 ))}
               </div>
             </details>
+            <details className="permission-details">
+              <summary>Profil Şablonları</summary>
+              <div className="ui-list-stack">
+                <div className="two-column-grid">
+                  <div className="form-group">
+                    <label className="form-label">Şablon Adı</label>
+                    <input className="form-control" value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder={`${departmentLabelFor(userDraft.departmentId)} ${roleLabel(userDraft.roleId)}`} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Not</label>
+                    <input className="form-control" value={templateDescription} onChange={(event) => setTemplateDescription(event.target.value)} placeholder="Opsiyonel" />
+                  </div>
+                </div>
+                <div className="ui-cluster">
+                  <button type="button" className="btn btn-secondary btn-full" onClick={() => void saveCurrentTemplate()}>
+                    <Save size={15} /> {editingTemplateId ? "Şablonu Güncelle" : "Şablonu Kaydet"}
+                  </button>
+                  {editingTemplateId && (
+                    <button type="button" className="btn btn-ghost" onClick={cancelTemplateEdit}>
+                      Vazgeç
+                    </button>
+                  )}
+                </div>
+                {profileTemplates.length ? (
+                  <div className="ui-list-stack">
+                    {profileTemplates.map((template) => {
+                      const accessCount = moduleOptions.filter((module) => completeTemplateModuleAccess(template)[module.id]).length;
+                      return (
+                        <div key={template.id} className="permission-toggle-row">
+                          <div className="ui-fill">
+                            <strong>{template.name}</strong>
+                            <div className="ui-tiny-muted">{departmentLabelFor(template.departmentId)} / {roleLabel(template.roleId)} / {accessCount} erişim</div>
+                          </div>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => editProfileTemplate(template)}>
+                            <PenLine size={13} /> Düzenle
+                          </button>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyProfileTemplate(template.id)}>
+                            <ShieldCheck size={13} /> Uygula
+                          </button>
+                          <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteProfileTemplate(template.id)}>
+                            <Trash2 size={13} /> Sil
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="ui-muted">Profil şablonu yok.</div>
+                )}
+              </div>
+            </details>
             <div className="permission-preview">
               <div>
                 <strong>Kullanıcı Önizleme</strong>
-                <span>Bu personelin hamburger menüsünde {moduleOptions.filter((module) => userDraft.moduleAccess[module.id]).length} modül görünecek.</span>
+                <span>Bu personelde {moduleOptions.filter((module) => userDraft.moduleAccess[module.id]).length} erişim açık olacak.</span>
               </div>
               <div className="permission-preview-tags">
                 {moduleOptions.filter((module) => userDraft.moduleAccess[module.id]).slice(0, 8).map((module) => (
@@ -9659,7 +9838,11 @@ function UsersPage({
             </div>
             <div className="ui-cluster ui-section-top-xs">
               <button type="submit" className="btn btn-primary btn-full"><Save size={15} /> {userDraft.editId ? "Kaydet" : "Kaydı Oluştur"}</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setUserDraft(newUserDraft())}>İptal</button>
+              <button type="button" className="btn btn-ghost" onClick={() => {
+                setUserDraft(newUserDraft());
+                setSelectedTemplateId("");
+                cancelTemplateEdit();
+              }}>İptal</button>
             </div>
           </form>
         </div>
@@ -11629,8 +11812,78 @@ function floorPlanAreaKey(label: string) {
   return label.trim().toLocaleLowerCase("tr-TR");
 }
 
+type FloorPlanDepartmentOption = { id: string; label: string };
+
+function uniqueStringIds(ids: string[]) {
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+}
+
 function canViewFullFloorPlan(user: Pick<DemoUser, "roleId" | "departmentId">) {
-  return user.roleId === "siteAdmin" || user.departmentId === "technical";
+  return user.roleId === "siteAdmin" || user.roleId === "hrManager" || user.departmentId === "technical";
+}
+
+function isRoomArea(area: Pick<HotelFloorAreaRecord, "kind" | "label">) {
+  return (area.kind === "AREA" ? floorAreaKindFromTextLabel(area.label).kind : area.kind) === "ROOM";
+}
+
+function defaultRoomEntryDepartmentIds(area: Pick<HotelFloorAreaRecord, "kind" | "label">) {
+  return isRoomArea(area) ? ["frontOffice"] : [];
+}
+
+function normalizeHotelFloorArea(area: HotelFloorAreaRecord): HotelFloorAreaRecord {
+  const kind = area.kind === "AREA" ? floorAreaKindFromTextLabel(area.label).kind : area.kind;
+  return {
+    ...area,
+    kind,
+    visibleToDepartments: area.visibleToDepartments !== false,
+    visibleDepartmentIds: uniqueStringIds(area.visibleDepartmentIds ?? []),
+    roomEntryDepartmentIds: uniqueStringIds(area.roomEntryDepartmentIds ?? defaultRoomEntryDepartmentIds({ ...area, kind })),
+    allowGuestAssignmentDuringWork: area.allowGuestAssignmentDuringWork === true
+  };
+}
+
+function mergeFloorAreaPolicy(area: HotelFloorAreaRecord, currentArea?: HotelFloorAreaRecord): HotelFloorAreaRecord {
+  const normalizedArea = normalizeHotelFloorArea(area);
+  if (!currentArea) return normalizedArea;
+  const normalizedCurrent = normalizeHotelFloorArea(currentArea);
+  return {
+    ...normalizedArea,
+    visibleToDepartments: normalizedCurrent.visibleToDepartments,
+    visibleDepartmentIds: normalizedCurrent.visibleDepartmentIds,
+    roomEntryDepartmentIds: normalizedCurrent.roomEntryDepartmentIds,
+    allowGuestAssignmentDuringWork: normalizedCurrent.allowGuestAssignmentDuringWork
+  };
+}
+
+function areaVisibleForDepartment(area: HotelFloorAreaRecord, departmentId: string) {
+  const visibleDepartmentIds = uniqueStringIds(area.visibleDepartmentIds ?? []);
+  if (area.visibleToDepartments === false) return visibleDepartmentIds.includes(departmentId);
+  if (!visibleDepartmentIds.length) return true;
+  return visibleDepartmentIds.includes(departmentId);
+}
+
+function selectedAreaVisibleDepartmentIds(area: HotelFloorAreaRecord, options: FloorPlanDepartmentOption[]) {
+  const visibleDepartmentIds = uniqueStringIds(area.visibleDepartmentIds ?? []);
+  if (area.visibleToDepartments !== false && !visibleDepartmentIds.length) return options.map((department) => department.id);
+  return visibleDepartmentIds.filter((departmentId) => options.some((department) => department.id === departmentId));
+}
+
+function selectedAreaRoomEntryDepartmentIds(area: HotelFloorAreaRecord, options: FloorPlanDepartmentOption[]) {
+  return uniqueStringIds(area.roomEntryDepartmentIds ?? defaultRoomEntryDepartmentIds(area))
+    .filter((departmentId) => options.some((department) => department.id === departmentId));
+}
+
+function activeTechnicalOrHousekeepingJobsForArea(area: HotelFloorAreaRecord, jobs: JobRecord[]) {
+  const key = floorPlanAreaKey(area.label);
+  return jobs.filter((job) => {
+    if (job.status === "Completed" || job.status === "Cancelled") return false;
+    const isBlockingDepartment = job.departmentId === "technical" || job.departmentId === "housekeeping";
+    const isBlockingType = job.type === "Fault" || job.type === "PlannedMaintenance" || job.type === "PlannedHousekeeping";
+    if (!isBlockingDepartment && !isBlockingType) return false;
+    if (floorPlanAreaKey(job.room) === key) return true;
+    const locationText = floorPlanAreaKey([job.location, job.locationDetail].filter(Boolean).join(" "));
+    return Boolean(key) && locationText.includes(key);
+  });
 }
 
 function visibleFloorPlanFloorsForUser(floors: HotelFloorRecord[], user: Pick<DemoUser, "roleId" | "departmentId">) {
@@ -11639,7 +11892,7 @@ function visibleFloorPlanFloorsForUser(floors: HotelFloorRecord[], user: Pick<De
   return sortedFloors
     .map((floor) => ({
       ...floor,
-      areas: floor.areas.filter((area) => area.visibleToDepartments !== false)
+      areas: floor.areas.filter((area) => areaVisibleForDepartment(area, user.departmentId))
     }))
     .filter((floor) => floor.areas.length > 0);
 }
@@ -11684,11 +11937,7 @@ function floorAreaKindBadgeClass(kind: HotelFloorAreaRecord["kind"]) {
 function normalizeHotelFloorPlanFloors(floors: HotelFloorRecord[]) {
   return sortHotelFloors(floors).map((floor) => ({
     ...floor,
-    areas: floor.areas.map((area) => (
-      area.kind === "AREA"
-        ? { ...area, kind: floorAreaKindFromTextLabel(area.label).kind }
-        : area
-    ))
+    areas: floor.areas.map(normalizeHotelFloorArea)
   }));
 }
 
@@ -11705,7 +11954,10 @@ function floorAreasFromText(text: string): HotelFloorAreaRecord[] {
       label: area.label,
       kind: area.kind,
       sortOrder: index,
-      visibleToDepartments: true
+      visibleToDepartments: true,
+      visibleDepartmentIds: [],
+      roomEntryDepartmentIds: defaultRoomEntryDepartmentIds(area),
+      allowGuestAssignmentDuringWork: false
     }));
 }
 
@@ -11729,22 +11981,26 @@ function downloadCsvFile(filename: string, rows: unknown[][]) {
 }
 
 function downloadHotelFloorPlanCsv(floors: HotelFloorRecord[]) {
-  const rows: unknown[][] = [["level", "floorName", "areaLabel", "areaKind", "visibleToDepartments", "floorSortOrder", "areaSortOrder"]];
+  const rows: unknown[][] = [["level", "floorName", "areaLabel", "areaKind", "visibleToDepartments", "visibleDepartmentIds", "roomEntryDepartmentIds", "allowGuestAssignmentDuringWork", "floorSortOrder", "areaSortOrder"]];
   sortHotelFloors(floors).forEach((floor, floorIndex) => {
     const sortedAreas = floor.areas.slice().sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"));
     if (!sortedAreas.length) {
-      rows.push([floor.level, floor.name || defaultFloorName(floor.level), "", "", "", floor.sortOrder ?? floorIndex, ""]);
+      rows.push([floor.level, floor.name || defaultFloorName(floor.level), "", "", "", "", "", "", floor.sortOrder ?? floorIndex, ""]);
       return;
     }
     sortedAreas.forEach((area, areaIndex) => {
+      const normalizedArea = normalizeHotelFloorArea(area);
       rows.push([
         floor.level,
         floor.name || defaultFloorName(floor.level),
-        area.label,
-        area.kind === "AREA" ? floorAreaKindFromTextLabel(area.label).kind : area.kind,
-        area.visibleToDepartments !== false ? "true" : "false",
+        normalizedArea.label,
+        normalizedArea.kind,
+        normalizedArea.visibleToDepartments !== false ? "true" : "false",
+        normalizedArea.visibleDepartmentIds.join("|"),
+        normalizedArea.roomEntryDepartmentIds.join("|"),
+        normalizedArea.allowGuestAssignmentDuringWork ? "true" : "false",
         floor.sortOrder ?? floorIndex,
-        area.sortOrder ?? areaIndex
+        normalizedArea.sortOrder ?? areaIndex
       ]);
     });
   });
@@ -11800,6 +12056,10 @@ function csvBoolean(value: string, fallback = true) {
   return ["true", "1", "evet", "yes", "görünür", "gorunur"].includes(normalized);
 }
 
+function csvStringList(value: string) {
+  return uniqueStringIds(value.split(/[|,;]/).map((item) => item.trim()));
+}
+
 function csvAreaKind(value: string, fallback: HotelFloorAreaRecord["kind"]): HotelFloorAreaRecord["kind"] {
   const normalized = value.trim().toLocaleUpperCase("tr-TR").replace(/[\s-]+/g, "_");
   if (!normalized) return fallback;
@@ -11839,6 +12099,7 @@ function parseHotelFloorPlanCsv(text: string): HotelFloorRecord[] {
     const parsedArea = floorAreaKindFromTextLabel(rawAreaLabel);
     const areaKind = csvAreaKind(read(row, ["areaKind", "alanTipi", "kind", "type"]), parsedArea.kind);
     const areaSortOrder = Number(read(row, ["areaSortOrder", "alanSira", "alanSıra"]));
+    const roomEntryDepartmentIdsText = read(row, ["roomEntryDepartmentIds", "odaGirisiDepartmanlari", "odaGirişiDepartmanları", "entryDepartments"]);
     const key = floorPlanAreaKey(parsedArea.label);
     if (floor.areas.some((area) => floorPlanAreaKey(area.label) === key)) return;
     floor.areas.push({
@@ -11846,7 +12107,10 @@ function parseHotelFloorPlanCsv(text: string): HotelFloorRecord[] {
       label: parsedArea.label,
       kind: areaKind,
       sortOrder: Number.isFinite(areaSortOrder) ? areaSortOrder : floor.areas.length,
-      visibleToDepartments: csvBoolean(read(row, ["visibleToDepartments", "gorunurluk", "görünürlük", "visible"]), true)
+      visibleToDepartments: csvBoolean(read(row, ["visibleToDepartments", "gorunurluk", "görünürlük", "visible"]), true),
+      visibleDepartmentIds: csvStringList(read(row, ["visibleDepartmentIds", "gorunenDepartmanlar", "görünenDepartmanlar", "departments"])),
+      roomEntryDepartmentIds: roomEntryDepartmentIdsText.trim() ? csvStringList(roomEntryDepartmentIdsText) : defaultRoomEntryDepartmentIds({ kind: areaKind, label: parsedArea.label }),
+      allowGuestAssignmentDuringWork: csvBoolean(read(row, ["allowGuestAssignmentDuringWork", "isVarkenMisafir", "işVarkenMisafir", "guestDuringWork"]), false)
     });
   });
   return sortHotelFloors(Array.from(floorsByLevel.values()).map((floor, floorIndex) => ({
@@ -11861,7 +12125,7 @@ function hotelLocationLabel(floor: Pick<HotelFloorRecord, "name" | "level">, are
   return `${floorLabel} / ${area.label}`;
 }
 
-function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
+function HotelFloorPlanningPage({ departmentLabelFor, departmentOptions, session, setAlert, visibleJobs }: RenderContext) {
   const [floors, setFloors] = useState<HotelFloorRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -11955,21 +12219,55 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
     }
   };
 
-  const toggleAreaDepartmentVisibility = (floorLevel: number, areaId: string, visibleToDepartments: boolean) => {
+  const updateAreaPolicy = (floorLevel: number, areaId: string, updater: (area: HotelFloorAreaRecord) => HotelFloorAreaRecord) => {
     setFloors((current) => sortHotelFloors(current.map((floor) => (
       floor.level === floorLevel
         ? {
             ...floor,
             areas: floor.areas.map((area) => (
-              area.id === areaId ? { ...area, visibleToDepartments } : area
+              area.id === areaId ? updater(normalizeHotelFloorArea(area)) : area
             ))
           }
         : floor
     ))));
   };
 
+  const toggleAreaDepartmentVisibility = (floorLevel: number, areaId: string, departmentId: string, visible: boolean) => {
+    updateAreaPolicy(floorLevel, areaId, (area) => {
+      const selectedIds = selectedAreaVisibleDepartmentIds(area, departmentOptions);
+      const nextIds = uniqueStringIds(visible
+        ? [...selectedIds, departmentId]
+        : selectedIds.filter((id) => id !== departmentId));
+      return {
+        ...area,
+        visibleToDepartments: nextIds.length > 0,
+        visibleDepartmentIds: nextIds.length === departmentOptions.length ? [] : nextIds
+      };
+    });
+  };
+
+  const toggleAreaRoomEntryDepartment = (floorLevel: number, areaId: string, departmentId: string, allowed: boolean) => {
+    updateAreaPolicy(floorLevel, areaId, (area) => {
+      const selectedIds = selectedAreaRoomEntryDepartmentIds(area, departmentOptions);
+      const nextIds = uniqueStringIds(allowed
+        ? [...selectedIds, departmentId]
+        : selectedIds.filter((id) => id !== departmentId));
+      return {
+        ...area,
+        roomEntryDepartmentIds: nextIds
+      };
+    });
+  };
+
+  const toggleAreaGuestAssignmentDuringWork = (floorLevel: number, areaId: string, allowed: boolean) => {
+    updateAreaPolicy(floorLevel, areaId, (area) => ({
+      ...area,
+      allowGuestAssignmentDuringWork: allowed
+    }));
+  };
+
   const saveFloorPlan = async () => {
-    if (!canUseAccess(session, "featureHotelFloorPlanning")) {
+    if (session.roleId !== "hrManager" && !canUseAccess(session, "featureHotelFloorPlanning")) {
       setAlert("Otel kat planlaması yetkiniz yok.");
       return;
     }
@@ -11982,12 +12280,15 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         areas: (() => {
           const currentAreasByLabel = new Map(floor.areas.map((area) => [floorPlanAreaKey(area.label), area]));
           return floorAreasFromText(areaTextByLevel[String(floor.level)] ?? areaTextFromRecords(floor.areas)).map((area, areaIndex) => {
-            const currentArea = currentAreasByLabel.get(floorPlanAreaKey(area.label));
+            const mergedArea = mergeFloorAreaPolicy(area, currentAreasByLabel.get(floorPlanAreaKey(area.label)));
             return {
-              label: area.label.trim(),
-              kind: area.kind,
+              label: mergedArea.label.trim(),
+              kind: mergedArea.kind,
               sortOrder: areaIndex,
-              visibleToDepartments: currentArea?.visibleToDepartments ?? area.visibleToDepartments
+              visibleToDepartments: mergedArea.visibleToDepartments,
+              visibleDepartmentIds: mergedArea.visibleDepartmentIds,
+              roomEntryDepartmentIds: mergedArea.roomEntryDepartmentIds,
+              allowGuestAssignmentDuringWork: mergedArea.allowGuestAssignmentDuringWork
             };
           }).filter((area) => area.label);
         })()
@@ -12096,19 +12397,65 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                     {floor.areas
                       .slice()
                       .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
-                      .map((area) => (
-                        <label className={`floor-output-tile ${area.visibleToDepartments ? "visible" : "technical-only"}`} key={`${floor.level}-${area.id}-${area.label}`}>
-                          <input
-                            type="checkbox"
-                            checked={area.visibleToDepartments !== false}
-                            onChange={(event) => toggleAreaDepartmentVisibility(floor.level, area.id, event.target.checked)}
-                            aria-label={`${area.label} departmanlarda görünsün`}
-                          />
-                          <span className={`badge ${floorAreaKindBadgeClass(area.kind)}`}>{floorAreaKindLabel(area.kind)}</span>
-                          <strong>{area.label}</strong>
-                          <small>{area.visibleToDepartments !== false ? "Departmanlarda görünür" : "Sadece Teknik"}</small>
-                        </label>
-                      ))}
+                      .map((area) => {
+                        const normalizedArea = normalizeHotelFloorArea(area);
+                        const visibleDepartmentIds = selectedAreaVisibleDepartmentIds(normalizedArea, departmentOptions);
+                        const roomEntryDepartmentIds = selectedAreaRoomEntryDepartmentIds(normalizedArea, departmentOptions);
+                        const blockingJobCount = activeTechnicalOrHousekeepingJobsForArea(normalizedArea, visibleJobs).length;
+                        const visibleSummary = visibleDepartmentIds.length === departmentOptions.length
+                          ? "Tüm departmanlar"
+                          : visibleDepartmentIds.length
+                            ? `${visibleDepartmentIds.length} departman`
+                            : "Kapalı";
+                        const entrySummary = roomEntryDepartmentIds.length
+                          ? roomEntryDepartmentIds.map((departmentId) => departmentLabelFor(departmentId)).join(", ")
+                          : "Yetkili yok";
+                        return (
+                          <article className={`floor-output-tile ${visibleDepartmentIds.length ? "visible" : "technical-only"}`} key={`${floor.level}-${area.id}-${area.label}`}>
+                            <span className={`badge ${floorAreaKindBadgeClass(normalizedArea.kind)}`}>{floorAreaKindLabel(normalizedArea.kind)}</span>
+                            <strong>{normalizedArea.label}</strong>
+                            <small>Görünüm: {visibleSummary}</small>
+                            <div className="permission-preview-tags" aria-label={`${normalizedArea.label} görünürlük departmanları`}>
+                              {departmentOptions.map((department) => (
+                                <label className="permission-toggle" key={`${normalizedArea.id}-visible-${department.id}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={visibleDepartmentIds.includes(department.id)}
+                                    onChange={(event) => toggleAreaDepartmentVisibility(floor.level, normalizedArea.id, department.id, event.target.checked)}
+                                  />
+                                  <span>{department.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                            {isRoomArea(normalizedArea) ? (
+                              <div className="ui-list-stack ui-section-top-xs">
+                                <small>Oda girişi: {entrySummary}</small>
+                                <div className="permission-preview-tags" aria-label={`${normalizedArea.label} oda girişi departmanları`}>
+                                  {departmentOptions.map((department) => (
+                                    <label className="permission-toggle" key={`${normalizedArea.id}-entry-${department.id}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={roomEntryDepartmentIds.includes(department.id)}
+                                        onChange={(event) => toggleAreaRoomEntryDepartment(floor.level, normalizedArea.id, department.id, event.target.checked)}
+                                      />
+                                      <span>{department.label}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                                <label className="permission-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={normalizedArea.allowGuestAssignmentDuringWork}
+                                    onChange={(event) => toggleAreaGuestAssignmentDuringWork(floor.level, normalizedArea.id, event.target.checked)}
+                                  />
+                                  <span>Aktif Teknik/HK işi varken misafire verilebilir</span>
+                                </label>
+                                {blockingJobCount ? <small>{blockingJobCount} aktif Teknik/HK işi</small> : null}
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
                   </div>
                 ) : (
                   <div className="module-helper">Bu katta tanımlı oda veya alan yok.</div>
@@ -12147,10 +12494,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                   onChange={(event) => {
                     const text = event.target.value;
                     const currentAreasByLabel = new Map(floor.areas.map((area) => [floorPlanAreaKey(area.label), area]));
-                    const nextAreas = floorAreasFromText(text).map((area) => ({
-                      ...area,
-                      visibleToDepartments: currentAreasByLabel.get(floorPlanAreaKey(area.label))?.visibleToDepartments ?? area.visibleToDepartments
-                    }));
+                    const nextAreas = floorAreasFromText(text).map((area) => mergeFloorAreaPolicy(area, currentAreasByLabel.get(floorPlanAreaKey(area.label))));
                     setAreaTextByLevel((current) => ({ ...current, [String(floor.level)]: text }));
                     updateFloor(floor.level, { areas: nextAreas });
                   }}
@@ -12564,7 +12908,7 @@ function AndroidAppSettingsPage({ refreshData, session, setAlert, setNotificatio
   );
 }
 
-function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, rememberAuthenticatedPassword, session, setAlert, setDepartmentWorkPolicy }: RenderContext) {
+function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, rememberAuthenticatedPassword, session, setAlert, setDepartmentWorkPolicy, setManagementRequests }: RenderContext) {
   const [profileDraft, setProfileDraft] = useState({
     fullName: session.fullName,
     username: session.username,
@@ -12817,6 +13161,15 @@ function SettingsPage({ departmentLabelFor, departmentWorkPolicy, refreshData, r
             </button>
           </form>
         </div>
+
+        {canUseModule(session, "accountDeleteRequest") && (
+          <AccountDeleteRequestPanel
+            departmentLabelFor={departmentLabelFor}
+            session={session}
+            setAlert={setAlert}
+            setManagementRequests={setManagementRequests}
+          />
+        )}
 
         {canConfigurePolicy && (
           <div className="card">

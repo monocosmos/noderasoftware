@@ -77,6 +77,7 @@ export function HotelOperationBoard({
   onToggleShowAllFloors,
   records,
   selectedFloorLevel,
+  sessionDepartmentId,
   showAllFloors
 }: {
   canViewFullPlan: boolean;
@@ -89,6 +90,7 @@ export function HotelOperationBoard({
   onToggleShowAllFloors: () => void;
   records: OperationalRecord[];
   selectedFloorLevel: string;
+  sessionDepartmentId: string;
   showAllFloors: boolean;
 }) {
   const [expandedAreaKey, setExpandedAreaKey] = useState("");
@@ -210,6 +212,8 @@ export function HotelOperationBoard({
                     .map((area) => {
                       const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
                       const isExpanded = expandedAreaKey === view.key;
+                      const canManageRoomEntry = canDepartmentEnterRoom(view.area, sessionDepartmentId);
+                      const entryBlockedReason = roomEntryBlockedReason(view, sessionDepartmentId, nowTick);
                       return (
                         <div
                           className={`hotel-operation-area-cell ${isExpanded ? "expanded" : ""}`}
@@ -247,9 +251,13 @@ export function HotelOperationBoard({
                         </button>
                         {isExpanded ? (
                           <AreaNotePaper
+                            canManageRoomEntry={canManageRoomEntry}
+                            entryBlockedReason={entryBlockedReason}
                             view={view}
                             onEdit={() => onSelectArea(area)}
-                            onOpenEntry={() => setEntryAreaKey(view.key)}
+                            onOpenEntry={() => {
+                              if (!entryBlockedReason) setEntryAreaKey(view.key);
+                            }}
                             onDetails={() => {
                               setDetailAreaKey(view.key);
                             }}
@@ -272,7 +280,7 @@ export function HotelOperationBoard({
         />
       )}
       {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
-      {entryView ? (
+      {entryView && canDepartmentEnterRoom(entryView.area, sessionDepartmentId) && !roomEntryBlockedReason(entryView, sessionDepartmentId, nowTick) ? (
         <RoomEntryModal
           view={entryView}
           onActivate={(entry) => {
@@ -357,12 +365,53 @@ function areaKindLabel(area: HotelFloorAreaRecord) {
   return "Alan";
 }
 
+function uniqueDepartmentIds(ids: string[]) {
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+}
+
+function roomEntryDepartmentIdsForArea(area: HotelFloorAreaRecord) {
+  if (normalizedAreaKind(area) !== "ROOM") return [];
+  return uniqueDepartmentIds(area.roomEntryDepartmentIds ?? ["frontOffice"]);
+}
+
+function canDepartmentEnterRoom(area: HotelFloorAreaRecord, departmentId: string) {
+  return roomEntryDepartmentIdsForArea(area).includes(departmentId);
+}
+
+function activeTechnicalOrHousekeepingJobs(jobs: JobRecord[]) {
+  return jobs.filter((job) => {
+    const text = `${job.type} ${job.title} ${job.description} ${job.tags}`.toLocaleLowerCase("tr-TR");
+    return job.departmentId === "technical"
+      || job.departmentId === "housekeeping"
+      || job.type === "Fault"
+      || job.type === "PlannedMaintenance"
+      || job.type === "PlannedHousekeeping"
+      || text.includes("arıza")
+      || text.includes("ariza")
+      || text.includes("temizlik")
+      || text.includes("bakım");
+  });
+}
+
+function roomEntryBlockedReason(view: AreaView, departmentId: string, nowMs: number) {
+  if (normalizedAreaKind(view.area) !== "ROOM") return "";
+  if (!canDepartmentEnterRoom(view.area, departmentId)) return "";
+  if (hasRoomEntryDefined(view.roomEntry, nowMs)) return "";
+  const blockingJobs = activeTechnicalOrHousekeepingJobs(view.jobs);
+  if (blockingJobs.length && !view.area.allowGuestAssignmentDuringWork) return "Teknik/HK işi aktif";
+  return "";
+}
+
 function AreaNotePaper({
+  canManageRoomEntry,
+  entryBlockedReason,
   onDetails,
   onEdit,
   onOpenEntry,
   view
 }: {
+  canManageRoomEntry: boolean;
+  entryBlockedReason: string;
   onDetails: () => void;
   onEdit: () => void;
   onOpenEntry: () => void;
@@ -379,10 +428,10 @@ function AreaNotePaper({
         <span>{view.area.label}</span>
       </div>
       <div className="hotel-operation-note-actions">
-        {normalizedAreaKind(view.area) === "ROOM" ? (
-          <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry}>
+        {normalizedAreaKind(view.area) === "ROOM" && canManageRoomEntry ? (
+          <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry} disabled={Boolean(entryBlockedReason)} title={entryBlockedReason || undefined}>
             {hasOpenEntry ? <LogOut size={13} /> : <LogIn size={13} />}
-            {hasOpenEntry ? "Oda çıkışı aç" : "Oda girişi aç"}
+            {entryBlockedReason ? "Giriş bloklu" : hasOpenEntry ? "Oda çıkışı aç" : "Oda girişi aç"}
           </button>
         ) : null}
         <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>

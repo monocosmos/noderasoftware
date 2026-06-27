@@ -10,6 +10,7 @@ PORT="${PORT:-4000}"
 SECTION="${SECTION:-all}"
 SOURCE_DIR="${SOURCE_DIR:-}"
 ALLOW_APP_DIR_RECREATE="${ALLOW_APP_DIR_RECREATE:-0}"
+SYNC_DOWNLOADS_FROM_GITHUB="${SYNC_DOWNLOADS_FROM_GITHUB:-0}"
 
 die() {
   echo "HATA: $*" >&2
@@ -206,14 +207,18 @@ sync_videowallplayer_section() {
   sync_dir_replace "${build_dir}/apps/web/public/brand/videowallplayer" "${APP_DIR}/apps/web/public/brand/videowallplayer"
   mkdir -p "${APP_DIR}/apps/web/out/downloads" "${APP_DIR}/apps/web/public/downloads"
 
-  for download_file in \
-    VideoWallPlayer-Windows-Setup-x64.exe \
-    VideoWallPlayer-Windows-Portable-x64.zip \
-    VideoWallPlayer-Android.apk
-  do
-    sync_required_file "${build_dir}/apps/web/public/downloads/${download_file}" "${APP_DIR}/apps/web/public/downloads/${download_file}"
-    sync_required_file "${build_dir}/apps/web/public/downloads/${download_file}" "${APP_DIR}/apps/web/out/downloads/${download_file}"
-  done
+  if [ "${SYNC_DOWNLOADS_FROM_GITHUB}" = "1" ]; then
+    for download_file in \
+      VideoWallPlayer-Windows-Setup-x64.exe \
+      VideoWallPlayer-Windows-Portable-x64.zip \
+      VideoWallPlayer-Android.apk
+    do
+      sync_required_file "${build_dir}/apps/web/public/downloads/${download_file}" "${APP_DIR}/apps/web/public/downloads/${download_file}"
+      sync_required_file "${build_dir}/apps/web/public/downloads/${download_file}" "${APP_DIR}/apps/web/out/downloads/${download_file}"
+    done
+  else
+    echo "VideoWallPlayer download paketleri GitHub deploy'da atlandi; LAN ici SFTP hattiyla korunur/guncellenir."
+  fi
 
   sync_next_static "${build_dir}"
   sync_web_build_manifest "${build_dir}"
@@ -225,6 +230,11 @@ sync_videowallplayer_section() {
 sync_hotel_downloads() {
   local build_dir="$1"
   local source_file
+  if [ "${SYNC_DOWNLOADS_FROM_GITHUB}" != "1" ]; then
+    echo "HotelOps download paketleri GitHub deploy'da atlandi; LAN ici SFTP hattiyla korunur/guncellenir."
+    return 0
+  fi
+
   shopt -s nullglob
   for source_file in "${build_dir}"/apps/web/public/downloads/HotelOps-*; do
     mkdir -p "${APP_DIR}/apps/web/public/downloads" "${APP_DIR}/apps/web/out/downloads"
@@ -340,7 +350,11 @@ deploy_section_from_github() {
     GIT_LFS_SKIP_SMUDGE=1 git checkout -f -B "${BRANCH}" "origin/${BRANCH}"
     GIT_LFS_SKIP_SMUDGE=1 git reset --hard "origin/${BRANCH}"
     git lfs install --local
-    git lfs pull
+    if [ "${SYNC_DOWNLOADS_FROM_GITHUB}" = "1" ]; then
+      git lfs pull
+    else
+      echo "Git LFS download paketleri atlandi; buyuk ciktilar LAN ici SFTP hattiyla guncellenir."
+    fi
     git clean -fd -e .env -e node_modules/ -e apps/web/public/downloads/
   fi
 
@@ -429,7 +443,11 @@ git fetch --prune origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
 GIT_LFS_SKIP_SMUDGE=1 git checkout -f -B "${BRANCH}" "origin/${BRANCH}"
 GIT_LFS_SKIP_SMUDGE=1 git reset --hard "origin/${BRANCH}"
 git lfs install --local
-git lfs pull
+if [ "${SYNC_DOWNLOADS_FROM_GITHUB}" = "1" ]; then
+  git lfs pull
+else
+  echo "Git LFS download paketleri atlandi; buyuk ciktilar LAN ici SFTP hattiyla guncellenir."
+fi
 git clean -fd \
   -e .env \
   -e node_modules/ \

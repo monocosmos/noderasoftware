@@ -12,6 +12,8 @@
     "desktop:start": "npm run start --workspace @hotel-ops/desktop",
     "desktop:pack": "npm run pack --workspace @hotel-ops/desktop",
     "desktop:dist": "npm run dist --workspace @hotel-ops/desktop",
+    "desktop:dist:signed": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-windows-desktop-release.ps1 -RequireSigning",
+    "desktop:dist:installer:signed": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-windows-desktop-release.ps1 -Target installer -RequireSigning",
     "desktop:test-window-controls": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\test-desktop-window-controls.ps1",
     "android:apk": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-android-apk.ps1",
     "android:play-aab": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\workstation\\build-android-play-aab.ps1",

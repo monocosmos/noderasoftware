@@ -19,7 +19,9 @@ param(
 
   [switch] $SkipLocalPiBackup,
 
-  [switch] $UpdateLandingPage
+  [switch] $UpdateLandingPage,
+
+  [switch] $AllowRemoteHost
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,10 +49,169 @@ if ($PushDatabaseSchema -and $SkipDatabaseSchemaPush) {
 }
 
 $sshPortArgs = @()
-$scpPortArgs = @()
+$sftpPortArgs = @()
 if ($SshPort -gt 0) {
   $sshPortArgs = @("-p", "$SshPort")
-  $scpPortArgs = @("-P", "$SshPort")
+  $sftpPortArgs = @("-P", "$SshPort")
+}
+
+function Test-PrivateNetworkAddress {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Net.IPAddress] $Address
+  )
+
+  if ($Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    return $false
+  }
+
+  $bytes = $Address.GetAddressBytes()
+  return (
+    $bytes[0] -eq 10 -or
+    ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+    ($bytes[0] -eq 192 -and $bytes[1] -eq 168) -or
+    ($bytes[0] -eq 169 -and $bytes[1] -eq 254)
+  )
+}
+
+function Test-PrivateNetworkTarget {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Target
+  )
+
+  $targetValue = $Target.Trim()
+  if (-not $targetValue) {
+    return $false
+  }
+
+  $parsedAddress = $null
+  if ([System.Net.IPAddress]::TryParse($targetValue, [ref] $parsedAddress)) {
+    return (Test-PrivateNetworkAddress -Address $parsedAddress)
+  }
+
+  if ($targetValue.EndsWith(".local", [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $true
+  }
+
+  try {
+    $addresses = [System.Net.Dns]::GetHostAddresses($targetValue)
+    foreach ($address in $addresses) {
+      if (Test-PrivateNetworkAddress -Address $address) {
+        return $true
+      }
+    }
+  } catch {
+    return $false
+  }
+
+  return $false
+}
+
+function Get-SshConfiguredHostName {
+  try {
+    $config = ssh -G $PiHost 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $config) {
+      return $null
+    }
+
+    $hostLine = $config | Where-Object { $_ -match "^hostname\s+(.+)$" } | Select-Object -First 1
+    if ($hostLine -and $hostLine -match "^hostname\s+(.+)$") {
+      return $Matches[1].Trim()
+    }
+  } catch {
+    return $null
+  }
+
+  return $null
+}
+
+function Assert-LanPiHost {
+  if ($AllowRemoteHost) {
+    Write-Warning "Uzak/public Pi host kontrolu -AllowRemoteHost ile atlandi. Buyuk build paketleri icin normal akis LAN ici SFTP olmalidir."
+    return
+  }
+
+  $targets = New-Object System.Collections.Generic.List[string]
+  $configuredHost = Get-SshConfiguredHostName
+  if ($configuredHost) {
+    $targets.Add($configuredHost)
+  }
+  $targets.Add($PiHost)
+
+  foreach ($target in ($targets | Select-Object -Unique)) {
+    if (Test-PrivateNetworkTarget -Target $target) {
+      Write-Host "==> LAN/SFTP hedefi dogrulandi: $target" -ForegroundColor Cyan
+      return
+    }
+  }
+
+  throw "Buyuk build ciktisi deploy'u sadece LAN/private IP uzerinden yapilir. PiHost '$PiHost' public/dis host gibi gorunuyor. Ayni modemdeki Pi IP'sini veya LAN'a bakan noderapi SSH alias'ini kullanin."
+}
+
+function Quote-SftpPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path
+  )
+
+  if ($Path.Contains('"')) {
+    throw "SFTP yolu cift tirnak iceremez: $Path"
+  }
+
+  return '"' + ($Path -replace "\\", "/") + '"'
+}
+
+function Invoke-SftpBatch {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]] $Commands
+  )
+
+  $batchPath = Join-Path $env:TEMP "noderasoftware-sftp-$([System.Guid]::NewGuid().ToString("N")).txt"
+  [System.IO.File]::WriteAllLines($batchPath, $Commands, [System.Text.UTF8Encoding]::new($false))
+
+  try {
+    sftp @sftpPortArgs -b $batchPath "${PiUser}@${PiHost}"
+    if ($LASTEXITCODE -ne 0) {
+      throw "SFTP aktarimi basarisiz oldu. Exit code: $LASTEXITCODE"
+    }
+  } finally {
+    if (Test-Path -LiteralPath $batchPath) {
+      Remove-Item -LiteralPath $batchPath -Force
+    }
+  }
+}
+
+function Copy-ToPiSftp {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $LocalPath,
+
+    [Parameter(Mandatory = $true)]
+    [string] $RemotePath
+  )
+
+  $resolvedLocalPath = (Resolve-Path -LiteralPath $LocalPath).Path
+  Invoke-SftpBatch -Commands @(
+    "put $(Quote-SftpPath -Path $resolvedLocalPath) $(Quote-SftpPath -Path $RemotePath)"
+  )
+}
+
+function Copy-FromPiSftp {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $RemotePath,
+
+    [Parameter(Mandatory = $true)]
+    [string] $LocalPath
+  )
+
+  $localParent = Split-Path -Parent $LocalPath
+  New-Item -ItemType Directory -Path $localParent -Force | Out-Null
+  Invoke-SftpBatch -Commands @(
+    "get $(Quote-SftpPath -Path $RemotePath) $(Quote-SftpPath -Path $LocalPath)"
+  )
 }
 
 function Copy-RequiredItem {
@@ -375,6 +536,8 @@ function Assert-VideoWallDownloads {
   Write-Host "    $Label VideoWallPlayer indirme dosyalari mevcut" -ForegroundColor DarkGreen
 }
 
+Assert-LanPiHost
+
 try {
   if (-not $SkipBuild) {
     Write-Host "==> Lokal API build aliniyor" -ForegroundColor Cyan
@@ -477,7 +640,7 @@ sudo tar \
 sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
 "@
     Invoke-RemoteBashScript $backupRemoteScript
-    scp @scpPortArgs "${PiUser}@${PiHost}:$remoteBackupArchive" "$localBackupArchive"
+    Copy-FromPiSftp -RemotePath $remoteBackupArchive -LocalPath $localBackupArchive
     Invoke-RemoteCommand "sudo rm -f '$remoteBackupArchive'"
     Write-Host "    $localBackupArchive"
   }
@@ -487,7 +650,7 @@ sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
   $piMaintenanceEnabledByDeploy = $true
 
   Write-Host "==> Runtime paketi Pi'ye yukleniyor" -ForegroundColor Cyan
-  scp @scpPortArgs "$archive" "${PiUser}@${PiHost}:$remoteArchive"
+  Copy-ToPiSftp -LocalPath $archive -RemotePath $remoteArchive
 
   $includeDownloadsFlag = if ($IncludeDownloads) { "1" } else { "0" }
   if ($IncludeDownloads) {
@@ -507,7 +670,7 @@ sudo chown '$remoteBackupOwner' '$remoteBackupArchive'
     if ($LASTEXITCODE -ne 0) {
       throw "Indirme dosyalari tar paketi olusturulamadi. Exit code: $LASTEXITCODE"
     }
-    scp @scpPortArgs "$downloadsArchive" "${PiUser}@${PiHost}:$remoteDownloadsArchive"
+    Copy-ToPiSftp -LocalPath $downloadsArchive -RemotePath $remoteDownloadsArchive
   }
 
   $dependencyCommand = if ($InstallDependencies) {
@@ -737,7 +900,7 @@ sudo -u hotelops bash -lc 'set -a; . ./.env; set +a; node scripts/pi/verify-live
 
   # Copy the currently running deploy script separately so another PC can pull it from the Pi.
   $selfScript = Join-Path $root "scripts\pi\deploy-built-to-pi.ps1"
-  scp @scpPortArgs "$selfScript" "${PiUser}@${PiHost}:/tmp/deploy-built-to-pi.ps1"
+  Copy-ToPiSftp -LocalPath $selfScript -RemotePath "/tmp/deploy-built-to-pi.ps1"
   ssh @sshPortArgs "${PiUser}@${PiHost}" "sudo mv /tmp/deploy-built-to-pi.ps1 /opt/noderasoftware/scripts/pi/deploy-built-to-pi.ps1 && sudo chown hotelops:hotelops /opt/noderasoftware/scripts/pi/deploy-built-to-pi.ps1 && sudo chmod 644 /opt/noderasoftware/scripts/pi/deploy-built-to-pi.ps1"
 
   Write-Host "==> Pi bakim modu kapatiliyor" -ForegroundColor Cyan

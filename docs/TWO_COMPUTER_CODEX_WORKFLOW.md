@@ -2,6 +2,8 @@
 
 Bu duzende GitHub zorunlu degildir. Raspberry Pi ana sunucu ve ana kaynak noktasi gibi kullanilir. Ev bilgisayari ve is bilgisayari Codex ile ayni projeyi gelistirir.
 
+Guncel yayin kurali: web sitesi, kaynak kodu ve script degisiklikleri GitHub uzerinden Pi'ye alinir. Buyuk uygulama/build ciktilari ise sadece ayni modem/ag icinden SFTP ile Pi'ye gonderilir.
+
 ## Mantik
 
 1. Calismaya baslamadan once Pi'deki son kaynak kodu bilgisayara cekilir.
@@ -23,7 +25,7 @@ Calismaya baslamadan once:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\sync-from-pi.ps1" -PiHost noderapi
 ```
 
-Canli sunucuya hizli guncelleme gondermek icin:
+Canli sunucuya buyuk build ciktisi veya hazir runtime gondermek icin:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\deploy-built-to-pi.ps1" -PiHost noderapi
@@ -31,7 +33,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Document
 
 ## Is Bilgisayari
 
-Is bilgisayari dis internetten baglanacagi icin modem/router tarafinda su yonlendirme gerekir:
+Is bilgisayari dis internetten baglanacaksa modem/router tarafinda su yonlendirme sadece SSH kontrolu ve acil durumlar icindir:
 
 ```text
 Dis port: 2222
@@ -52,10 +54,10 @@ Calismaya baslamadan once:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\sync-from-pi.ps1" -PiHost noderapi
 ```
 
-Canli sunucuya hizli guncelleme gondermek icin:
+Dis internetten buyuk build ciktisi gonderilmez. Site/script degisikligi icin once GitHub'a push edilir, sonra Pi GitHub'dan deploy eder:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\deploy-built-to-pi.ps1" -PiHost noderapi
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\workstation\deploy-pi-from-github.ps1" -Section hotel
 ```
 
 ## Codex'e Verilecek Kisa Talimat
@@ -65,7 +67,8 @@ Codex'e bu projede su mantikla is verilebilir:
 ```text
 Once gerekliyse Pi'deki son kaynak kodu sync-from-pi.ps1 ile cek.
 Sonra istedigim degisikligi yerel projede yap ve lokal test et.
-Sonra deploy-built-to-pi.ps1 ile sadece hazir build ciktisini Raspberry Pi'ye yukle.
+Site/script degisikligiyse GitHub'a push et ve deploy-pi-from-github.ps1 ile Pi'ye al.
+Buyuk uygulama ciktisiyse ayni LAN icindeyken deploy-built-to-pi.ps1 ile SFTP uzerinden Pi'ye yukle.
 En sonda https://noderasoftware.com/api/health ve https://noderasoftware.com/hotel/ kontrolu yap.
 ```
 
@@ -88,7 +91,7 @@ Gunluk gelistirme icin:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\hfk47\Documents\noderasoftware\scripts\pi\deploy-built-to-pi.ps1" -PiHost noderapi
 ```
 
-Bu komut build'i Windows bilgisayarinda alir. Pi'ye sadece `apps/web/out` ve `apps/api/dist` gonderilir. Raspberry Pi daha az yorulur.
+Bu komut build'i Windows bilgisayarinda alir. Pi'ye sadece `apps/web/out` ve `apps/api/dist` SFTP ile gonderilir. Raspberry Pi daha az yorulur. `PiHost` LAN/private IP veya `.local` hedef degilse script durur.
 
 Uygulama indirme dosyalari APK/EXE degistiyse:
 

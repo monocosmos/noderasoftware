@@ -31,50 +31,62 @@ Import scripti Android dosyasini sitede beklenen `VideoWallPlayer-Android.apk` a
    npm.cmd run build --workspace @hotel-ops/web
    ```
 
-4. Nodera web degisikliklerini GitHub'a gonder:
+4. Nodera web degisikliklerini GitHub'a sadece VideoWallPlayer section olarak gonder. Buyuk APK/EXE/ZIP paketleri bu adimda GitHub'a stage edilmez:
 
    ```powershell
-   .\scripts\workstation\githuba-yukle.bat
+   .\scripts\workstation\videowall-githuba-yukle.bat
    ```
 
-5. Canli Raspberry Pi'ye yerel dogrulanmis build'i yayinla:
+5. Canli Raspberry Pi'ye GitHub'dan sadece VideoWallPlayer section'i yayinla:
 
    ```powershell
-   .\scripts\workstation\raspberrypi-yayina-al.bat
+   .\scripts\workstation\videowall-yayina-al.bat
+   ```
+
+6. Uygulama paketlerini ayni modem/ag icinden Raspberry Pi'ye SFTP ile gonder:
+
+   ```powershell
+   .\scripts\workstation\publish-to-pi.ps1 -SkipBuild -IncludeDownloads -SkipDatabaseSchemaPush
    ```
 
 ## Sadece VideoWallPlayer Degistiyse
 
-Sadece `/videowallplayer/` sayfasi veya VideoWallPlayer indirme paketleri degistiyse tam site deploy yapma. Bunun yerine:
+Sadece `/videowallplayer/` sayfasi degistiyse tam site deploy yapma. Once sadece VideoWallPlayer section'i GitHub'a gonder, sonra Pi'ye yine sadece o section'i al:
 
 ```powershell
+.\scripts\workstation\videowall-githuba-yukle.bat
 .\scripts\workstation\videowall-yayina-al.bat
 ```
 
-Bu akis sadece sunlari gunceller:
+VideoWallPlayer APK/EXE/ZIP paketleri degistiyse GitHub'a yukleme. Paketleri lokal LAN SFTP hatti ile gonder:
+
+```powershell
+.\scripts\workstation\publish-to-pi.ps1 -SkipBuild -IncludeDownloads -SkipDatabaseSchemaPush
+```
+
+Bu akis GitHub'dan build alir ve canli Pi'de sadece sunlari gunceller:
 
 - `/opt/noderasoftware/apps/web/out/videowallplayer`
 - `/opt/noderasoftware/apps/web/out/brand/videowallplayer`
 - `/opt/noderasoftware/apps/web/out/_next/static` yeni dosyalar eklenerek
-- `/opt/noderasoftware/apps/web/out/downloads/VideoWallPlayer-*`
-- `/opt/noderasoftware/apps/web/public/downloads/VideoWallPlayer-*`
 
 Bu akis su alanlara dokunmaz:
 
 - `/opt/noderasoftware/apps/web/out/hotel`
 - `/opt/noderasoftware/apps/web/out/hotelpanel`
 - `/opt/noderasoftware/apps/web/out/index.html`
+- `/opt/noderasoftware/apps/web/out/downloads/VideoWallPlayer-*`
+- `/opt/noderasoftware/apps/web/public/downloads/VideoWallPlayer-*`
 - HotelOps API, veritabani ve servis semasi
 
-## Neden Yerel Pi Deploy Tercih Edilir?
+## Buyuk Paket Notu
 
-VideoWallPlayer indirme paketleri buyuk dosyalardir. Bu repo download dosyalarini Git LFS ile takip edebilir, fakat canli yayin icin en guvenli yol yerel olarak dogrulanmis `apps/web/public/downloads/` klasorunu `-IncludeDownloads` ile Pi'ye gondermektir.
+VideoWallPlayer indirme paketleri buyuk dosyalardir. Normal akis:
 
-GitHub'dan direkt deploy sadece su durumda kullanilmalidir:
-
-- Download dosyalari Git LFS'e commit/push edilmis olmali.
-- Pi tarafinda `git lfs pull` basarili calismali.
-- Web route ve download smoke kontrolleri sonradan tekrar yapilmali.
+- Paketler GitHub'a commit/push edilmez.
+- Paketler Raspberry Pi'ye sadece LAN/private IP uzerinden SFTP ile gonderilir.
+- `noderapi` SSH profili public domain veya port-forward'a bakiyorsa buyuk paket deploy'u durur.
+- Git LFS sadece eski/istisnai geri donus hatti olarak dusunulur; normal yayin hatti degildir.
 
 ## Guvenlik Kontrolleri
 
@@ -98,4 +110,4 @@ GitHub'dan direkt deploy sadece su durumda kullanilmalidir:
 - `Nodera GitHub Yukle.bat`: Nodera web reposunu build eder, commit eder ve GitHub'a push eder.
 - `Nodera RaspberryPi Yayinla.bat`: Yerel build ve download dosyalarini Pi'ye yayinlar.
 - `VideoWall Buildlerini Siteye Isle.bat`: VideoWallPlayer release dosyalarini Nodera web downloads klasorune isler.
-- `VideoWall Siteye Yayinla.bat`: Sadece `/videowallplayer/` ve VideoWallPlayer download dosyalarini Pi'ye yayinlar.
+- `VideoWall Siteye Yayinla.bat`: GitHub'dan sadece `/videowallplayer/` site bolumunu Pi'ye yayinlar.
