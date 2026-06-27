@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nodera HotelOps</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  /* Web gömme sürümü: kontrol yok, otomatik oynar, döngüsel.
+     Kapsayıcısını 16:9 oranında tamamen doldurur — istediğiniz genişlikte bir <div>'e
+     veya doğrudan sayfaya koyun; iframe ile de gömebilirsiniz. */
+  html,body{height:100%;background:#070D18;overflow:hidden}
+  #wrap{position:fixed;inset:0;background:#070D18}
+  canvas{display:block;width:100%;height:100%;object-fit:contain}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<script>window.NODERA_CFG={canvasId:'c',W:1920,H:1080,portrait:false,chrome:false,autoplay:true,loop:true};</script>
+<script src="nodera-engine.js"></script>
+</body>
+</html>

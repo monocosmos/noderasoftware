@@ -1,0 +1,1 @@
+self.__SSG_MANIFEST=new Set(["\u002F[...slug]","\u002Fhotel\u002F[...hotelSlug]"]);self.__SSG_MANIFEST_CB&&self.__SSG_MANIFEST_CB()
