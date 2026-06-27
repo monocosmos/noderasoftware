@@ -133,6 +133,9 @@ function Invoke-SourceFallbackDeploy {
   )
   if ($Section -ne "videowallplayer") {
     $archiveArgs += ":(exclude)apps/web/public/downloads/*"
+  } else {
+    $archiveArgs += ":(exclude)apps/web/public/downloads/HotelOps-*"
+    $archiveArgs += ":(exclude)apps/web/public/downloads/index.html"
   }
   Invoke-External $git $archiveArgs | Out-Null
 
