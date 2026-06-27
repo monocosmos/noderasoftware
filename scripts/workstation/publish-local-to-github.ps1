@@ -87,6 +87,76 @@ function Update-WebBuildManifest {
   Write-Utf8NoBomFile -Path (Join-Path $RepoRoot "apps\web\public\web-build.json") -Content ($manifest + "`n")
 }
 
+function Get-DesktopAppVersionCode {
+  $preloadPath = Join-Path $RepoRoot "apps\desktop\src\preload.cjs"
+  $mainPath = Join-Path $RepoRoot "apps\desktop\src\main.cjs"
+  $preloadContent = Get-Content -LiteralPath $preloadPath -Raw
+  $mainContent = Get-Content -LiteralPath $mainPath -Raw
+
+  if ($preloadContent -notmatch "const\s+appVersionCode\s*=\s*(\d+)\s*;") {
+    throw "Desktop appVersionCode bulunamadi: $preloadPath"
+  }
+  $preloadCode = [int] $Matches[1]
+
+  if ($mainContent -notmatch "const\s+DESKTOP_APP_BUILD\s*=\s*(\d+)\s*;") {
+    throw "Desktop DESKTOP_APP_BUILD bulunamadi: $mainPath"
+  }
+  $mainCode = [int] $Matches[1]
+
+  if ($preloadCode -ne $mainCode) {
+    throw "Desktop surum kodlari eslesmiyor. preload=$preloadCode main=$mainCode"
+  }
+
+  return $preloadCode
+}
+
+function Assert-HotelDesktopReleaseManifest {
+  if ($Section -notin @("all", "hotel")) { return }
+
+  $packagePath = Join-Path $RepoRoot "apps\desktop\package.json"
+  $packageJson = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
+  $desktopVersion = [string] $packageJson.version
+  $desktopCode = Get-DesktopAppVersionCode
+
+  foreach ($manifestPath in @(
+    Join-Path $RepoRoot "apps\web\public\app-version.json",
+    Join-Path $RepoRoot "apps\web\out\app-version.json"
+  )) {
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+      throw "App version manifest bulunamadi: $manifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $platform = $manifest.platforms.desktop
+    if (-not $platform) {
+      throw "Desktop platform app-version.json icinde yok: $manifestPath"
+    }
+    if ([string] $platform.latestVersion -ne $desktopVersion) {
+      throw "Desktop manifest surumu eski. $manifestPath latestVersion=$($platform.latestVersion), package=$desktopVersion. Once build-windows-desktop-release.ps1 -CopyToWebDownloads calistirin."
+    }
+    if ([int64] $platform.latestCode -ne [int64] $desktopCode -or [int64] $platform.minimumCode -ne [int64] $desktopCode) {
+      throw "Desktop manifest code eski. $manifestPath latestCode=$($platform.latestCode), minimumCode=$($platform.minimumCode), appCode=$desktopCode. Once build-windows-desktop-release.ps1 -CopyToWebDownloads calistirin."
+    }
+  }
+
+  foreach ($downloadPath in @(
+    Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Setup-V1-x64.exe",
+    Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Portable-V1-x64.exe",
+    Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Setup-V1-x64.exe",
+    Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Portable-V1-x64.exe"
+  )) {
+    if (-not (Test-Path -LiteralPath $downloadPath)) {
+      throw "HotelOps desktop download dosyasi bulunamadi: $downloadPath"
+    }
+    $versionInfo = (Get-Item -LiteralPath $downloadPath).VersionInfo
+    if ([string] $versionInfo.ProductVersion -ne $desktopVersion) {
+      throw "HotelOps desktop download surumu manifest/package ile eslesmiyor: $downloadPath ProductVersion=$($versionInfo.ProductVersion), package=$desktopVersion"
+    }
+  }
+
+  Write-Host "Desktop app-version manifest ve download surumleri dogrulandi: $desktopVersion / code $desktopCode" -ForegroundColor Green
+}
+
 function Get-StageablePaths {
   param(
     [Parameter(Mandatory = $true)]
@@ -163,6 +233,8 @@ if (-not $SkipBuild) {
     Update-WebBuildManifest
   }
 }
+
+Assert-HotelDesktopReleaseManifest
 
 if ($Section -eq "all") {
   Write-Host "UYARI: Section 'all' tum calisma agacini stage eder." -ForegroundColor Yellow

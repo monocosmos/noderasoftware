@@ -28,6 +28,7 @@ function New-NoderaSiteSection {
 function Get-NoderaDeploySupportPaths {
   return @(
     "scripts/pi/deploy-from-github.sh",
+    "scripts/workstation/build-windows-desktop-release.ps1",
     "scripts/workstation/deploy-pi-from-github.ps1",
     "scripts/workstation/publish-local-to-github.ps1",
     "scripts/workstation/site-sections.ps1"
