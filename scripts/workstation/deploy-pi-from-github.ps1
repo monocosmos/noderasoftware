@@ -122,16 +122,19 @@ function Invoke-SourceFallbackDeploy {
 
   Write-Host "==> Kucuk kaynak arsivi hazirlaniyor: $shortSha"
   Set-Location $RepoRoot
-  Invoke-External $git @(
+  $archiveArgs = @(
     "archive",
     "--format=tar.gz",
     "--output=$archive",
     "HEAD",
     "--",
     ".",
-    ":(exclude)apps/web/out/*",
-    ":(exclude)apps/web/public/downloads/*"
-  ) | Out-Null
+    ":(exclude)apps/web/out/*"
+  )
+  if ($Section -ne "videowallplayer") {
+    $archiveArgs += ":(exclude)apps/web/public/downloads/*"
+  }
+  Invoke-External $git $archiveArgs | Out-Null
 
   Write-Host "==> Kaynak arsivi Pi'ye aktariliyor"
   Invoke-External $scp @($archive, "${PiHost}:$remoteArchive") | Out-Null
