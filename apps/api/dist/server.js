@@ -1472,6 +1472,11 @@ const hotelSchema = z.object({
     name: z.string().trim().min(2).max(120),
     timezone: z.string().trim().min(3).max(80).optional().default("Europe/Istanbul")
 });
+const hotelUpdateSchema = z.object({
+    name: z.string().trim().min(2).max(120),
+    publicId: z.string().trim().regex(/^\d+$/).min(1).max(18),
+    timezone: z.string().trim().min(3).max(80).optional().default("Europe/Istanbul")
+});
 const maintenanceModeSchema = z.object({
     enabled: z.boolean(),
     message: z.string().trim().min(1).max(180).optional()
@@ -3928,6 +3933,107 @@ app.post("/hotels", authenticate, requirePlatformAdmin, asyncHandler(async (req,
             temporaryPassword: account.temporaryPassword
         }))
     });
+}));
+app.patch("/hotels/:id", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
+    const targetHotelId = String(req.params.id);
+    const payload = hotelUpdateSchema.parse(req.body);
+    const existing = await prisma.hotel.findUnique({
+        where: { id: targetHotelId },
+        include: {
+            _count: {
+                select: {
+                    departments: true,
+                    users: true,
+                    reminders: true,
+                    managementRequests: true,
+                    operationDocuments: true
+                }
+            }
+        }
+    });
+    if (!existing) {
+        res.status(404).json({ error: "HOTEL_NOT_FOUND" });
+        return;
+    }
+    if (existing.code === platformAdminHotelCode) {
+        res.status(409).json({ error: "CANNOT_UPDATE_PLATFORM_HOTEL" });
+        return;
+    }
+    if (payload.publicId !== existing.publicId) {
+        const duplicateHotel = await prisma.hotel.findFirst({
+            where: {
+                id: { not: existing.id },
+                publicId: payload.publicId
+            },
+            select: { id: true }
+        });
+        if (duplicateHotel) {
+            res.status(409).json({ error: "DUPLICATE_HOTEL_ID" });
+            return;
+        }
+        const reservation = await prisma.hotelIdReservation.findUnique({
+            where: { publicId: payload.publicId },
+            select: { hotelDbId: true }
+        });
+        if (reservation?.hotelDbId && reservation.hotelDbId !== existing.id) {
+            res.status(409).json({ error: "DUPLICATE_HOTEL_ID" });
+            return;
+        }
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+        if (payload.publicId !== existing.publicId) {
+            if (existing.publicId) {
+                await tx.hotelIdReservation.updateMany({
+                    where: { publicId: existing.publicId, hotelDbId: existing.id },
+                    data: { hotelDbId: null }
+                });
+            }
+            await tx.hotelIdReservation.upsert({
+                where: { publicId: payload.publicId },
+                update: { hotelDbId: existing.id },
+                create: { publicId: payload.publicId, hotelDbId: existing.id }
+            });
+        }
+        await tx.hotel.update({
+            where: { id: existing.id },
+            data: {
+                name: payload.name,
+                publicId: payload.publicId,
+                timezone: payload.timezone
+            }
+        });
+        return tx.hotel.findUniqueOrThrow({
+            where: { id: existing.id },
+            include: {
+                departments: {
+                    where: { deletedAt: null },
+                    include: {
+                        users: {
+                            where: { deletedAt: null, username: { not: platformAdminUsername } },
+                            include: userInclude,
+                            orderBy: { fullName: "asc" }
+                        }
+                    },
+                    orderBy: { name: "asc" }
+                },
+                _count: {
+                    select: {
+                        departments: true,
+                        users: true,
+                        reminders: true,
+                        managementRequests: true,
+                        operationDocuments: true
+                    }
+                }
+            }
+        });
+    });
+    await audit(req, "Hotel", updated.id, "UPDATE", serializeHotel(existing), {
+        publicId: updated.publicId,
+        name: updated.name,
+        timezone: updated.timezone
+    });
+    res.json({ ok: true, item: serializeHotel(updated) });
 }));
 app.delete("/hotels/:id", authenticate, requirePlatformAdmin, asyncHandler(async (req, res) => {
     const targetHotelId = String(req.params.id);
@@ -6396,6 +6502,10 @@ app.use((error, _req, res, _next) => {
         }
         if (target.includes("email")) {
             res.status(409).json({ error: "DUPLICATE_EMAIL" });
+            return;
+        }
+        if (target.includes("publicId")) {
+            res.status(409).json({ error: "DUPLICATE_HOTEL_ID" });
             return;
         }
         res.status(409).json({ error: "DUPLICATE_RECORD" });

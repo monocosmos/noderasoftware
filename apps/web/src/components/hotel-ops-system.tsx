@@ -3224,6 +3224,10 @@ function newHotelDraft(): HotelDraft {
   };
 }
 
+type HotelEditDraft = HotelDraft & {
+  publicId: string;
+};
+
 function isPlatformPanelPath(path: string) {
   return (path.split("?")[0] || "/") === "/hotelpanel";
 }
@@ -10973,6 +10977,7 @@ function HotelPanelPage({
   const [hotelDraft, setHotelDraft] = useState<HotelDraft>(() => newHotelDraft());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingHotelId, setSavingHotelId] = useState<string | null>(null);
   const [deletingHotelId, setDeletingHotelId] = useState<string | null>(null);
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
   const [savingMaintenanceMode, setSavingMaintenanceMode] = useState(false);
@@ -10982,6 +10987,8 @@ function HotelPanelPage({
   const [selectedResetUserId, setSelectedResetUserId] = useState("");
   const [expandedHotels, setExpandedHotels] = useState<Record<string, boolean>>({});
   const [expandedDepartments, setExpandedDepartments] = useState<Record<string, boolean>>({});
+  const [editingHotelId, setEditingHotelId] = useState<string | null>(null);
+  const [hotelEditDrafts, setHotelEditDrafts] = useState<Record<string, HotelEditDraft>>({});
 
   useEffect(() => {
     setMaintenanceMessage(maintenanceStatus.message || DEFAULT_MAINTENANCE_MESSAGE);
@@ -11097,6 +11104,102 @@ function HotelPanelPage({
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const startHotelEdit = (hotel: HotelRecord) => {
+    setHotelEditDrafts((current) => ({
+      ...current,
+      [hotel.id]: {
+        name: hotel.name,
+        publicId: hotel.publicId || "",
+        timezone: hotel.timezone
+      }
+    }));
+    setExpandedHotels((current) => ({ ...current, [hotel.id]: true }));
+    setEditingHotelId(hotel.id);
+  };
+
+  const updateHotelEditDraft = (hotelId: string, patch: Partial<HotelEditDraft>) => {
+    setHotelEditDrafts((current) => {
+      const existing = current[hotelId] ?? hotels.find((hotel) => hotel.id === hotelId);
+      if (!existing) return current;
+      return {
+        ...current,
+        [hotelId]: {
+          name: existing.name,
+          publicId: existing.publicId || "",
+          timezone: existing.timezone,
+          ...patch
+        }
+      };
+    });
+  };
+
+  const cancelHotelEdit = (hotelId: string) => {
+    setHotelEditDrafts((current) => {
+      const next = { ...current };
+      delete next[hotelId];
+      return next;
+    });
+    setEditingHotelId((current) => (current === hotelId ? null : current));
+  };
+
+  const handleUpdateHotel = async (event: FormEvent<HTMLFormElement>, hotel: HotelRecord) => {
+    event.preventDefault();
+    if (savingHotelId) return;
+    const draft = hotelEditDrafts[hotel.id] ?? {
+      name: hotel.name,
+      publicId: hotel.publicId,
+      timezone: hotel.timezone
+    };
+    const name = draft.name.trim();
+    const publicId = draft.publicId.trim();
+    if (!name) {
+      setAlert("Otel adı zorunludur.");
+      return;
+    }
+    if (!/^\d+$/.test(publicId)) {
+      setAlert("Otel ID sadece sayısal değer olmalıdır.");
+      return;
+    }
+
+    setSavingHotelId(hotel.id);
+    try {
+      const response = await apiRequest<{ ok: true; item: HotelRecord }>(`/hotels/${hotel.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          publicId,
+          timezone: draft.timezone
+        })
+      });
+      setHotels((current) => current.map((item) => (item.id === response.item.id ? response.item : item)));
+      setHotelEditDrafts((current) => ({
+        ...current,
+        [response.item.id]: {
+          name: response.item.name,
+          publicId: response.item.publicId,
+          timezone: response.item.timezone
+        }
+      }));
+      setEditingHotelId(null);
+      setAlert(`${response.item.name} bilgileri güncellendi.`);
+    } catch (error) {
+      if (isApiRequestError(error) && error.code === "DUPLICATE_HOTEL_ID") {
+        setAlert("Bu otel ID başka bir otel tarafından kullanılıyor.");
+      } else if (isApiRequestError(error) && error.code === "CANNOT_UPDATE_PLATFORM_HOTEL") {
+        setAlert("Platform sahibi oteli bu panelden değiştirilemez.");
+      } else if (isApiRequestError(error) && (error.code === "VALIDATION_ERROR" || error.status === 422)) {
+        setAlert("Otel adı ve sayısal ID bilgilerini kontrol edin.");
+      } else if (isApiRequestError(error) && error.status === 404) {
+        setAlert("Güncellenecek otel kaydı bulunamadı.");
+        setHotels((current) => current.filter((item) => item.id !== hotel.id));
+      } else {
+        setAlert("Otel bilgileri güncellenemedi. API bağlantısını kontrol edin.");
+      }
+    } finally {
+      setSavingHotelId(null);
     }
   };
 
@@ -11372,6 +11475,13 @@ function HotelPanelPage({
           {hotels.length ? hotels.map((hotel) => {
             const deleting = deletingHotelId === hotel.id;
             const expanded = expandedHotels[hotel.id] ?? false;
+            const editing = editingHotelId === hotel.id;
+            const savingHotel = savingHotelId === hotel.id;
+            const editDraft = hotelEditDrafts[hotel.id] ?? {
+              name: hotel.name,
+              publicId: hotel.publicId || "",
+              timezone: hotel.timezone
+            };
             return (
               <div className="department-accordion" key={hotel.id}>
                 <button type="button" className="department-accordion-header" onClick={() => toggleHotel(hotel.id)}>
@@ -11386,6 +11496,60 @@ function HotelPanelPage({
                 </button>
                 {expanded ? (
                   <div className="department-employee-list">
+                    {editing ? (
+                      <form className="ui-body-form" onSubmit={(event) => void handleUpdateHotel(event, hotel)}>
+                        <div className="form-row-3">
+                          <div className="form-group ui-form-compact">
+                            <label className="form-label">Otel Adı <span className="required">*</span></label>
+                            <input
+                              className="form-control"
+                              value={editDraft.name}
+                              onChange={(event) => updateHotelEditDraft(hotel.id, { name: event.target.value })}
+                              disabled={savingHotel}
+                            />
+                          </div>
+                          <div className="form-group ui-form-compact">
+                            <label className="form-label">Otel ID <span className="required">*</span></label>
+                            <input
+                              className="form-control"
+                              value={editDraft.publicId}
+                              onChange={(event) => updateHotelEditDraft(hotel.id, { publicId: event.target.value.replace(/\D/g, "") })}
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              placeholder="Sadece rakam"
+                              disabled={savingHotel}
+                            />
+                          </div>
+                          <div className="form-group ui-form-compact">
+                            <label className="form-label">Zaman Dilimi</label>
+                            <select
+                              className="form-control"
+                              value={editDraft.timezone}
+                              onChange={(event) => updateHotelEditDraft(hotel.id, { timezone: event.target.value })}
+                              disabled={savingHotel}
+                            >
+                              {HOTEL_TIMEZONE_OPTIONS.map((timezone) => (
+                                <option key={timezone} value={timezone}>{timezone}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="action-row">
+                          <button type="button" className="btn btn-secondary btn-sm" disabled={savingHotel} onClick={() => cancelHotelEdit(hotel.id)}>
+                            <X size={13} /> Vazgeç
+                          </button>
+                          <button type="submit" className="btn btn-primary btn-sm" disabled={savingHotel}>
+                            <Save size={13} /> {savingHotel ? "Kaydediliyor" : "Bilgileri Kaydet"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="action-row">
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => startHotelEdit(hotel)}>
+                          <PenLine size={13} /> Otel Bilgilerini Düzenle
+                        </button>
+                      </div>
+                    )}
                     {hotel.departments.length ? hotel.departments.map((department) => {
                       const departmentExpanded = expandedDepartments[department.id] ?? false;
                       return (
