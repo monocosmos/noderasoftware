@@ -74,6 +74,10 @@ function Get-NoderaSiteSection {
         -DisplayName "HotelOps / HotelPanel" `
         -CommitPaths (@(
           "apps/api",
+          "apps/desktop/package.json",
+          "apps/desktop/src",
+          "apps/desktop/build/icon.ico",
+          "apps/desktop/build/icon.png",
           "apps/web/src/app/hotel",
           "apps/web/src/app/[...slug]/page.tsx",
           "apps/web/src/sections/hotel",
@@ -114,6 +118,7 @@ function Get-NoderaSiteSection {
           "apps/web/out/settings",
           "apps/web/out/downloads/HotelOps-*",
           "apps/web/out/_next/static",
+          "package-lock.json",
           "prisma/schema.prisma",
           "runtime/maintenance-status.json"
         ) + (Get-NoderaDeploySupportPaths)) `

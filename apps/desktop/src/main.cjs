@@ -5,7 +5,7 @@ const packageMetadata = require("../package.json");
 
 const HOTEL_URL = process.env.HOTELOPS_URL || "https://noderasoftware.com/hotel/";
 const DESKTOP_APP_VERSION = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
-const DESKTOP_APP_BUILD = 7;
+const DESKTOP_APP_BUILD = 8;
 const ALLOWED_HOSTS = new Set(["noderasoftware.com", "www.noderasoftware.com"]);
 const PRELOAD_PATH = path.join(__dirname, "preload.cjs");
 const OFFLINE_PATH = path.join(__dirname, "offline.html");
@@ -284,10 +284,10 @@ function showWorkOrderNotification(job) {
 function updateTrayMenu() {
   if (!tray || IS_MAC) return;
 
-  tray.setToolTip(desktopAuthToken ? "Nodera Sistem - bildirim servisi aktif" : "Nodera Sistem - oturum bekleniyor");
+  tray.setToolTip(desktopAuthToken ? "HotelOps - bildirim servisi aktif" : "HotelOps - oturum bekleniyor");
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Nodera Sistem'i Ac", click: focusMainWindow },
+      { label: "HotelOps'u Ac", click: focusMainWindow },
       { label: desktopAuthToken ? "Bildirim servisi: Aktif" : "Bildirim servisi: Oturum bekliyor", enabled: false },
       { type: "separator" },
       { label: "Yenile", click: () => mainWindow && !mainWindow.isDestroyed() && mainWindow.reload() },
@@ -305,7 +305,7 @@ function updateTrayMenu() {
 function createMenu(win) {
   return Menu.buildFromTemplate([
     {
-      label: "Nodera Sistem",
+      label: "HotelOps",
       submenu: [
         { label: "Yenile", accelerator: "F5", click: () => win.reload() },
         { label: "Geri", accelerator: "Alt+Left", click: () => win.webContents.canGoBack() && win.webContents.goBack() },
@@ -351,7 +351,7 @@ function createTray() {
 function showDesktopNotification(payload = {}) {
   if (!Notification.isSupported()) return false;
 
-  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Nodera Sistem";
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "HotelOps";
   const body = typeof payload.body === "string" && payload.body.trim() ? payload.body.trim() : "Yeni is bildirimi";
   const tag = typeof payload.tag === "string" ? payload.tag : "";
   const notificationPath = typeof payload.path === "string" ? payload.path : "";
@@ -736,7 +736,7 @@ function createWindow() {
     minWidth: 420,
     minHeight: 620,
     show: false,
-    title: "Nodera Sistem Desktop",
+    title: "HotelOps Desktop",
     frame: false,
     ...(IS_MAC
       ? {

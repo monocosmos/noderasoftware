@@ -59,8 +59,8 @@ $rcedit = Resolve-Rcedit
 
 & $rcedit $desktopExe `
   --set-icon $desktopIcon `
-  --set-version-string FileDescription "Nodera Sistem Desktop" `
-  --set-version-string ProductName "Nodera Sistem" `
+  --set-version-string FileDescription "HotelOps Desktop" `
+  --set-version-string ProductName "HotelOps Desktop" `
   --set-version-string CompanyName "Nodera Software" `
   --set-version-string LegalCopyright "Copyright (C) 2026 Nodera Software" `
   --set-file-version $version `

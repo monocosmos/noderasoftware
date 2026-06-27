@@ -3,7 +3,7 @@ const packageMetadata = require("../package.json");
 
 const validActions = new Set(["minimize", "maximize", "fullscreen", "close"]);
 const appVersion = typeof packageMetadata.version === "string" && packageMetadata.version ? packageMetadata.version : "1.0.0";
-const appVersionCode = 7;
+const appVersionCode = 8;
 
 contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
   version() {
@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld("hotelOpsDesktopShell", {
   },
   notify(payload) {
     return ipcRenderer.invoke("hotelops-desktop-notify", {
-      title: typeof payload?.title === "string" ? payload.title : "Nodera Sistem",
+      title: typeof payload?.title === "string" ? payload.title : "HotelOps",
       body: typeof payload?.body === "string" ? payload.body : "Yeni is bildirimi",
       tag: typeof payload?.tag === "string" ? payload.tag : "",
       path: typeof payload?.path === "string" ? payload.path : ""

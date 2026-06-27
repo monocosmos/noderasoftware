@@ -357,7 +357,7 @@
       const nextBadgeCount = readUrgentBadgeCount();
       if (nextBadgeCount > lastBadgeCount) {
         notifyDesktop({
-          title: "Nodera Sistem",
+          title: "Acil Is Bildirimi",
           body: `${nextBadgeCount} acil is bildirimi var`,
           tag: `urgent-${nextBadgeCount}`
         });

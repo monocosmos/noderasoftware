@@ -1,7 +1,7 @@
 {
   "name": "@hotel-ops/desktop",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "HotelOps Windows WebView shell.",
   "author": "Nodera Software",
   "main": "src/main.cjs",
