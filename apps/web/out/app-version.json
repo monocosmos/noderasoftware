@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "updatedAt": "2026-06-26T23:20:31+03:00",
+  "updatedAt": "2026-06-27T14:05:00+03:00",
   "checkIntervalMs": 1800000,
   "platforms": {
     "desktop": {
-      "latestVersion": "1.0.2",
-      "latestCode": 7,
-      "minimumCode": 7,
+      "latestVersion": "1.0.3",
+      "latestCode": 8,
+      "minimumCode": 8,
       "downloadUrl": "/downloads/HotelOps-Setup-V1-x64.exe",
       "title": "Windows uygulamasi guncel degil",
       "message": "HotelOps Windows uygulamasinin yeni surumu hazir."
