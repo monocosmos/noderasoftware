@@ -11484,23 +11484,212 @@ function areaTextFromRecords(areas: HotelFloorAreaRecord[]) {
   return areas
     .slice()
     .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
-    .map((area) => area.label)
+    .map(areaInputLineFromRecord)
     .join("\n");
+}
+
+function areaInputLineFromRecord(area: Pick<HotelFloorAreaRecord, "kind" | "label">) {
+  if (area.kind === "DEPARTMENT_AREA") return `#${area.label}`;
+  if (area.kind === "GENERAL_AREA") return `*${area.label}`;
+  return area.label;
+}
+
+function floorAreaKindFromTextLabel(value: string): { label: string; kind: HotelFloorAreaRecord["kind"] } {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("#")) return { label: trimmed.slice(1).trim(), kind: "DEPARTMENT_AREA" };
+  if (trimmed.startsWith("*")) return { label: trimmed.slice(1).trim(), kind: "GENERAL_AREA" };
+  if (/^\d/.test(trimmed)) return { label: trimmed, kind: "ROOM" };
+  if (/^[A-Za-zÇĞİÖŞÜçğıöşü]/.test(trimmed)) return { label: trimmed, kind: "SALON" };
+  return { label: trimmed, kind: "GENERAL_AREA" };
+}
+
+function floorAreaKindLabel(kind: HotelFloorAreaRecord["kind"]) {
+  if (kind === "ROOM") return "Oda";
+  if (kind === "SALON") return "Salon";
+  if (kind === "DEPARTMENT_AREA") return "Departman Alanı";
+  return "Alan";
+}
+
+function floorAreaKindBadgeClass(kind: HotelFloorAreaRecord["kind"]) {
+  if (kind === "ROOM") return "badge-completed";
+  if (kind === "SALON") return "badge-inprogress";
+  if (kind === "DEPARTMENT_AREA") return "badge-housekeeping";
+  return "badge-pending";
+}
+
+function normalizeHotelFloorPlanFloors(floors: HotelFloorRecord[]) {
+  return sortHotelFloors(floors).map((floor) => ({
+    ...floor,
+    areas: floor.areas.map((area) => (
+      area.kind === "AREA"
+        ? { ...area, kind: floorAreaKindFromTextLabel(area.label).kind }
+        : area
+    ))
+  }));
 }
 
 function floorAreasFromText(text: string): HotelFloorAreaRecord[] {
   return text
-    .split(/[\n,]+/)
+    .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean)
-    .filter((value, index, values) => values.findIndex((item) => item.toLocaleLowerCase("tr-TR") === value.toLocaleLowerCase("tr-TR")) === index)
-    .map((label, index) => ({
+    .map(floorAreaKindFromTextLabel)
+    .filter((area) => area.label)
+    .filter((area, index, values) => values.findIndex((item) => item.label.toLocaleLowerCase("tr-TR") === area.label.toLocaleLowerCase("tr-TR")) === index)
+    .map((area, index) => ({
       id: `draft-area-${Date.now()}-${index}`,
-      label,
-      kind: /^\d+[A-Z]?$/.test(label.toLocaleUpperCase("tr-TR")) ? "ROOM" : "AREA",
+      label: area.label,
+      kind: area.kind,
       sortOrder: index,
       visibleToDepartments: true
     }));
+}
+
+function csvEscapeCell(value: unknown) {
+  const text = String(value ?? "");
+  if (/[",\r\n;]/.test(text)) return `"${text.replace(/"/g, "\"\"")}"`;
+  return text;
+}
+
+function downloadCsvFile(filename: string, rows: unknown[][]) {
+  const csv = rows.map((row) => row.map(csvEscapeCell).join(",")).join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadHotelFloorPlanCsv(floors: HotelFloorRecord[]) {
+  const rows: unknown[][] = [["level", "floorName", "areaLabel", "areaKind", "visibleToDepartments", "floorSortOrder", "areaSortOrder"]];
+  sortHotelFloors(floors).forEach((floor, floorIndex) => {
+    const sortedAreas = floor.areas.slice().sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"));
+    if (!sortedAreas.length) {
+      rows.push([floor.level, floor.name || defaultFloorName(floor.level), "", "", "", floor.sortOrder ?? floorIndex, ""]);
+      return;
+    }
+    sortedAreas.forEach((area, areaIndex) => {
+      rows.push([
+        floor.level,
+        floor.name || defaultFloorName(floor.level),
+        area.label,
+        area.kind === "AREA" ? floorAreaKindFromTextLabel(area.label).kind : area.kind,
+        area.visibleToDepartments !== false ? "true" : "false",
+        floor.sortOrder ?? floorIndex,
+        area.sortOrder ?? areaIndex
+      ]);
+    });
+  });
+  downloadCsvFile(`hotel-kat-plani-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+}
+
+function parseCsvRows(text: string) {
+  const source = text.replace(/^\uFEFF/, "");
+  const firstLine = source.split(/\r?\n/, 1)[0] ?? "";
+  const delimiter = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ";" : ",";
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (quoted) {
+      if (char === "\"" && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+    } else if (char === "\"") {
+      quoted = true;
+    } else if (char === delimiter) {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell.replace(/\r$/, ""));
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  row.push(cell.replace(/\r$/, ""));
+  rows.push(row);
+  return rows.filter((items) => items.some((item) => item.trim()));
+}
+
+function csvHeaderKey(value: string) {
+  return value.trim().toLocaleLowerCase("tr-TR").replace(/[\s_-]+/g, "");
+}
+
+function csvBoolean(value: string, fallback = true) {
+  const normalized = value.trim().toLocaleLowerCase("tr-TR");
+  if (!normalized) return fallback;
+  return ["true", "1", "evet", "yes", "görünür", "gorunur"].includes(normalized);
+}
+
+function csvAreaKind(value: string, fallback: HotelFloorAreaRecord["kind"]): HotelFloorAreaRecord["kind"] {
+  const normalized = value.trim().toLocaleUpperCase("tr-TR").replace(/[\s-]+/g, "_");
+  if (!normalized) return fallback;
+  if (["ROOM", "ODA", "MISAFIR_ODASI", "MİSAFİR_ODASI"].includes(normalized)) return "ROOM";
+  if (["SALON", "EVENT", "EVENT_AREA"].includes(normalized)) return "SALON";
+  if (["DEPARTMENT_AREA", "DEPARTMAN_ALANI", "DEPARTMAN"].includes(normalized)) return "DEPARTMENT_AREA";
+  if (["GENERAL_AREA", "AREA", "ALAN", "GENEL_ALAN"].includes(normalized)) return "GENERAL_AREA";
+  return fallback;
+}
+
+function parseHotelFloorPlanCsv(text: string): HotelFloorRecord[] {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(csvHeaderKey);
+  const read = (row: string[], keys: string[]) => {
+    const index = keys.map(csvHeaderKey).map((key) => headers.indexOf(key)).find((candidate) => candidate >= 0);
+    return index === undefined || index < 0 ? "" : row[index] ?? "";
+  };
+  const floorsByLevel = new Map<number, HotelFloorRecord>();
+  rows.slice(1).forEach((row, rowIndex) => {
+    const level = Number(read(row, ["level", "kat", "katSeviyesi", "floorLevel"]));
+    if (!Number.isFinite(level)) return;
+    const floorName = read(row, ["floorName", "katAdi", "katAdı", "floor"]).trim() || defaultFloorName(level);
+    const floorSortOrder = Number(read(row, ["floorSortOrder", "katSira", "katSıra"]));
+    const floor = floorsByLevel.get(level) ?? {
+      id: `csv-floor-${level}`,
+      level,
+      name: floorName,
+      sortOrder: Number.isFinite(floorSortOrder) ? floorSortOrder : rowIndex,
+      areas: []
+    };
+    floor.name = floorName;
+    floorsByLevel.set(level, floor);
+
+    const rawAreaLabel = read(row, ["areaLabel", "alanAdi", "alanAdı", "oda", "label"]).trim();
+    if (!rawAreaLabel) return;
+    const parsedArea = floorAreaKindFromTextLabel(rawAreaLabel);
+    const areaKind = csvAreaKind(read(row, ["areaKind", "alanTipi", "kind", "type"]), parsedArea.kind);
+    const areaSortOrder = Number(read(row, ["areaSortOrder", "alanSira", "alanSıra"]));
+    const key = floorPlanAreaKey(parsedArea.label);
+    if (floor.areas.some((area) => floorPlanAreaKey(area.label) === key)) return;
+    floor.areas.push({
+      id: `csv-area-${level}-${rowIndex}`,
+      label: parsedArea.label,
+      kind: areaKind,
+      sortOrder: Number.isFinite(areaSortOrder) ? areaSortOrder : floor.areas.length,
+      visibleToDepartments: csvBoolean(read(row, ["visibleToDepartments", "gorunurluk", "görünürlük", "visible"]), true)
+    });
+  });
+  return sortHotelFloors(Array.from(floorsByLevel.values()).map((floor, floorIndex) => ({
+    ...floor,
+    sortOrder: Number.isFinite(floor.sortOrder) ? floor.sortOrder : floorIndex,
+    areas: floor.areas.slice().sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
+  })));
 }
 
 function hotelLocationLabel(floor: Pick<HotelFloorRecord, "name" | "level">, area: Pick<HotelFloorAreaRecord, "label">) {
@@ -11517,6 +11706,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
   const [groundName, setGroundName] = useState("L Zemin Kat");
   const [areaTextByLevel, setAreaTextByLevel] = useState<Record<string, string>>({});
   const [showPlanOutput, setShowPlanOutput] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!canUseAccess(session, "featureHotelFloorPlanning")) return;
@@ -11526,7 +11716,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
       try {
         const response = await apiRequest<{ floors: HotelFloorRecord[] }>("/hotel-floor-plan");
         if (!cancelled) {
-          const loadedFloors = sortHotelFloors(response.floors);
+          const loadedFloors = normalizeHotelFloorPlanFloors(response.floors);
           setFloors(loadedFloors);
           setAreaTextByLevel(Object.fromEntries(loadedFloors.map((floor) => [String(floor.level), areaTextFromRecords(floor.areas)])));
         }
@@ -11580,6 +11770,27 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
     });
   };
 
+  const importFloorPlanCsv = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const importedFloors = parseHotelFloorPlanCsv(await file.text());
+      if (!importedFloors.length) {
+        setAlert("CSV dosyasında okunabilir kat planı bulunamadı.");
+        return;
+      }
+      setFloors(importedFloors);
+      setAreaTextByLevel(Object.fromEntries(importedFloors.map((floor) => [String(floor.level), areaTextFromRecords(floor.areas)])));
+      const importedGround = importedFloors.find((floor) => floor.level === 0);
+      if (importedGround) setGroundName(importedGround.name || defaultFloorName(0));
+      setAlert(`${importedFloors.length} kat CSV dosyasından yüklendi. Kalıcı yapmak için planı kaydedin.`);
+    } catch {
+      setAlert("CSV dosyası okunamadı. Kolonları ve dosya formatını kontrol edin.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
   const toggleAreaDepartmentVisibility = (floorLevel: number, areaId: string, visibleToDepartments: boolean) => {
     setFloors((current) => sortHotelFloors(current.map((floor) => (
       floor.level === floorLevel
@@ -11621,7 +11832,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         method: "PUT",
         body: JSON.stringify({ floors: payloadFloors })
       });
-      const savedFloors = sortHotelFloors(response.floors);
+      const savedFloors = normalizeHotelFloorPlanFloors(response.floors);
       setFloors(savedFloors);
       setAreaTextByLevel(Object.fromEntries(savedFloors.map((floor) => [String(floor.level), areaTextFromRecords(floor.areas)])));
       setAlert("Otel kat planı kaydedildi.");
@@ -11638,6 +11849,9 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
 
   const totalAreas = floors.reduce((sum, floor) => sum + floor.areas.length, 0);
   const roomCount = floors.reduce((sum, floor) => sum + floor.areas.filter((area) => area.kind === "ROOM").length, 0);
+  const salonCount = floors.reduce((sum, floor) => sum + floor.areas.filter((area) => area.kind === "SALON").length, 0);
+  const departmentAreaCount = floors.reduce((sum, floor) => sum + floor.areas.filter((area) => area.kind === "DEPARTMENT_AREA").length, 0);
+  const generalAreaCount = floors.reduce((sum, floor) => sum + floor.areas.filter((area) => area.kind === "GENERAL_AREA" || area.kind === "AREA").length, 0);
 
   return (
     <div className="ui-list-stack hotel-floor-planning-page">
@@ -11676,6 +11890,13 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
             <button type="button" className="btn btn-start" onClick={saveFloorPlan} disabled={saving || loading}>
               <Save size={15} /> {saving ? "Kaydediliyor" : "Planı Kaydet"}
             </button>
+            <button type="button" className="btn btn-secondary" onClick={() => downloadHotelFloorPlanCsv(floors)} disabled={loading || !floors.length}>
+              <Download size={15} /> CSV İndir
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => csvInputRef.current?.click()} disabled={loading}>
+              <Upload size={15} /> CSV Yükle
+            </button>
+            <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={importFloorPlanCsv} hidden />
           </div>
         </div>
       </div>
@@ -11685,6 +11906,9 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
         <div className="kpi-card pending"><div className="kpi-value">{floors.filter((floor) => floor.level === 0).length}</div><div className="kpi-label">Zemin</div></div>
         <div className="kpi-card delayed"><div className="kpi-value">{floors.filter((floor) => floor.level < 0).length}</div><div className="kpi-label">Alt kat</div></div>
         <div className="kpi-card completed"><div className="kpi-value">{roomCount}</div><div className="kpi-label">Oda</div></div>
+        <div className="kpi-card inprogress"><div className="kpi-value">{salonCount}</div><div className="kpi-label">Salon</div></div>
+        <div className="kpi-card pending"><div className="kpi-value">{departmentAreaCount}</div><div className="kpi-label">Departman Alanı</div></div>
+        <div className="kpi-card completed"><div className="kpi-value">{generalAreaCount}</div><div className="kpi-label">Alan</div></div>
       </div>
 
       {showPlanOutput && (
@@ -11716,7 +11940,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                             onChange={(event) => toggleAreaDepartmentVisibility(floor.level, area.id, event.target.checked)}
                             aria-label={`${area.label} departmanlarda görünsün`}
                           />
-                          <span className={`badge ${area.kind === "ROOM" ? "badge-completed" : "badge-pending"}`}>{area.kind === "ROOM" ? "Oda" : "Alan"}</span>
+                          <span className={`badge ${floorAreaKindBadgeClass(area.kind)}`}>{floorAreaKindLabel(area.kind)}</span>
                           <strong>{area.label}</strong>
                           <small>{area.visibleToDepartments !== false ? "Departmanlarda görünür" : "Sadece Teknik"}</small>
                         </label>
@@ -11751,7 +11975,7 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                 <input className="form-control" value={floor.name} onChange={(event) => updateFloor(floor.level, { name: event.target.value })} />
               </label>
               <label className="form-group">
-                <span className="form-label">Oda / alanlar</span>
+                <span className="form-label">Alan tanımları</span>
                 <textarea
                   className="form-control"
                   rows={4}
@@ -11766,12 +11990,12 @@ function HotelFloorPlanningPage({ session, setAlert }: RenderContext) {
                     setAreaTextByLevel((current) => ({ ...current, [String(floor.level)]: text }));
                     updateFloor(floor.level, { areas: nextAreas });
                   }}
-                  placeholder={"101, 102, 103\nNişantaşı toplantı salonu\nBresserie Restorant"}
+                  placeholder={"701\nSpago Teras\n#HK Deposu\n*Koridor"}
                 />
               </label>
               <div className="permission-preview-tags">
                 {floor.areas.map((area) => (
-                  <span key={`${floor.level}-${area.label}`} className={`badge ${area.kind === "ROOM" ? "badge-completed" : "badge-pending"}`}>{area.label}</span>
+                  <span key={`${floor.level}-${area.label}`} className={`badge ${floorAreaKindBadgeClass(area.kind)}`}>{floorAreaKindLabel(area.kind)}: {area.label}</span>
                 ))}
               </div>
             </div>

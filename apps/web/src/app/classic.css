@@ -5691,6 +5691,8 @@ textarea.form-control {
 .hotel-operation-legend-item.occupied { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
 .hotel-operation-legend-item.vacant { background: #f8fafc; border-color: #cbd5e1; color: #475569; }
 .hotel-operation-legend-item.department { background: #dcfce7; border-color: #86efac; color: #166534; }
+.hotel-operation-legend-item.meeting { background: #ecfeff; border-color: #67e8f9; color: #0e7490; }
+.hotel-operation-legend-item.area { background: #f5f3ff; border-color: #c4b5fd; color: #6d28d9; }
 
 .hotel-operation-summary-grid {
   display: grid;
@@ -5733,6 +5735,7 @@ textarea.form-control {
 .hotel-operation-summary-card.department { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
 .hotel-operation-summary-card.attention { background: #fffbeb; border-color: #fde68a; color: #92400e; }
 .hotel-operation-summary-card.meeting { background: #ecfeff; border-color: #a5f3fc; color: #0e7490; }
+.hotel-operation-summary-card.area { background: #f5f3ff; border-color: #ddd6fe; color: #6d28d9; }
 
 .hotel-operation-toolbar {
   display: flex;
@@ -5848,6 +5851,7 @@ textarea.form-control {
 .hotel-operation-area-tile.vacant { background: #f8fafc; border-color: #cbd5e1; }
 .hotel-operation-area-tile.department { background: #dcfce7; border-color: #86efac; }
 .hotel-operation-area-tile.meeting { background: #ecfeff; border-color: #67e8f9; }
+.hotel-operation-area-tile.area { background: #f5f3ff; border-color: #c4b5fd; }
 
 .hotel-operation-area-tile:hover {
   border-color: var(--classic-primary);
@@ -5865,10 +5869,10 @@ textarea.form-control {
 }
 
 .hotel-operation-tile-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -5876,6 +5880,7 @@ textarea.form-control {
 .hotel-operation-tile-head strong {
   font-size: 16px;
   font-weight: 900;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
@@ -5895,6 +5900,7 @@ textarea.form-control {
 .hotel-operation-status.vacant { background: #fff; border-color: #cbd5e1; color: #475569; }
 .hotel-operation-status.department { background: #fff; border-color: #86efac; color: #166534; }
 .hotel-operation-status.meeting { background: #fff; border-color: #67e8f9; color: #0e7490; }
+.hotel-operation-status.area { background: #fff; border-color: #c4b5fd; color: #6d28d9; }
 
 .hotel-operation-meta-row {
   display: flex;

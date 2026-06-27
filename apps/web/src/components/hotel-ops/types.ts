@@ -405,7 +405,7 @@ export type DepartmentTableDraft = {
 export type HotelFloorAreaRecord = {
   id: string;
   label: string;
-  kind: "ROOM" | "AREA";
+  kind: "ROOM" | "SALON" | "DEPARTMENT_AREA" | "GENERAL_AREA" | "AREA";
   sortOrder: number;
   visibleToDepartments: boolean;
 };

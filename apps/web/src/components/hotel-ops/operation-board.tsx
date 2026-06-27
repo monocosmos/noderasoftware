@@ -3,7 +3,8 @@ import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, 
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
 
-type OperationAreaTone = "occupied" | "vacant" | "department" | "meeting";
+type OperationAreaTone = "occupied" | "vacant" | "department" | "meeting" | "area";
+type NormalizedAreaKind = "ROOM" | "SALON" | "DEPARTMENT_AREA" | "GENERAL_AREA";
 
 type AreaStatus = {
   label: string;
@@ -119,7 +120,7 @@ export function HotelOperationBoard({
   const vacantCount = areaSummaries.filter((item) => item.status.tone === "vacant").length;
   const departmentCount = areaSummaries.filter((item) => item.status.tone === "department").length;
   const issueCount = areaSummaries.reduce((sum, item) => sum + item.issueCount, 0);
-  const meetingCount = areaSummaries.filter((item) => item.meetingPlan).length;
+  const salonCount = areaSummaries.filter((item) => normalizedAreaKind(item.area) === "SALON").length;
   const detailView = useMemo(() => {
     if (!detailAreaKey) return null;
     for (const floor of floors) {
@@ -148,7 +149,9 @@ export function HotelOperationBoard({
         <div className="hotel-operation-legend" aria-label="Durum renkleri">
           <span className="hotel-operation-legend-item occupied">Dolu</span>
           <span className="hotel-operation-legend-item vacant">Boş</span>
+          <span className="hotel-operation-legend-item meeting">Salon</span>
           <span className="hotel-operation-legend-item department">Departmanda</span>
+          <span className="hotel-operation-legend-item area">Alan</span>
         </div>
       </div>
 
@@ -157,7 +160,7 @@ export function HotelOperationBoard({
         <SummaryCard icon={<Home size={18} />} label="Boş" value={vacantCount} tone="vacant" />
         <SummaryCard icon={<Wrench size={18} />} label="Departmanda" value={departmentCount} tone="department" />
         <SummaryCard icon={<AlertTriangle size={18} />} label="Açık Aksiyon" value={issueCount} tone={issueCount ? "attention" : "vacant"} />
-        <SummaryCard icon={<CalendarDays size={18} />} label="Toplantı Planı" value={meetingCount} tone="meeting" />
+        <SummaryCard icon={<CalendarDays size={18} />} label="Salon" value={salonCount} tone="meeting" />
       </div>
 
       <div className="hotel-operation-toolbar">
@@ -224,7 +227,7 @@ export function HotelOperationBoard({
                               <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
                             </span>
                             <span className="hotel-operation-meta-row">
-                              <span>{area.kind === "ROOM" ? "Oda" : "Alan"}</span>
+                              <span>{areaKindLabel(area)}</span>
                               {view.status.departmentLabel ? <span>{view.status.departmentLabel}</span> : null}
                             </span>
                             {view.guestPlan ? (
@@ -336,6 +339,24 @@ function SummaryCard({ icon, label, tone, value }: { icon: ReactNode; label: str
   );
 }
 
+function normalizedAreaKind(area: HotelFloorAreaRecord): NormalizedAreaKind {
+  if (area.kind === "ROOM" || area.kind === "SALON" || area.kind === "DEPARTMENT_AREA" || area.kind === "GENERAL_AREA") {
+    return area.kind;
+  }
+  const label = area.label.trim();
+  if (/^\d/.test(label)) return "ROOM";
+  if (/^[A-Za-zÇĞİÖŞÜçğıöşü]/.test(label)) return "SALON";
+  return "GENERAL_AREA";
+}
+
+function areaKindLabel(area: HotelFloorAreaRecord) {
+  const kind = normalizedAreaKind(area);
+  if (kind === "ROOM") return "Oda";
+  if (kind === "SALON") return "Salon";
+  if (kind === "DEPARTMENT_AREA") return "Departman Alanı";
+  return "Alan";
+}
+
 function AreaNotePaper({
   onDetails,
   onEdit,
@@ -358,14 +379,14 @@ function AreaNotePaper({
         <span>{view.area.label}</span>
       </div>
       <div className="hotel-operation-note-actions">
-        {view.area.kind === "ROOM" ? (
+        {normalizedAreaKind(view.area) === "ROOM" ? (
           <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry}>
             {hasOpenEntry ? <LogOut size={13} /> : <LogIn size={13} />}
             {hasOpenEntry ? "Oda çıkışı aç" : "Oda girişi aç"}
           </button>
         ) : null}
         <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
-          <PenLine size={13} /> Odayı düzenlemeye al
+          <PenLine size={13} /> Alanı düzenlemeye al
         </button>
         <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onDetails}>
           <ClipboardList size={13} /> Detaylar
@@ -599,7 +620,7 @@ function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaVie
           </section>
 
           <section className="hotel-operation-detail-section">
-            <h4>Oda Aktiviteleri</h4>
+            <h4>Alan Aktiviteleri</h4>
             {view.activities.length ? (
               <div className="hotel-operation-activity-list">
                 {view.activities.map((activity) => (
@@ -726,11 +747,15 @@ function activityItemsForArea(
 
 function noteSummaryForArea(view: AreaView) {
   const leadIssue = view.issueCards[0];
+  const kind = normalizedAreaKind(view.area);
   if (view.meetingPlan) return `${view.meetingPlan.time} planı var. İhtiyaç: ${view.meetingPlan.needs}`;
   if (view.status.tone === "occupied") return view.guestPlan;
   if (leadIssue) return `${leadIssue.label} bekliyor: ${leadIssue.title}.`;
   if (view.status.tone === "department") return `${view.status.departmentLabel || "Departman"} üzerinde işlemde.`;
-  return view.area.kind === "ROOM" ? "Oda boş, açık aksiyon görünmüyor." : "Alan hazır, açık aksiyon görünmüyor.";
+  if (kind === "ROOM") return "Oda boş, açık aksiyon görünmüyor.";
+  if (kind === "SALON") return "Salon hazır, etkinlik veya aksiyon beklemiyor.";
+  if (kind === "DEPARTMENT_AREA") return "Departman alanı hazır, açık aksiyon görünmüyor.";
+  return "Alan hazır, açık aksiyon görünmüyor.";
 }
 
 function areaKeyFor(floor: HotelFloorRecord, area: HotelFloorAreaRecord) {
@@ -764,8 +789,9 @@ function statusForArea(
   ].join(" ").toLocaleLowerCase("tr-TR");
   const leadJob = jobs[0];
   const leadRecord = records[0];
+  const kind = normalizedAreaKind(area);
 
-  if (statusText.includes("dolu") || jobs.some((job) => job.guestImpact && !isDepartmentWorkJob(job))) {
+  if (kind === "ROOM" && (statusText.includes("dolu") || jobs.some((job) => job.guestImpact && !isDepartmentWorkJob(job)))) {
     return { label: "Dolu", tone: "occupied" };
   }
 
@@ -778,8 +804,16 @@ function statusForArea(
     };
   }
 
-  if (isMeetingArea(area)) {
-    return { label: "Hazır", tone: "meeting" };
+  if (kind === "SALON") {
+    return { label: "Salon", tone: "meeting" };
+  }
+
+  if (kind === "DEPARTMENT_AREA") {
+    return { label: "Departman Alanı", tone: "department" };
+  }
+
+  if (kind === "GENERAL_AREA") {
+    return { label: "Alan", tone: "area" };
   }
 
   return { label: "Boş", tone: "vacant" };
@@ -838,7 +872,7 @@ function guestPlanForArea(
   roomEntry?: ScheduledRoomEntry,
   nowMs = Date.now()
 ) {
-  if (area.kind !== "ROOM") return "";
+  if (normalizedAreaKind(area) !== "ROOM") return "";
   if (roomEntry) {
     if (isRoomStayExited(roomEntry, nowMs)) return "";
     const guestLabel = roomEntry.guestName ? `Misafir · ${roomEntry.guestName}` : "";
@@ -865,6 +899,7 @@ function meetingPlanForArea(area: HotelFloorAreaRecord, records: OperationalReco
   if (!isMeetingArea(area)) return null;
   const jobSource = jobs[0];
   const recordSource = records[0];
+  if (!jobSource && !recordSource) return null;
   const sourceText = jobSource
     ? `${jobSource.due} ${jobSource.description} ${jobSource.tags}`
     : recordSource
@@ -957,9 +992,7 @@ function isVacantStatus(status: string) {
 }
 
 function isMeetingArea(area: HotelFloorAreaRecord) {
-  if (area.kind !== "AREA") return false;
-  const label = area.label.toLocaleLowerCase("tr-TR");
-  return ["toplantı", "toplanti", "meeting", "salon", "balo", "konferans", "board"].some((keyword) => label.includes(keyword));
+  return normalizedAreaKind(area) === "SALON";
 }
 
 function operationAreaLabelFromRecord(title: string) {

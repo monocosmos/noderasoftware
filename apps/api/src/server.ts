@@ -1919,7 +1919,7 @@ const departmentUpdateSchema = z.object({
 const hotelFloorAreaSchema = z.object({
   id: z.string().optional(),
   label: z.string().trim().min(1).max(120),
-  kind: z.enum(["ROOM", "AREA"]).optional().default("ROOM"),
+  kind: z.enum(["ROOM", "SALON", "DEPARTMENT_AREA", "GENERAL_AREA", "AREA"]).optional().default("ROOM"),
   sortOrder: z.number().int().min(0).max(9999).optional(),
   visibleToDepartments: z.boolean().optional().default(true)
 });
