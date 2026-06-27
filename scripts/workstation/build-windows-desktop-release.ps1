@@ -1,7 +1,12 @@
 param(
   [ValidateSet("all", "installer", "portable")]
   [string] $Target = "all",
-  [switch] $CopyToWebDownloads
+  [switch] $CopyToWebDownloads,
+  [string] $CertificatePath = $env:HOTELOPS_WINDOWS_CERT_PATH,
+  [string] $CertificatePassword = $env:HOTELOPS_WINDOWS_CERT_PASSWORD,
+  [string] $TimestampServer = "http://timestamp.digicert.com",
+  [switch] $RequireSigning,
+  [switch] $SkipSigning
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +44,83 @@ function Resolve-Rcedit {
   if (Test-Path -LiteralPath $fallback) { return $fallback }
 
   throw "rcedit bulunamadi. Once electron-builder cache'i olusturulmali veya node_modules kurulmalidir."
+}
+
+function Resolve-SignTool {
+  $fromPath = Get-Command signtool.exe -ErrorAction SilentlyContinue
+  if ($fromPath) { return $fromPath.Source }
+
+  $kitRoots = @(
+    "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
+    "${env:ProgramFiles}\Windows Kits\10\bin"
+  )
+
+  foreach ($kitRoot in $kitRoots) {
+    if (-not (Test-Path -LiteralPath $kitRoot)) { continue }
+    $candidate = Get-ChildItem -LiteralPath $kitRoot -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+      Sort-Object FullName -Descending |
+      Select-Object -First 1
+    if ($candidate) { return $candidate.FullName }
+  }
+
+  throw "signtool.exe bulunamadi. Windows SDK yuklenmeli veya signtool PATH'e eklenmeli."
+}
+
+function Test-CodeSigningConfigured {
+  if ($SkipSigning) { return $false }
+
+  if ($CertificatePath -and -not (Test-Path -LiteralPath $CertificatePath)) {
+    throw "Code signing sertifikasi bulunamadi: $CertificatePath"
+  }
+
+  if (($CertificatePath -and -not $CertificatePassword) -or ($CertificatePassword -and -not $CertificatePath)) {
+    throw "Code signing icin hem CertificatePath hem CertificatePassword gerekli."
+  }
+
+  if ($CertificatePath -and $CertificatePassword) { return $true }
+
+  if ($RequireSigning) {
+    throw "Code signing sertifikasi yok. HOTELOPS_WINDOWS_CERT_PATH/HOTELOPS_WINDOWS_CERT_PASSWORD belirtin veya -CertificatePath/-CertificatePassword kullanin."
+  }
+
+  return $false
+}
+
+function Invoke-CodeSignFile {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    throw "Imzalanacak dosya bulunamadi: $Path"
+  }
+
+  & $script:SignToolPath sign /f $CertificatePath /p $CertificatePassword /fd SHA256 /td SHA256 /tr $TimestampServer /v $Path
+  if ($LASTEXITCODE -ne 0) {
+    throw "Imzalama basarisiz oldu: $Path"
+  }
+
+  $signature = Get-AuthenticodeSignature -LiteralPath $Path
+  if ($signature.Status -ne "Valid") {
+    throw "Imza dogrulamasi basarisiz: $Path ($($signature.Status): $($signature.StatusMessage))"
+  }
+}
+
+function Invoke-CodeSignTree {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Directory
+  )
+
+  $files = Get-ChildItem -LiteralPath $Directory -Recurse -File -ErrorAction Stop |
+    Where-Object { $_.Extension -in @(".exe", ".dll") } |
+    Sort-Object FullName
+
+  foreach ($file in $files) {
+    Invoke-CodeSignFile -Path $file.FullName
+  }
 }
 
 function Invoke-NpmDesktop {
@@ -88,8 +170,8 @@ function Update-DesktopAppVersionManifest {
   )
 
   $manifestPaths = @(
-    Join-Path $root "apps\web\public\app-version.json",
-    Join-Path $root "apps\web\out\app-version.json"
+    (Join-Path $root "apps\web\public\app-version.json"),
+    (Join-Path $root "apps\web\out\app-version.json")
   )
 
   foreach ($manifestPath in $manifestPaths) {
@@ -117,6 +199,14 @@ function Update-DesktopAppVersionManifest {
 
 if (-not (Test-Path -LiteralPath $desktopIcon)) {
   throw "Desktop icon bulunamadi: $desktopIcon"
+}
+
+$signingEnabled = Test-CodeSigningConfigured
+if ($signingEnabled) {
+  $script:SignToolPath = Resolve-SignTool
+  Write-Host "Windows code signing aktif: $CertificatePath"
+} else {
+  Write-Warning "Windows code signing kapali. Installer baska bilgisayarlarda 'Bilinmeyen yayinci' uyarisi gosterebilir."
 }
 
 $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
@@ -149,6 +239,10 @@ if ($metadata.VersionInfo.ProductVersion -ne $version -or $metadata.VersionInfo.
   throw "Desktop exe metadata dogrulamasi basarisiz oldu."
 }
 
+if ($signingEnabled) {
+  Invoke-CodeSignTree -Directory $unpackedDir
+}
+
 $baseArgs = @(
   "exec",
   "--workspace",
@@ -163,12 +257,22 @@ $packagedArgs = @(
   "--config.win.signAndEditExecutable=false"
 )
 
+$builtArtifacts = @()
+
 if ($Target -eq "all" -or $Target -eq "installer") {
   Invoke-NpmDesktop ($baseArgs + @("--win", "nsis") + $packagedArgs + @('--config.win.artifactName=HotelOps-Setup-V1-${arch}.${ext}', "--config.nsis.installerIcon=build/icon.ico", "--config.nsis.uninstallerIcon=build/icon.ico"))
+  $builtArtifacts += (Join-Path $releaseDir "HotelOps-Setup-V1-x64.exe")
 }
 
 if ($Target -eq "all" -or $Target -eq "portable") {
   Invoke-NpmDesktop ($baseArgs + @("--win", "portable") + $packagedArgs + @('--config.win.artifactName=HotelOps-Portable-V1-${arch}.${ext}'))
+  $builtArtifacts += (Join-Path $releaseDir "HotelOps-Portable-V1-x64.exe")
+}
+
+if ($signingEnabled) {
+  foreach ($artifact in $builtArtifacts) {
+    Invoke-CodeSignFile -Path $artifact
+  }
 }
 
 if ($CopyToWebDownloads) {

@@ -1,39 +1,39 @@
 {
-  "schema": 1,
-  "updatedAt": "2026-06-27T14:05:00+03:00",
-  "checkIntervalMs": 1800000,
-  "platforms": {
-    "desktop": {
-      "latestVersion": "1.0.3",
-      "latestCode": 8,
-      "minimumCode": 8,
-      "downloadUrl": "/downloads/HotelOps-Setup-V1-x64.exe",
-      "title": "Windows uygulamasi guncel degil",
-      "message": "HotelOps Windows uygulamasinin yeni surumu hazir."
-    },
-    "android": {
-      "latestVersion": "1.0.22",
-      "latestCode": 2026061607,
-      "minimumCode": 2026061607,
-      "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
-      "title": "Android uygulamasi guncel degil",
-      "message": "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
-    },
-    "androidDirect": {
-      "latestVersion": "1.0.22",
-      "latestCode": 2026061607,
-      "minimumCode": 2026061607,
-      "downloadUrl": "/downloads/HotelOps-Android-V1.apk",
-      "title": "Android APK uygulamasi guncel degil",
-      "message": "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
-    },
-    "androidPlay": {
-      "latestVersion": "1.0.22",
-      "latestCode": 2026061607,
-      "minimumCode": 2026061607,
-      "downloadUrl": "https://play.google.com/store/apps/details?id=com.noderasoftware.hotelops",
-      "title": "Android Play Store uygulamasi guncel degil",
-      "message": "HotelOps Android Play Store kanalinin yeni surumu hazir."
-    }
-  }
+    "schema":  1,
+    "updatedAt":  "2026-06-27T16:01:23+03:00",
+    "checkIntervalMs":  1800000,
+    "platforms":  {
+                      "desktop":  {
+                                      "latestVersion":  "1.0.3",
+                                      "latestCode":  8,
+                                      "minimumCode":  8,
+                                      "downloadUrl":  "/downloads/HotelOps-Setup-V1-x64.exe",
+                                      "title":  "Windows uygulamasi guncel degil",
+                                      "message":  "HotelOps Windows uygulamasinin yeni surumu hazir."
+                                  },
+                      "android":  {
+                                      "latestVersion":  "1.0.22",
+                                      "latestCode":  2026061607,
+                                      "minimumCode":  2026061607,
+                                      "downloadUrl":  "/downloads/HotelOps-Android-V1.apk",
+                                      "title":  "Android uygulamasi guncel degil",
+                                      "message":  "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
+                                  },
+                      "androidDirect":  {
+                                            "latestVersion":  "1.0.22",
+                                            "latestCode":  2026061607,
+                                            "minimumCode":  2026061607,
+                                            "downloadUrl":  "/downloads/HotelOps-Android-V1.apk",
+                                            "title":  "Android APK uygulamasi guncel degil",
+                                            "message":  "HotelOps Android APK paketi yenilendi. Yeni APK ayri paket olarak kurulur ve paket cakismasi olusturmaz."
+                                        },
+                      "androidPlay":  {
+                                          "latestVersion":  "1.0.22",
+                                          "latestCode":  2026061607,
+                                          "minimumCode":  2026061607,
+                                          "downloadUrl":  "https://play.google.com/store/apps/details?id=com.noderasoftware.hotelops",
+                                          "title":  "Android Play Store uygulamasi guncel degil",
+                                          "message":  "HotelOps Android Play Store kanalinin yeni surumu hazir."
+                                      }
+                  }
 }

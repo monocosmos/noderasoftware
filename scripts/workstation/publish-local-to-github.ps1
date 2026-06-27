@@ -119,8 +119,8 @@ function Assert-HotelDesktopReleaseManifest {
   $desktopCode = Get-DesktopAppVersionCode
 
   foreach ($manifestPath in @(
-    Join-Path $RepoRoot "apps\web\public\app-version.json",
-    Join-Path $RepoRoot "apps\web\out\app-version.json"
+    (Join-Path $RepoRoot "apps\web\public\app-version.json"),
+    (Join-Path $RepoRoot "apps\web\out\app-version.json")
   )) {
     if (-not (Test-Path -LiteralPath $manifestPath)) {
       throw "App version manifest bulunamadi: $manifestPath"
@@ -140,10 +140,10 @@ function Assert-HotelDesktopReleaseManifest {
   }
 
   foreach ($downloadPath in @(
-    Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Setup-V1-x64.exe",
-    Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Portable-V1-x64.exe",
-    Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Setup-V1-x64.exe",
-    Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Portable-V1-x64.exe"
+    (Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Setup-V1-x64.exe"),
+    (Join-Path $RepoRoot "apps\web\public\downloads\HotelOps-Portable-V1-x64.exe"),
+    (Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Setup-V1-x64.exe"),
+    (Join-Path $RepoRoot "apps\web\out\downloads\HotelOps-Portable-V1-x64.exe")
   )) {
     if (-not (Test-Path -LiteralPath $downloadPath)) {
       throw "HotelOps desktop download dosyasi bulunamadi: $downloadPath"
