@@ -36,6 +36,7 @@ import {
   Trash2,
   Upload,
   Users,
+  UserX,
   Video,
   Wrench,
   X,
@@ -4911,6 +4912,7 @@ export function HotelOpsSystem() {
                 setFilters,
                 setJobDraft,
                 setManagementRequestDraft,
+                setManagementRequests,
                 setOperationDocumentDraft,
                 setJobs,
                 setNotifications,
@@ -5623,6 +5625,7 @@ function SidebarNav({
         ...(isPlatformAdminUser(session) ? [entry("hotel-panel", "hotelPanel", "/hotelpanel", "Otel Paneli", LayoutDashboard, undefined, "otel tenant hotel admin panel")] : []),
         entry("hotel-floor-planning", "featureHotelFloorPlanning", "/hotel-floor-planning", "Kat Planı", Home, undefined, "otel kat plan mimari oda alan"),
         entry("reports", "reports", "/reports", "Raporlar", BarChart3, undefined, "kpi audit"),
+        entry("accountdelete", "dashboard", "/accountdelete", "Hesap Silme Talebi", UserX, undefined, "hesap silme istifa ik kullanici"),
         entry("settings", "settings", "/settings", "Ayarlar", Settings, undefined, "sistem departman")
       ]
     }
@@ -5781,6 +5784,7 @@ function getPageTitle(path: string) {
   if (pathname === "/reports") return { title: "Raporlar", subtitle: "Departman iş akışı, Excel ve denetim" };
   if (pathname === "/reminders") return { title: "Hatırlatmalar", subtitle: "" };
   if (pathname === "/notifications") return { title: "Bildirimler", subtitle: "" };
+  if (pathname === "/accountdelete") return { title: "Hesap Silme Talebi", subtitle: "İstifa sonrası hesap kapatma başvurusu" };
   if (pathname === "/shift-panels") return { title: "Vardiya Paneli", subtitle: "Aylık çizelge ve Excel çıktısı" };
   if (pathname === "/app-settings") return { title: "Uygulama Ayarları", subtitle: "" };
   if (pathname === "/settings") return { title: "Ayarlar", subtitle: "" };
@@ -5845,6 +5849,7 @@ type RenderContext = {
   setDepartmentTables: (value: DepartmentTableRecord[] | ((value: DepartmentTableRecord[]) => DepartmentTableRecord[])) => void;
   setJobDraft: (value: JobDraft | ((value: JobDraft) => JobDraft)) => void;
   setManagementRequestDraft: (value: ManagementRequestDraft | ((value: ManagementRequestDraft) => ManagementRequestDraft)) => void;
+  setManagementRequests: (value: ManagementRequestRecord[] | ((value: ManagementRequestRecord[]) => ManagementRequestRecord[])) => void;
   setOperationDocumentDraft: (value: OperationDocumentDraft | ((value: OperationDocumentDraft) => OperationDocumentDraft)) => void;
   setJobs: (value: JobRecord[] | ((value: JobRecord[]) => JobRecord[])) => void;
   setNotifications: (value: NotificationRecord[] | ((value: NotificationRecord[]) => NotificationRecord[])) => void;
@@ -5885,6 +5890,7 @@ function accessForPath(path: string): AccessId {
   if (path === "/housekeeping") return "housekeeping";
   if (path.startsWith("/calendar")) return "departmentCalendar";
   if (path === "/reminders" || path === "/notifications") return "reminders";
+  if (path === "/accountdelete") return "dashboard";
   if (path === "/shift-panels") return "shiftPanels";
   if (path === "/department/materials") return "materialLists";
   if (path === "/users") return "users";
@@ -5920,6 +5926,7 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/reports") return <ReportsPage {...context} />;
   if (currentPath === "/reminders") return <RemindersPage {...context} />;
   if (currentPath === "/notifications") return <NotificationsPage {...context} />;
+  if (currentPath === "/accountdelete") return <AccountDeleteRequestPage {...context} />;
   if (currentPath === "/app-settings") return <AndroidAppSettingsPage {...context} />;
   if (currentPath === "/settings") return <SettingsPage {...context} />;
   if (currentPath === "/hotelpanel") return <HotelPanelPage {...context} />;
@@ -7226,6 +7233,143 @@ function EquipmentPreview() {
   return (
     <div className="module-helper strong">
       Zimmet, garanti ve bakım tarihi birlikte izlenir. Geciken iade veya yaklaşan garanti bitişi riskli kayıt olarak öne çıkar.
+    </div>
+  );
+}
+
+function AccountDeleteRequestPage({
+  departmentLabelFor,
+  session,
+  setAlert,
+  setManagementRequests
+}: RenderContext) {
+  const [draft, setDraft] = useState(() => ({
+    fullName: session.fullName,
+    username: session.username,
+    email: session.email,
+    accountId: session.accountId || session.id,
+    phone: "",
+    departmentName: departmentLabelFor(session.departmentId),
+    title: roleLabel(session.roleId),
+    resignationConfirmed: false,
+    note: ""
+  }));
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const confirmationText = "İstifa durumumu onaylayarak hesap silme talebi oluşturdum.";
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.resignationConfirmed) {
+      setAlert("Hesap silme talebi için istifa/onay kutusunu işaretleyin.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await apiRequest<ManagementRequestRecord>("/account-delete-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          ...draft,
+          confirmationText
+        })
+      });
+      setManagementRequests((current) => [created, ...current.filter((request) => request.id !== created.id)]);
+      setSubmitted(true);
+      setAlert("Hesap silme talebiniz İnsan Kaynakları'na iletildi.");
+    } catch (error) {
+      setAlert(error instanceof Error ? error.message : "Hesap silme talebi oluşturulamadı.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="settings-grid">
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Hesap Silme Talebi</span>
+          <span className="ui-meta">İnsan Kaynakları&apos;na iletilir</span>
+        </div>
+        <div className="card-body">
+          {submitted ? (
+            <div className="module-helper strong">
+              Hesap silme talebiniz oluşturuldu. Talep, İnsan Kaynakları ekranındaki Talepler modülüne düşmüştür.
+            </div>
+          ) : null}
+          <form onSubmit={handleSubmit} className="ui-form-stack">
+            <div className="form-grid two-cols">
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Ad Soyad <span className="required">*</span></label>
+                <input className="form-control" value={draft.fullName} onChange={(event) => setDraft((value) => ({ ...value, fullName: event.target.value }))} required />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Kullanıcı Adı <span className="required">*</span></label>
+                <input className="form-control" value={draft.username} onChange={(event) => setDraft((value) => ({ ...value, username: event.target.value }))} required />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">E-posta <span className="required">*</span></label>
+                <input className="form-control" type="email" value={draft.email} onChange={(event) => setDraft((value) => ({ ...value, email: event.target.value }))} required />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Hesap ID</label>
+                <input className="form-control" value={draft.accountId} onChange={(event) => setDraft((value) => ({ ...value, accountId: event.target.value }))} />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Departman</label>
+                <input className="form-control" value={draft.departmentName} onChange={(event) => setDraft((value) => ({ ...value, departmentName: event.target.value }))} />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Ünvan / Görev</label>
+                <input className="form-control" value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} />
+              </div>
+              <div className="form-group ui-form-compact">
+                <label className="form-label">Telefon</label>
+                <input className="form-control" value={draft.phone} onChange={(event) => setDraft((value) => ({ ...value, phone: event.target.value }))} />
+              </div>
+            </div>
+            <div className="form-group ui-form-compact">
+              <label className="form-label">Ek Not</label>
+              <textarea className="form-control" rows={4} value={draft.note} onChange={(event) => setDraft((value) => ({ ...value, note: event.target.value }))} placeholder="İK'nın bilmesini istediğiniz ek bilgileri yazabilirsiniz." />
+            </div>
+            <label className="guest-impact-check">
+              <input
+                type="checkbox"
+                checked={draft.resignationConfirmed}
+                onChange={(event) => setDraft((value) => ({ ...value, resignationConfirmed: event.target.checked }))}
+              />
+              <span>{confirmationText}</span>
+            </label>
+            <button type="submit" className="btn btn-danger btn-full" disabled={submitting || submitted}>
+              <UserX size={15} /> {submitting ? "Talep oluşturuluyor..." : submitted ? "Talep Oluşturuldu" : "Hesap Silme Talebi Oluştur"}
+            </button>
+          </form>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-header"><span className="card-title">Süreç</span></div>
+        <div className="card-body">
+          <div className="compact-request-list">
+            <div className="compact-request-row">
+              <span className="compact-request-main">
+                <strong>Talep kaydı</strong>
+                <span>Form gönderildiğinde kayıt Talepler modülüne düşer.</span>
+              </span>
+            </div>
+            <div className="compact-request-row">
+              <span className="compact-request-main">
+                <strong>İK değerlendirmesi</strong>
+                <span>İnsan Kaynakları talebi kabul, bekleme veya red durumuna alır.</span>
+              </span>
+            </div>
+            <div className="compact-request-row">
+              <span className="compact-request-main">
+                <strong>Hesap işlemi</strong>
+                <span>Silme/kapatma işlemi yetkili personel tarafından tamamlanır.</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

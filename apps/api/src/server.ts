@@ -1978,6 +1978,19 @@ const managementRequestSchema = z.object({
   body: z.string().optional().default("")
 });
 
+const accountDeleteRequestSchema = z.object({
+  fullName: z.string().min(2).max(120),
+  username: z.string().min(2).max(80),
+  email: z.string().email().max(180),
+  accountId: z.string().max(80).optional().default(""),
+  phone: z.string().max(40).optional().default(""),
+  departmentName: z.string().max(120).optional().default(""),
+  title: z.string().max(120).optional().default(""),
+  resignationConfirmed: z.literal(true),
+  confirmationText: z.string().min(10).max(240),
+  note: z.string().max(1200).optional().default("")
+});
+
 const managementRequestStatusSchema = z.object({
   status: z.enum(["OPEN", "PENDING", "ACCEPTED", "REJECTED"])
 });
@@ -2184,6 +2197,33 @@ async function managementRequestRecipientUsers(auth: AuthContext) {
     },
     include: userInclude,
     orderBy: [{ department: { code: "asc" } }, { role: { code: "asc" } }, { fullName: "asc" }]
+  });
+}
+
+async function accountDeleteRequestRecipient(auth: AuthContext) {
+  const recipient = await prisma.user.findFirst({
+    where: {
+      hotelId: auth.hotelId,
+      deletedAt: null,
+      isActive: true,
+      id: { not: auth.userId },
+      role: { code: "hrManager" }
+    },
+    include: userInclude,
+    orderBy: { fullName: "asc" }
+  });
+  if (recipient) return recipient;
+
+  return prisma.user.findFirst({
+    where: {
+      hotelId: auth.hotelId,
+      deletedAt: null,
+      isActive: true,
+      id: { not: auth.userId },
+      role: { code: "generalManager" }
+    },
+    include: userInclude,
+    orderBy: { fullName: "asc" }
   });
 }
 
@@ -6672,6 +6712,67 @@ app.post("/management-requests", authenticate, requireModuleAccess("managementRe
     }
   ));
   await audit(req, "ManagementRequest", created.id, "CREATE", null, serializeManagementRequest(created));
+  res.status(201).json(serializeManagementRequest(created));
+}));
+
+app.post("/account-delete-requests", authenticate, asyncHandler(async (req, res) => {
+  const payload = accountDeleteRequestSchema.parse(req.body);
+  const recipient = await accountDeleteRequestRecipient(req.auth!);
+  if (!recipient) {
+    res.status(409).json({ error: "HR_RECIPIENT_NOT_FOUND" });
+    return;
+  }
+
+  const bodyLines = [
+    "Hesap silme talebi oluşturuldu.",
+    "",
+    `Ad soyad: ${payload.fullName}`,
+    `Kullanıcı adı: ${payload.username}`,
+    `E-posta: ${payload.email}`,
+    `Hesap ID: ${payload.accountId || req.user?.accountId || req.auth!.userId}`,
+    `Departman: ${payload.departmentName || req.user?.department.code || "-"}`,
+    `Ünvan/Görev: ${payload.title || "-"}`,
+    payload.phone ? `Telefon: ${payload.phone}` : "",
+    "",
+    "Onay beyanı:",
+    payload.confirmationText,
+    payload.note ? "" : "",
+    payload.note ? "Ek not:" : "",
+    payload.note || ""
+  ].filter((line) => line !== "").join("\n");
+
+  const created = await prisma.managementRequest.create({
+    data: {
+      hotelId: req.auth!.hotelId,
+      createdById: req.auth!.userId,
+      recipientId: recipient.id,
+      relatedUserId: req.auth!.userId,
+      title: "Hesap silme talebi",
+      body: bodyLines
+    },
+    include: { createdBy: { include: userInclude }, recipient: { include: userInclude }, relatedUser: { include: userInclude }, readBy: { include: userInclude } }
+  });
+
+  await createNotificationsAndPush(await shiftAwareNotificationPayloads(
+    [recipient],
+    {
+      title: "Hesap silme talebi",
+      body: `${payload.fullName} hesabının silinmesi için talep oluşturdu.`
+    },
+    {
+      sound: notificationChannelOperationSound,
+      silent: notificationChannelOperationSilent
+    },
+    {
+      pushType: "management_request",
+      pushPath: "/modules/requests",
+      pushTag: `account-delete-request-${created.id}`
+    },
+    {
+      useOutsideShiftSoundPreference: true
+    }
+  ));
+  await audit(req, "ManagementRequest", created.id, "CREATE_ACCOUNT_DELETE_REQUEST", null, serializeManagementRequest(created));
   res.status(201).json(serializeManagementRequest(created));
 }));
 
