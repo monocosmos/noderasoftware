@@ -5840,8 +5840,9 @@ textarea.form-control {
   width: 100%;
   min-height: 112px;
   padding: 10px;
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   text-align: left;
   cursor: pointer;
@@ -5864,8 +5865,11 @@ textarea.form-control {
 }
 
 .hotel-operation-tile-main {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 7px;
+  min-height: 0;
 }
 
 .hotel-operation-tile-head {
@@ -5906,6 +5910,7 @@ textarea.form-control {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: auto;
 }
 
 .hotel-operation-meta-row span {
@@ -5917,6 +5922,21 @@ textarea.form-control {
   font-size: 10px;
   font-weight: 750;
 }
+
+.hotel-operation-meta-row .hotel-operation-status {
+  width: max-content;
+  max-width: 100%;
+  font-weight: 850;
+  line-height: 1.15;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.hotel-operation-meta-row .hotel-operation-status.occupied { background: #fff; border-color: #fca5a5; color: #b91c1c; }
+.hotel-operation-meta-row .hotel-operation-status.vacant { background: #fff; border-color: #cbd5e1; color: #475569; }
+.hotel-operation-meta-row .hotel-operation-status.department { background: #fff; border-color: #86efac; color: #166534; }
+.hotel-operation-meta-row .hotel-operation-status.meeting { background: #fff; border-color: #67e8f9; color: #0e7490; }
+.hotel-operation-meta-row .hotel-operation-status.area { background: #fff; border-color: #c4b5fd; color: #6d28d9; }
 
 .hotel-operation-note {
   display: inline-flex;
