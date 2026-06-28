@@ -5828,10 +5828,6 @@ textarea.form-control {
   gap: 8px;
 }
 
-.hotel-operation-area-cell.expanded {
-  grid-column: auto;
-}
-
 .hotel-operation-area-tile {
   border: 1px solid var(--classic-border);
   border-radius: var(--classic-radius);
@@ -5857,11 +5853,6 @@ textarea.form-control {
 .hotel-operation-area-tile:hover {
   border-color: var(--classic-primary);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-}
-
-.hotel-operation-area-tile[aria-expanded="true"] {
-  border-color: var(--classic-primary);
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
 }
 
 .hotel-operation-tile-main {
@@ -5969,14 +5960,25 @@ textarea.form-control {
   font-weight: 900;
 }
 
+.hotel-operation-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: transparent;
+}
+
 .hotel-operation-note-paper {
+  position: fixed;
+  width: min(252px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
   border: 1px solid rgba(245, 158, 11, 0.28);
   border-radius: 8px;
   background: linear-gradient(180deg, #fffbeb 0%, #fff 100%);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.10);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
   padding: 8px;
   display: grid;
   gap: 7px;
+  overflow: auto;
 }
 
 .hotel-operation-note-paper-status {
@@ -7750,9 +7752,6 @@ button.hotel-operation-activity-row {
   .hotel-operation-area-grid {
     grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
     gap: 8px;
-  }
-  .hotel-operation-area-cell.expanded {
-    grid-column: 1 / -1;
   }
   .hotel-operation-area-tile {
     border-radius: 8px;

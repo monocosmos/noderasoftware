@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, Home, LogIn, LogOut, PenLine, X, Users, Wrench } from "lucide-react";
 import { EmptyState } from "./ui-common";
 import type { HotelFloorAreaRecord, HotelFloorRecord, JobRecord, OperationalRecord } from "./types";
@@ -99,7 +99,7 @@ export function HotelOperationBoard({
   showAllFloors: boolean;
   onOpenJobDetail: (jobId: string) => void;
 }) {
-  const [expandedAreaKey, setExpandedAreaKey] = useState("");
+  const [areaMenu, setAreaMenu] = useState<{ areaKey: string; x: number; y: number } | null>(null);
   const [detailAreaKey, setDetailAreaKey] = useState("");
   const [entryAreaKey, setEntryAreaKey] = useState("");
   const [roomEntries, setRoomEntries] = useState<Record<string, ScheduledRoomEntry>>({});
@@ -108,6 +108,14 @@ export function HotelOperationBoard({
     const timer = window.setInterval(() => setNowTick(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!areaMenu) return undefined;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setAreaMenu(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [areaMenu]);
   const shortCodeFor = useMemo(
     () => departmentShortCodeFor ?? ((departmentId: string) => departmentAbbreviationFor(departmentId, departmentLabelFor)),
     [departmentLabelFor, departmentShortCodeFor]
@@ -137,6 +145,14 @@ export function HotelOperationBoard({
     }
     return null;
   }, [departmentLabelFor, detailAreaKey, floors, jobs, nowTick, records, roomEntries, shortCodeFor]);
+  const areaMenuView = useMemo(() => {
+    if (!areaMenu?.areaKey) return null;
+    for (const floor of floors) {
+      const area = floor.areas.find((candidate) => areaKeyFor(floor, candidate) === areaMenu.areaKey);
+      if (area) return areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
+    }
+    return null;
+  }, [areaMenu?.areaKey, departmentLabelFor, floors, jobs, nowTick, records, roomEntries, shortCodeFor]);
   const entryView = useMemo(() => {
     if (!entryAreaKey) return null;
     for (const floor of floors) {
@@ -145,6 +161,31 @@ export function HotelOperationBoard({
     }
     return null;
   }, [departmentLabelFor, entryAreaKey, floors, jobs, nowTick, records, roomEntries, shortCodeFor]);
+  const openAreaMenu = (event: MouseEvent<HTMLElement>, areaKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 260;
+    const menuHeight = 340;
+    setAreaMenu({
+      areaKey,
+      x: Math.max(12, Math.min(event.clientX, window.innerWidth - menuWidth - 12)),
+      y: Math.max(12, Math.min(event.clientY, window.innerHeight - menuHeight - 12))
+    });
+  };
+  const openAreaMenuFromKeyboard = (event: KeyboardEvent<HTMLElement>, areaKey: string) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setAreaMenu({
+      areaKey,
+      x: Math.max(12, Math.min(rect.left + 16, window.innerWidth - 272)),
+      y: Math.max(12, Math.min(rect.top + 16, window.innerHeight - 272))
+    });
+  };
+  const openAreaDetail = (areaKey: string) => {
+    setAreaMenu(null);
+    setDetailAreaKey(areaKey);
+  };
 
   return (
     <section className="hotel-operation-board" aria-label="Otel operasyon kat ve oda haritası">
@@ -217,21 +258,20 @@ export function HotelOperationBoard({
                     .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "tr-TR"))
                     .map((area) => {
                       const view = areaViewFor(floor, area, records, jobs, departmentLabelFor, shortCodeFor, roomEntries[areaKeyFor(floor, area)], nowTick);
-                      const isExpanded = expandedAreaKey === view.key;
-                      const canManageRoomEntry = canDepartmentEnterRoom(view.area, sessionDepartmentId);
-                      const entryBlockedReason = roomEntryBlockedReason(view, sessionDepartmentId, nowTick);
                       const dockTileStatus = shouldDockTileStatus(view);
                       const tileMetaLabels = tileMetaLabelsForView(view);
                       return (
                         <div
-                          className={`hotel-operation-area-cell ${isExpanded ? "expanded" : ""}`}
+                          className="hotel-operation-area-cell"
                           key={view.key}
                         >
                           <button
                             type="button"
                             className={`hotel-operation-area-tile ${view.status.tone}`}
-                            onClick={() => setExpandedAreaKey((current) => current === view.key ? "" : view.key)}
-                            aria-expanded={isExpanded}
+                            onClick={() => openAreaDetail(view.key)}
+                            onContextMenu={(event) => openAreaMenu(event, view.key)}
+                            onKeyDown={(event) => openAreaMenuFromKeyboard(event, view.key)}
+                            aria-haspopup="dialog"
                           >
                           <span className="hotel-operation-tile-main">
                             <span className="hotel-operation-tile-head">
@@ -259,20 +299,6 @@ export function HotelOperationBoard({
                             <span className="hotel-operation-compact-alert">{view.issueCards.length} açık kayıt</span>
                           ) : null}
                         </button>
-                        {isExpanded ? (
-                          <AreaNotePaper
-                            canManageRoomEntry={canManageRoomEntry}
-                            entryBlockedReason={entryBlockedReason}
-                            view={view}
-                            onEdit={() => onSelectArea(area)}
-                            onOpenEntry={() => {
-                              if (!entryBlockedReason) setEntryAreaKey(view.key);
-                            }}
-                            onDetails={() => {
-                              setDetailAreaKey(view.key);
-                            }}
-                          />
-                        ) : null}
                       </div>
                       );
                     })}
@@ -289,6 +315,37 @@ export function HotelOperationBoard({
           description={canViewFullPlan ? "Kat Planı ekranından oda ve toplantı alanlarını tanımlayın." : "Teknik tarafından departmanlara açılan oda veya alan bulunmuyor."}
         />
       )}
+      {areaMenu && areaMenuView ? (
+        <div
+          className="hotel-operation-menu-layer"
+          role="presentation"
+          onClick={() => setAreaMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setAreaMenu(null);
+          }}
+        >
+          <AreaContextMenu
+            canManageRoomEntry={canDepartmentEnterRoom(areaMenuView.area, sessionDepartmentId)}
+            entryBlockedReason={roomEntryBlockedReason(areaMenuView, sessionDepartmentId, nowTick)}
+            position={{ x: areaMenu.x, y: areaMenu.y }}
+            view={areaMenuView}
+            onClose={() => setAreaMenu(null)}
+            onEdit={() => {
+              setAreaMenu(null);
+              onSelectArea(areaMenuView.area);
+            }}
+            onOpenEntry={() => {
+              const entryBlockedReason = roomEntryBlockedReason(areaMenuView, sessionDepartmentId, nowTick);
+              if (!entryBlockedReason) {
+                setAreaMenu(null);
+                setEntryAreaKey(areaMenuView.key);
+              }
+            }}
+            onDetails={() => openAreaDetail(areaMenuView.key)}
+          />
+        </div>
+      ) : null}
       {detailView ? (
         <AreaDetailModal
           canOpenJobDetails={canOpenJobDetails}
@@ -438,19 +495,23 @@ function roomEntryBlockedReason(view: AreaView, departmentId: string, nowMs: num
   return "";
 }
 
-function AreaNotePaper({
+function AreaContextMenu({
   canManageRoomEntry,
   entryBlockedReason,
+  onClose,
   onDetails,
   onEdit,
   onOpenEntry,
+  position,
   view
 }: {
   canManageRoomEntry: boolean;
   entryBlockedReason: string;
+  onClose: () => void;
   onDetails: () => void;
   onEdit: () => void;
   onOpenEntry: () => void;
+  position: { x: number; y: number };
   view: AreaView;
 }) {
   const visibleIssues = view.issueCards.slice(0, 4);
@@ -458,22 +519,32 @@ function AreaNotePaper({
   const noteSummary = noteSummaryForArea(view);
 
   return (
-    <div className="hotel-operation-note-paper">
+    <div
+      className="hotel-operation-note-paper"
+      role="menu"
+      style={{ left: position.x, top: position.y }}
+      tabIndex={-1}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onClose();
+      }}
+    >
       <div className="hotel-operation-note-paper-status">
         <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
         <span>{view.area.label}</span>
       </div>
       <div className="hotel-operation-note-actions">
         {normalizedAreaKind(view.area) === "ROOM" && canManageRoomEntry ? (
-          <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry} disabled={Boolean(entryBlockedReason)} title={entryBlockedReason || undefined}>
+          <button type="button" role="menuitem" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry} disabled={Boolean(entryBlockedReason)} title={entryBlockedReason || undefined}>
             {hasOpenEntry ? <LogOut size={13} /> : <LogIn size={13} />}
             {entryBlockedReason ? "Misafir girişi bloklu" : hasOpenEntry ? "Misafir çıkışı aç" : "Misafir girişi aç"}
           </button>
         ) : null}
-        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
+        <button type="button" role="menuitem" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
           <PenLine size={13} /> Alanı düzenlemeye al
         </button>
-        <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onDetails}>
+        <button type="button" role="menuitem" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onDetails}>
           <ClipboardList size={13} /> Detaylar
         </button>
       </div>
