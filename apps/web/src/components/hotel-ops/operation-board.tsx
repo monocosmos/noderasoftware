@@ -214,6 +214,7 @@ export function HotelOperationBoard({
                       const isExpanded = expandedAreaKey === view.key;
                       const canManageRoomEntry = canDepartmentEnterRoom(view.area, sessionDepartmentId);
                       const entryBlockedReason = roomEntryBlockedReason(view, sessionDepartmentId, nowTick);
+                      const tileMetaLabels = tileMetaLabelsForView(view);
                       return (
                         <div
                           className={`hotel-operation-area-cell ${isExpanded ? "expanded" : ""}`}
@@ -230,10 +231,11 @@ export function HotelOperationBoard({
                               <strong>{area.label}</strong>
                               <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
                             </span>
-                            <span className="hotel-operation-meta-row">
-                              <span>{areaKindLabel(area)}</span>
-                              {view.status.departmentLabel ? <span>{view.status.departmentLabel}</span> : null}
-                            </span>
+                            {tileMetaLabels.length ? (
+                              <span className="hotel-operation-meta-row">
+                                {tileMetaLabels.map((label) => <span key={label}>{label}</span>)}
+                              </span>
+                            ) : null}
                             {view.guestPlan ? (
                               <span className="hotel-operation-note">
                                 <Clock size={13} /> {view.guestPlan}
@@ -282,6 +284,7 @@ export function HotelOperationBoard({
       {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
       {entryView && canDepartmentEnterRoom(entryView.area, sessionDepartmentId) && !roomEntryBlockedReason(entryView, sessionDepartmentId, nowTick) ? (
         <RoomEntryModal
+          departmentLabelFor={departmentLabelFor}
           view={entryView}
           onActivate={(entry) => {
             setRoomEntries((current) => ({
@@ -365,6 +368,20 @@ function areaKindLabel(area: HotelFloorAreaRecord) {
   return "Alan";
 }
 
+function tileMetaLabelsForView(view: AreaView) {
+  const statusLabel = view.status.label.trim().toLocaleLowerCase("tr-TR");
+  const seen = new Set<string>();
+  return [areaKindLabel(view.area), view.status.departmentLabel].reduce<string[]>((labels, label) => {
+    const trimmed = label?.trim();
+    if (!trimmed) return labels;
+    const normalized = trimmed.toLocaleLowerCase("tr-TR");
+    if (normalized === statusLabel || seen.has(normalized)) return labels;
+    seen.add(normalized);
+    labels.push(trimmed);
+    return labels;
+  }, []);
+}
+
 function uniqueDepartmentIds(ids: string[]) {
   return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
 }
@@ -431,7 +448,7 @@ function AreaNotePaper({
         {normalizedAreaKind(view.area) === "ROOM" && canManageRoomEntry ? (
           <button type="button" className="btn btn-primary btn-sm hotel-operation-note-action" onClick={onOpenEntry} disabled={Boolean(entryBlockedReason)} title={entryBlockedReason || undefined}>
             {hasOpenEntry ? <LogOut size={13} /> : <LogIn size={13} />}
-            {entryBlockedReason ? "Giriş bloklu" : hasOpenEntry ? "Oda çıkışı aç" : "Oda girişi aç"}
+            {entryBlockedReason ? "Misafir girişi bloklu" : hasOpenEntry ? "Misafir çıkışı aç" : "Misafir girişi aç"}
           </button>
         ) : null}
         <button type="button" className="btn btn-secondary btn-sm hotel-operation-note-action" onClick={onEdit}>
@@ -468,6 +485,7 @@ function AreaNotePaper({
 }
 
 function RoomEntryModal({
+  departmentLabelFor,
   onActivate,
   onActivateExit,
   onClose,
@@ -475,6 +493,7 @@ function RoomEntryModal({
   onScheduleExit,
   view
 }: {
+  departmentLabelFor: (departmentId: string) => string;
   onActivate: (entry: ScheduledRoomEntry) => void;
   onActivateExit: (exit: ScheduledRoomExit) => void;
   onClose: () => void;
@@ -512,7 +531,7 @@ function RoomEntryModal({
   const validateEntryDraft = (entry: ScheduledRoomEntry, immediate: boolean) => {
     const effectiveEntryAt = immediate ? Date.now() : entry.scheduledAt;
     if (entry.exitScheduledAt && entry.exitScheduledAt <= effectiveEntryAt) {
-      setError("Planlanan çıkış saati giriş saatinden sonra olmalı.");
+      setError("Planlanan misafir çıkış saati misafir giriş saatinden sonra olmalı.");
       return false;
     }
     setError("");
@@ -521,15 +540,15 @@ function RoomEntryModal({
   const validateExitDraft = (exit: ScheduledRoomExit) => {
     const earliestExitAt = Math.max(Date.now(), view.roomEntry?.activatedAt ?? view.roomEntry?.scheduledAt ?? Date.now());
     if (exit.scheduledAt <= earliestExitAt) {
-      setError("Planlanan çıkış saati şu andan ve giriş saatinden sonra olmalı.");
+      setError("Planlanan misafir çıkış saati şu andan ve misafir giriş saatinden sonra olmalı.");
       return false;
     }
     setError("");
     return true;
   };
-  const modalTitle = hasOpenEntry ? `${view.area.label} oda çıkışı` : `${view.area.label} oda girişi`;
+  const modalTitle = hasOpenEntry ? `${view.area.label} misafir çıkışı` : `${view.area.label} misafir girişi`;
   const modalIcon = hasOpenEntry ? <LogOut size={20} /> : <LogIn size={20} />;
-  const closeLabel = hasOpenEntry ? "Oda çıkışı penceresini kapat" : "Oda girişi penceresini kapat";
+  const closeLabel = hasOpenEntry ? "Misafir çıkışı penceresini kapat" : "Misafir girişi penceresini kapat";
   const handleScheduleEntry = () => {
     const draft = entryDraft();
     if (validateEntryDraft(draft, false)) onSchedule(draft);
@@ -546,6 +565,9 @@ function RoomEntryModal({
     setError("");
     onActivateExit({ scheduledAt: Date.now(), note: exitNote.trim() });
   };
+  const authorizedRoomEntryLabels = roomEntryDepartmentIdsForArea(view.area)
+    .map((departmentId) => departmentLabelFor(departmentId))
+    .join(", ") || "Yetkili departman yok";
 
   return (
     <div className="app-modal-overlay hotel-operation-entry-overlay" role="presentation" onClick={onClose}>
@@ -578,18 +600,18 @@ function RoomEntryModal({
           </label>
           {hasOpenEntry ? (
             <>
-              <div className="hotel-operation-entry-authority" aria-label="Tanımlı oda girişi">
-                <span>Tanımlı giriş</span>
+              <div className="hotel-operation-entry-authority" aria-label="Tanımlı misafir girişi">
+                <span>Tanımlı misafir girişi</span>
                 <strong>{formatScheduledEntryDate(view.roomEntry?.activatedAt ?? view.roomEntry?.scheduledAt ?? Date.now())}</strong>
-                <small>{view.roomEntry?.activatedAt ? "Anında giriş yapıldı" : "Saatli giriş planı"}</small>
+                <small>{view.roomEntry?.activatedAt ? "Anında misafir girişi yapıldı" : "Saatli misafir giriş planı"}</small>
               </div>
               <label className="form-group ui-form-compact">
-                <span className="form-label">Planlanan çıkış tarihi ve saati</span>
+                <span className="form-label">Planlanan misafir çıkış tarihi ve saati</span>
                 <input className="form-control" type="datetime-local" value={exitScheduledAt} onChange={(event) => setExitScheduledAt(event.target.value)} required />
               </label>
               <label className="form-group hotel-operation-entry-note">
-                <span className="form-label">Çıkış notu</span>
-                <textarea className="form-control" rows={3} value={exitNote} onChange={(event) => setExitNote(event.target.value)} placeholder="Çıkış notu" />
+                <span className="form-label">Misafir çıkış notu</span>
+                <textarea className="form-control" rows={3} value={exitNote} onChange={(event) => setExitNote(event.target.value)} placeholder="Misafir çıkış notu" />
               </label>
             </>
           ) : (
@@ -599,31 +621,31 @@ function RoomEntryModal({
                 <input className="form-control" value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Misafir adı" />
               </label>
               <label className="form-group ui-form-compact">
-                <span className="form-label">Planlanan giriş tarihi ve saati</span>
+                <span className="form-label">Planlanan misafir giriş tarihi ve saati</span>
                 <input className="form-control" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required />
               </label>
               <label className="form-group ui-form-compact">
-                <span className="form-label">Planlanan çıkış tarihi ve saati</span>
+                <span className="form-label">Planlanan misafir çıkış tarihi ve saati</span>
                 <input className="form-control" type="datetime-local" value={plannedExitAt} onChange={(event) => setPlannedExitAt(event.target.value)} />
               </label>
-              <div className="hotel-operation-entry-authority" aria-label="Oda girişi yetkilendirme bilgisi">
-                <span>Operasyon sahibi</span>
-                <strong>Ön Büro</strong>
-                <small>Bu yetki İnsan Kaynakları tarafından verilir.</small>
+              <div className="hotel-operation-entry-authority" aria-label="Misafir girişi yetkilendirme bilgisi">
+                <span>İK tanımlı yetki</span>
+                <strong>{authorizedRoomEntryLabels}</strong>
+                <small>Misafir giriş/çıkışını yalnız bu departman yönetebilir.</small>
               </div>
               <label className="form-group hotel-operation-entry-note">
-                <span className="form-label">Giriş notu</span>
-                <textarea className="form-control" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Giriş notu" />
+                <span className="form-label">Misafir giriş notu</span>
+                <textarea className="form-control" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Misafir giriş notu" />
               </label>
             </>
           )}
           {error ? <div className="hotel-operation-entry-error">{error}</div> : null}
           <div className="modal-actions hotel-operation-entry-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Vazgeç</button>
-            <button type="submit" className="btn btn-secondary">{hasOpenEntry ? "Çıkışı Planla" : "Girişi Planla"}</button>
+            <button type="submit" className="btn btn-secondary">{hasOpenEntry ? "Misafir Çıkışını Planla" : "Misafir Girişini Planla"}</button>
             <button type="button" className="btn btn-primary hotel-operation-entry-now" onClick={hasOpenEntry ? handleActivateExit : handleActivateEntry}>
               {hasOpenEntry ? <LogOut size={14} /> : <LogIn size={14} />}
-              {hasOpenEntry ? "Oda çıkışını yap" : "Oda girişini yap"}
+              {hasOpenEntry ? "Misafir çıkışını yap" : "Misafir girişini yap"}
             </button>
           </div>
         </form>
@@ -664,7 +686,7 @@ function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaVie
             <div className="hotel-operation-detail-plan">
               {view.guestPlan ? <p><Clock size={14} /> {view.guestPlan}</p> : null}
               {view.meetingPlan ? <p><CalendarDays size={14} /> {view.meetingPlan.time} · {view.meetingPlan.needs}</p> : null}
-              {!view.guestPlan && !view.meetingPlan ? <p>Giriş veya toplantı planı yok.</p> : null}
+              {!view.guestPlan && !view.meetingPlan ? <p>Misafir girişi veya toplantı planı yok.</p> : null}
             </div>
           </section>
 
@@ -925,23 +947,39 @@ function guestPlanForArea(
   if (roomEntry) {
     if (isRoomStayExited(roomEntry, nowMs)) return "";
     const guestLabel = roomEntry.guestName ? `Misafir · ${roomEntry.guestName}` : "";
-    const exitLabel = roomEntry.exitScheduledAt ? `Çıkış planı · ${formatScheduledEntryDate(roomEntry.exitScheduledAt)}` : "";
+    const exitLabel = roomEntry.exitScheduledAt ? `Misafir çıkış planı · ${formatScheduledEntryDate(roomEntry.exitScheduledAt)}` : "";
     if (isRoomEntryActive(roomEntry, nowMs)) return [exitLabel, guestLabel].filter(Boolean).join(" · ");
-    return [`Planlanan giriş · ${formatScheduledEntryDate(roomEntry.scheduledAt)}`, exitLabel, guestLabel].filter(Boolean).join(" · ");
+    return [`Planlanan misafir girişi · ${formatScheduledEntryDate(roomEntry.scheduledAt)}`, exitLabel, guestLabel].filter(Boolean).join(" · ");
   }
-  const sourceText = [
-    records[0]?.due,
-    records[0]?.meta,
-    records[0]?.detail,
-    jobs.find((job) => job.guestImpact)?.due,
-    jobs[0]?.due,
-    jobs[0]?.description
-  ].filter(Boolean).join(" ");
-  const time = findTime(sourceText);
-  const day = dateOrDayLabel(records[0]?.due || jobs.find((job) => job.guestImpact)?.due || jobs[0]?.due);
-  if (status.tone === "occupied") return `Misafir var · giriş ${time ? `${day} ${time}` : day}`;
-  if (status.tone === "department") return `Giriş ${time ? `${day} ${time}` : `${day} / saat bekliyor`}`;
-  return "Giriş planı yok";
+  const guestImpactJob = jobs.find((job) => job.guestImpact && !isDepartmentWorkJob(job));
+  if (status.tone === "occupied") {
+    const scheduleValue = records[0]?.due || guestImpactJob?.due;
+    const sourceText = [
+      scheduleValue,
+      records[0]?.meta,
+      records[0]?.detail,
+      guestImpactJob?.description
+    ].filter(Boolean).join(" ");
+    const time = findTime(sourceText);
+    const day = dateOrDayLabel(scheduleValue);
+    return `Misafir var · misafir girişi ${time ? `${day} ${time}` : day}`;
+  }
+  if (status.tone === "department") {
+    const scheduleValue = jobs[0]?.due || records[0]?.due;
+    const sourceText = [
+      scheduleValue,
+      jobs[0]?.description,
+      jobs[0]?.tags,
+      records[0]?.meta,
+      records[0]?.detail
+    ].filter(Boolean).join(" ");
+    const time = findTime(sourceText);
+    const day = scheduleValue ? dateOrDayLabel(scheduleValue) : "";
+    const schedule = time ? `${day || "Bugün"} ${time}` : day;
+    const departmentLabel = status.departmentLabel || "Departman";
+    return schedule ? `${departmentLabel} işlemde · hedef ${schedule}` : `${departmentLabel} işlemde`;
+  }
+  return "Misafir giriş planı yok";
 }
 
 function meetingPlanForArea(area: HotelFloorAreaRecord, records: OperationalRecord[], jobs: JobRecord[]): MeetingPlan | null {
