@@ -14,6 +14,7 @@ type AreaStatus = {
 
 type AreaIssueCard = {
   id: string;
+  jobId?: string;
   label: string;
   title: string;
   detail: string;
@@ -28,6 +29,7 @@ type MeetingPlan = {
 
 type AreaActivity = {
   id: string;
+  jobId?: string;
   sourceLabel: string;
   title: string;
   detail: string;
@@ -67,11 +69,13 @@ type AreaView = {
 };
 
 export function HotelOperationBoard({
+  canOpenJobDetails,
   canViewFullPlan,
   departmentLabelFor,
   departmentShortCodeFor,
   floors,
   jobs,
+  onOpenJobDetail,
   onSelectArea,
   onSelectFloorLevel,
   onToggleShowAllFloors,
@@ -80,6 +84,7 @@ export function HotelOperationBoard({
   sessionDepartmentId,
   showAllFloors
 }: {
+  canOpenJobDetails: boolean;
   canViewFullPlan: boolean;
   departmentLabelFor: (departmentId: string) => string;
   departmentShortCodeFor?: (departmentId: string) => string;
@@ -92,6 +97,7 @@ export function HotelOperationBoard({
   selectedFloorLevel: string;
   sessionDepartmentId: string;
   showAllFloors: boolean;
+  onOpenJobDetail: (jobId: string) => void;
 }) {
   const [expandedAreaKey, setExpandedAreaKey] = useState("");
   const [detailAreaKey, setDetailAreaKey] = useState("");
@@ -283,7 +289,14 @@ export function HotelOperationBoard({
           description={canViewFullPlan ? "Kat Planı ekranından oda ve toplantı alanlarını tanımlayın." : "Teknik tarafından departmanlara açılan oda veya alan bulunmuyor."}
         />
       )}
-      {detailView ? <AreaDetailModal view={detailView} onClose={() => setDetailAreaKey("")} /> : null}
+      {detailView ? (
+        <AreaDetailModal
+          canOpenJobDetails={canOpenJobDetails}
+          view={detailView}
+          onClose={() => setDetailAreaKey("")}
+          onOpenJobDetail={onOpenJobDetail}
+        />
+      ) : null}
       {entryView && canDepartmentEnterRoom(entryView.area, sessionDepartmentId) && !roomEntryBlockedReason(entryView, sessionDepartmentId, nowTick) ? (
         <RoomEntryModal
           departmentLabelFor={departmentLabelFor}
@@ -660,8 +673,22 @@ function RoomEntryModal({
   );
 }
 
-function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaView }) {
+function AreaDetailModal({
+  canOpenJobDetails,
+  onClose,
+  onOpenJobDetail,
+  view
+}: {
+  canOpenJobDetails: boolean;
+  onClose: () => void;
+  onOpenJobDetail: (jobId: string) => void;
+  view: AreaView;
+}) {
   const titleId = `hotel-operation-detail-${view.key}`;
+  const openJobDetail = (jobId: string) => {
+    onClose();
+    onOpenJobDetail(jobId);
+  };
 
   return (
     <div className="app-modal-overlay hotel-operation-detail-overlay" role="presentation" onClick={onClose}>
@@ -700,8 +727,15 @@ function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaVie
             <h4>Alan Aktiviteleri</h4>
             {view.activities.length ? (
               <div className="hotel-operation-activity-list">
-                {view.activities.map((activity) => (
-                  <article className={`hotel-operation-activity-row ${activity.risk}`} key={activity.id}>
+                {view.activities.map((activity) => {
+                  const canOpenActivity = canOpenJobDetails && Boolean(activity.jobId);
+                  const ActivityElement = canOpenActivity ? "button" : "article";
+                  return (
+                  <ActivityElement
+                    className={`hotel-operation-activity-row ${activity.risk} ${canOpenActivity ? "clickable" : ""}`}
+                    key={activity.id}
+                    {...(canOpenActivity ? { type: "button" as const, onClick: () => openJobDetail(activity.jobId!) } : {})}
+                  >
                     <span className="hotel-operation-issue-label">{activity.sourceLabel}</span>
                     <div>
                       <strong>{activity.title}</strong>
@@ -719,8 +753,9 @@ function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaVie
                       <small>Durum</small>
                       <span>{activity.status}</span>
                     </div>
-                  </article>
-                ))}
+                  </ActivityElement>
+                  );
+                })}
               </div>
             ) : (
               <div className="app-modal-empty">Bu oda veya alan için açık aktivite yok.</div>
@@ -731,14 +766,22 @@ function AreaDetailModal({ onClose, view }: { onClose: () => void; view: AreaVie
             <section className="hotel-operation-detail-section">
               <h4>Bekleyen Kartlar</h4>
               <div className="hotel-operation-issue-list expanded">
-                {view.issueCards.map((issue) => (
-                  <span key={issue.id} className={`hotel-operation-issue-card ${issue.risk}`}>
+                {view.issueCards.map((issue) => {
+                  const canOpenIssue = canOpenJobDetails && Boolean(issue.jobId);
+                  const IssueElement = canOpenIssue ? "button" : "span";
+                  return (
+                  <IssueElement
+                    key={issue.id}
+                    className={`hotel-operation-issue-card ${issue.risk} ${canOpenIssue ? "clickable" : ""}`}
+                    {...(canOpenIssue ? { type: "button" as const, onClick: () => openJobDetail(issue.jobId!) } : {})}
+                  >
                     <span className="hotel-operation-issue-label">{issue.label}</span>
                     <strong>{issue.title}</strong>
                     <small>{issue.detail}</small>
                     <small>{issue.due}</small>
-                  </span>
-                ))}
+                  </IssueElement>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -797,6 +840,7 @@ function activityItemsForArea(
 ): AreaActivity[] {
   const jobActivities = jobs.map((job) => ({
     id: `job-activity-${job.id}`,
+    jobId: job.id,
     sourceLabel: departmentRouteLabelForJob(job, departmentShortCodeFor),
     title: job.title,
     detail: job.description || job.tags,
@@ -904,6 +948,7 @@ function issueCardsForArea(
 ): AreaIssueCard[] {
   const jobCards = jobs.map((job) => ({
     id: `job-${job.id}`,
+    jobId: job.id,
     label: departmentRouteLabelForJob(job, departmentShortCodeFor),
     title: job.title,
     detail: `${issueLabelForJob(job)} · ${departmentLabelFor(job.departmentId)}`,

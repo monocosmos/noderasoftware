@@ -6107,6 +6107,21 @@ textarea.form-control {
   gap: 2px;
 }
 
+button.hotel-operation-issue-card,
+button.hotel-operation-activity-row {
+  appearance: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.hotel-operation-issue-card.clickable:hover,
+.hotel-operation-activity-row.clickable:hover {
+  border-color: var(--classic-primary);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+}
+
 .hotel-operation-issue-card.high,
 .hotel-operation-issue-card.urgent {
   border-left-color: #ef4444;

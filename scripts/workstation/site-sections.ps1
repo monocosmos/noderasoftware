@@ -80,6 +80,7 @@ function Get-NoderaSiteSection {
           "apps/desktop/build/icon.ico",
           "apps/desktop/build/icon.png",
           "apps/desktop/build/installer.nsh",
+          "apps/web/src/app/classic.css",
           "apps/web/src/app/hotel",
           "apps/web/src/app/[...slug]/page.tsx",
           "apps/web/src/sections/hotel",

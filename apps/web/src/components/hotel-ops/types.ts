@@ -52,6 +52,7 @@ export type FeatureAccessId =
   | "featureAuditLogs"
   | "featureDailyReport"
   | "featureHotelFloorPlanning"
+  | "featureOperationBoardJobDetail"
   | "featureMeterTrackingEdit";
 export type AccessId = ModuleId | DashboardPartId | FeatureAccessId;
 export type ModuleAccess = Record<AccessId, boolean>;

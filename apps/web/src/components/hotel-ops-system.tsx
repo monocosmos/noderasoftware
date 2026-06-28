@@ -1244,6 +1244,7 @@ const featureAccessOptions: Array<{ id: FeatureAccessId; label: string }> = [
   { id: "featureAuditLogs", label: "Denetim kayıtları" },
   { id: "featureDailyReport", label: "Gün sonu raporu" },
   { id: "featureHotelFloorPlanning", label: "Otel Kat planlaması" },
+  { id: "featureOperationBoardJobDetail", label: "Otel Operasyon iş detay görüntüleme" },
   { id: "featureMeterTrackingEdit", label: "Sayaç Takibi düzenleme" }
 ];
 
@@ -2543,6 +2544,14 @@ function canViewOriginatedJob(user: DemoUser, job: Pick<JobRecord, "createdBy" |
   return canTrackDepartmentOriginatedJobs() && job.createdByDepartmentId === user.departmentId;
 }
 
+function canViewJob(user: DemoUser, job: JobRecord) {
+  return canViewDepartment(user, job.departmentId) || canViewOriginatedJob(user, job);
+}
+
+function canOpenJobDetailPage(user: DemoUser) {
+  return canUseAccess(user, "jobs") || canUseAccess(user, "featureOperationBoardJobDetail");
+}
+
 function isIncomingDepartmentJob(user: DemoUser, job: Pick<JobRecord, "departmentId">) {
   if (user.roleId === "generalManager") return true;
   return job.departmentId === user.departmentId;
@@ -2728,6 +2737,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
       featureAuditLogs: false,
       featureDailyReport: false,
       featureHotelFloorPlanning: true,
+      featureOperationBoardJobDetail: false,
       featureMeterTrackingEdit: false
     };
   }
@@ -2782,6 +2792,7 @@ function defaultModuleAccess(user: Pick<DemoUser, "roleId" | "departmentId">): M
     featureAuditLogs: isManager || user.roleId === "hrManager",
     featureDailyReport: true,
     featureHotelFloorPlanning: user.roleId === "hrManager",
+    featureOperationBoardJobDetail: true,
     featureMeterTrackingEdit: false
   };
 }
@@ -4062,7 +4073,7 @@ export function HotelOpsSystem() {
 
   const visibleJobs = useMemo(() => {
     if (!session) return [];
-    return jobs.filter((job) => canViewDepartment(session, job.departmentId) || canViewOriginatedJob(session, job));
+    return jobs.filter((job) => canViewJob(session, job));
   }, [jobs, session]);
 
   const filteredJobs = useMemo(() => {
@@ -6034,6 +6045,12 @@ function accessForPath(path: string): AccessId {
 
 function renderPage(context: RenderContext) {
   const { currentPath } = context;
+  if (currentPath === "/jobs/detail") {
+    if (!canOpenJobDetailPage(context.session)) {
+      return <AccessDenied message="Bu iş detayı İnsan Kaynakları tarafından bu kullanıcı için kapatılmış." />;
+    }
+    return <JobDetailPage {...context} />;
+  }
   const accessId = accessForPath(currentPath);
   if (!canUseAccess(context.session, accessId)) {
     return <AccessDenied message="Bu modül İnsan Kaynakları tarafından bu kullanıcı için kapatılmış." />;
@@ -6041,7 +6058,6 @@ function renderPage(context: RenderContext) {
   if (currentPath === "/" || currentPath === "/dashboard" || currentPath === "/login") return <DashboardPage {...context} />;
   if (currentPath === "/jobs") return <JobsPage {...context} />;
   if (currentPath === "/jobs/new") return <JobFormPage {...context} />;
-  if (currentPath === "/jobs/detail") return <JobDetailPage {...context} />;
   if (currentPath === "/maintenance") return <CalendarPage {...context} />;
   if (currentPath === "/meter-tracking") return <MeterTrackingPage {...context} />;
   if (currentPath === "/housekeeping") return <HousekeepingPage {...context} />;
@@ -6562,6 +6578,7 @@ function OperationalModulePage({ departmentLabelFor, departmentShortCodeFor, nav
 
       {isRoomStatusModule && (
         <HotelOperationBoard
+          canOpenJobDetails={canUseAccess(session, "featureOperationBoardJobDetail")}
           canViewFullPlan={canViewFullFloorPlan(session)}
           departmentLabelFor={departmentLabelFor}
           departmentShortCodeFor={departmentShortCodeFor}
@@ -6573,6 +6590,7 @@ function OperationalModulePage({ departmentLabelFor, departmentShortCodeFor, nav
           showAllFloors={showAllOperationFloors}
           onSelectArea={selectOperationArea}
           onSelectFloorLevel={setSelectedOperationFloorLevel}
+          onOpenJobDetail={(jobId) => navigate(`/jobs/detail?id=${encodeURIComponent(jobId)}`)}
           onToggleShowAllFloors={() => setShowAllOperationFloors((current) => !current)}
         />
       )}
@@ -8645,6 +8663,9 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   }, [job?.id, job?.assigneeId]);
 
   if (!job) return <EmptyState title="Kayıt bulunamadı" description="Seçilen iş kaydı bulunamadı." />;
+  if (!canViewJob(session, job)) {
+    return <AccessDenied message="Bu iş kaydı İnsan Kaynakları ve departman kapsamı tarafından bu kullanıcı için kapatılmış." />;
+  }
   const checklistTotal = job.checklist.length;
   const checklistDone = job.status === "Completed" ? checklistTotal : Math.min(checklistTotal, Math.floor(checklistTotal / 2));
   const checklistPct = checklistTotal ? Math.round((checklistDone / checklistTotal) * 100) : 0;
@@ -8652,15 +8673,16 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
   const timeline = job.timeline ?? [];
   const detailView = queryParams.get("view");
   const isOutgoingDetail = detailView === "outgoing" || isOutgoingDepartmentJob(session, job);
-  const canDelayCurrentJob = !isOutgoingDetail && canDelayJob(session, job, departmentWorkPolicy);
-  const canClaimJob = !isOutgoingDetail && canClaimDepartmentJob(session, job);
-  const canAssignCurrentJob = !isOutgoingDetail && canAssignJob(session, job, departmentWorkPolicy);
-  const canCompleteCurrentJob = !isOutgoingDetail && canCompleteJob(session, job);
-  const canDeleteCurrentJob = canDeleteJob(session, job, departmentWorkPolicy) || canDeleteOutgoingJob(session, job);
+  const canOperateOnJobDetail = canUseModule(session, "jobs");
+  const canDelayCurrentJob = canOperateOnJobDetail && !isOutgoingDetail && canDelayJob(session, job, departmentWorkPolicy);
+  const canClaimJob = canOperateOnJobDetail && !isOutgoingDetail && canClaimDepartmentJob(session, job);
+  const canAssignCurrentJob = canOperateOnJobDetail && !isOutgoingDetail && canAssignJob(session, job, departmentWorkPolicy);
+  const canCompleteCurrentJob = canOperateOnJobDetail && !isOutgoingDetail && canCompleteJob(session, job);
+  const canDeleteCurrentJob = canOperateOnJobDetail && (canDeleteJob(session, job, departmentWorkPolicy) || canDeleteOutgoingJob(session, job));
   const assigneeOptions = detailAssignees.length ? detailAssignees : departmentAssignees.filter((user) => user.departmentId === job.departmentId);
   const participantOptions = assigneeOptions.filter((user) => user.id !== session.id && user.id !== job.assigneeId);
   const participantNames = (job.participants ?? []).map((user) => user.fullName).join(", ");
-  const canOpenHousekeepingJob = session.departmentId === "technical" && job.departmentId === "technical" && canCreateJobType(session, "Job") && canUseModule(session, "jobs");
+  const canOpenHousekeepingJob = canOperateOnJobDetail && session.departmentId === "technical" && job.departmentId === "technical" && canCreateJobType(session, "Job") && canUseModule(session, "jobs");
   const jobLocationLabel = [job.location || (job.room ? `Oda ${job.room}` : ""), job.locationDetail].filter(Boolean).join(" / ") || "-";
 
   const openHousekeepingJob = () => {
@@ -8796,7 +8818,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
           {canDelayCurrentJob && job.status !== "Delayed" && job.status !== "Completed" && <button type="button" className="btn btn-warning" onClick={() => updateJob({ status: "Delayed", priority: "High" })}>İşi Ertele</button>}
           {canClaimJob && <button type="button" className="btn btn-start" onClick={claimJob}><Wrench size={15} /> İşi Al</button>}
           {canCompleteCurrentJob && job.status !== "Completed" && <button type="button" className="btn btn-success" onClick={completeJob}>Tamamla</button>}
-          <button type="button" className="btn btn-secondary" onClick={openNoteComposer}><MessageSquareText size={15} /> Not Ekle</button>
+          {canOperateOnJobDetail && <button type="button" className="btn btn-secondary" onClick={openNoteComposer}><MessageSquareText size={15} /> Not Ekle</button>}
           {canOpenHousekeepingJob && <button type="button" className="btn btn-primary" onClick={openHousekeepingJob}><Home size={15} /> HK&apos;ya İş Aç</button>}
           <button type="button" className="btn btn-secondary" onClick={() => document.getElementById("job-detail-media")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Camera size={15} /> Medyayı Gör</button>
           {canDeleteCurrentJob && <button type="button" className="btn btn-danger" onClick={() => setDeleteConfirmOpen(true)} disabled={deleteSubmitting}><Trash2 size={15} /> Sil</button>}
@@ -8847,7 +8869,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
                 <section className="job-detail-section">
                   <div className="job-detail-section-header">
                     <h3>Notlar ({comments.length})</h3>
-                    <button type="button" className="btn btn-outline btn-sm" onClick={openNoteComposer}>Not Ekle</button>
+                    {canOperateOnJobDetail && <button type="button" className="btn btn-outline btn-sm" onClick={openNoteComposer}>Not Ekle</button>}
                   </div>
                   {comments.length ? comments.map((note) => (
                     <div className="note-item" key={note.id}>
@@ -8865,7 +8887,7 @@ function JobDetailPage({ departmentAssignees, departmentLabelFor, departmentWork
                   <div className="job-detail-section-header">
                     <h3>Medya ({job.photos?.length ?? 0})</h3>
                   </div>
-                  {canUseAccess(session, "featureBeforeAfterPhotos") && <div className="two-column-grid media-upload-grid ui-section-bottom-xs">
+                  {canOperateOnJobDetail && canUseAccess(session, "featureBeforeAfterPhotos") && <div className="two-column-grid media-upload-grid ui-section-bottom-xs">
                     <div className="media-upload-panel">
                       <div className="info-label ui-section-bottom-xs">Önce Medyası</div>
                       <PhotoPicker phase="BEFORE" photos={beforePhotos} setPhotos={setBeforePhotos} />
