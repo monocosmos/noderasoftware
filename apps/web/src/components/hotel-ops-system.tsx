@@ -9546,7 +9546,7 @@ function UsersPage({
   };
 
   return (
-    <div className="side-panel-grid">
+    <div className="side-panel-grid users-management-grid">
       <div className="card">
         <div className="card-header">
           <span className="card-title">{usersTitle}</span>
@@ -9649,12 +9649,13 @@ function UsersPage({
         )}
       </div>
 
-      <div className="card" ref={userFormRef}>
+      <div className="card user-editor-card" ref={userFormRef}>
         <div className="card-header">
           <span className="card-title">{userDraft.editId ? "Kullanıcı Düzenle" : "Yeni Personel / Yönetici Kaydı"}</span>
         </div>
-        <div className="card-body">
-          <form onSubmit={handleSaveUser}>
+        <div className="card-body user-editor-body">
+          <form className="user-editor-form" onSubmit={handleSaveUser}>
+            <div className="user-editor-basic-grid">
             <div className="form-group">
               <label className="form-label">Ad Soyad <span className="required">*</span></label>
               <input className="form-control" value={userDraft.fullName} onChange={(event) => setUserDraft((draft) => ({ ...draft, fullName: event.target.value }))} placeholder="Ad Soyad" />
@@ -9717,7 +9718,8 @@ function UsersPage({
                 ))}
               </select>
             </div>
-            <label className="checklist-item checklist-clickable">
+            </div>
+            <label className="checklist-item checklist-clickable user-editor-shift-toggle">
               <input
                 type="checkbox"
                 checked={userDraft.shiftTrackingEnabled}
@@ -9725,6 +9727,7 @@ function UsersPage({
               />
               <span className="ui-field-note">Bu personelde vardiya butonu görünsün</span>
             </label>
+            <div className="user-editor-permission-grid">
             <details className="permission-details" open>
               <summary>Modül / Profil Erişimleri</summary>
               <div className="ui-body-compact">
@@ -9846,6 +9849,7 @@ function UsersPage({
                 )}
               </div>
             </details>
+            </div>
             <div className="permission-preview">
               <div>
                 <strong>Kullanıcı Önizleme</strong>
