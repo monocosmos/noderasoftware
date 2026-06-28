@@ -214,6 +214,7 @@ export function HotelOperationBoard({
                       const isExpanded = expandedAreaKey === view.key;
                       const canManageRoomEntry = canDepartmentEnterRoom(view.area, sessionDepartmentId);
                       const entryBlockedReason = roomEntryBlockedReason(view, sessionDepartmentId, nowTick);
+                      const dockTileStatus = shouldDockTileStatus(view);
                       const tileMetaLabels = tileMetaLabelsForView(view);
                       return (
                         <div
@@ -229,13 +230,8 @@ export function HotelOperationBoard({
                           <span className="hotel-operation-tile-main">
                             <span className="hotel-operation-tile-head">
                               <strong>{area.label}</strong>
-                              <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span>
+                              {!dockTileStatus ? <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span> : null}
                             </span>
-                            {tileMetaLabels.length ? (
-                              <span className="hotel-operation-meta-row">
-                                {tileMetaLabels.map((label) => <span key={label}>{label}</span>)}
-                              </span>
-                            ) : null}
                             {view.guestPlan ? (
                               <span className="hotel-operation-note">
                                 <Clock size={13} /> {view.guestPlan}
@@ -244,6 +240,12 @@ export function HotelOperationBoard({
                             {view.meetingPlan ? (
                               <span className="hotel-operation-note meeting">
                                 <CalendarDays size={13} /> {view.meetingPlan.time} · {view.meetingPlan.needs}
+                              </span>
+                            ) : null}
+                            {dockTileStatus || tileMetaLabels.length ? (
+                              <span className="hotel-operation-meta-row">
+                                {dockTileStatus ? <span className={`hotel-operation-status ${view.status.tone}`}>{view.status.label}</span> : null}
+                                {tileMetaLabels.map((label) => <span key={label}>{label}</span>)}
                               </span>
                             ) : null}
                           </span>
@@ -380,6 +382,10 @@ function tileMetaLabelsForView(view: AreaView) {
     labels.push(trimmed);
     return labels;
   }, []);
+}
+
+function shouldDockTileStatus(view: AreaView) {
+  return view.status.label.trim().toLocaleLowerCase("tr-TR") === areaKindLabel(view.area).toLocaleLowerCase("tr-TR");
 }
 
 function uniqueDepartmentIds(ids: string[]) {
