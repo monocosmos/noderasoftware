@@ -795,7 +795,7 @@ function activityItemsForArea(
     title: job.title,
     detail: job.description || job.tags,
     owner: [departmentLabelFor(job.departmentId), job.assignee].filter(Boolean).join(" · "),
-    due: job.due ? formatBoardDate(job.due) : "Bugün",
+    due: targetDateLabel(job.due),
     status: job.status,
     risk: job.priority === "Urgent" || job.slaRisk ? "urgent" : job.priority === "High" || job.status === "Delayed" ? "high" : "normal"
   } satisfies AreaActivity));
@@ -808,7 +808,7 @@ function activityItemsForArea(
       title: record.status,
       detail: record.detail || record.meta,
       owner: record.owner,
-      due: record.due || "Bugün",
+      due: targetDateLabel(record.due),
       status: record.status,
       risk: record.risk
     } satisfies AreaActivity));
@@ -901,7 +901,7 @@ function issueCardsForArea(
     label: departmentRouteLabelForJob(job, departmentShortCodeFor),
     title: job.title,
     detail: `${issueLabelForJob(job)} · ${departmentLabelFor(job.departmentId)}`,
-    due: job.due ? `Hedef ${formatBoardDate(job.due)}` : "Hedef bugün",
+    due: targetDateLabel(job.due, true),
     risk: job.priority === "Urgent" || job.slaRisk ? "urgent" : job.priority === "High" || job.status === "Delayed" ? "high" : "normal"
   } satisfies AreaIssueCard));
   const recordCards = records
@@ -911,7 +911,7 @@ function issueCardsForArea(
       label: issueLabelForStatus(record.status),
       title: record.status,
       detail: record.meta || record.detail,
-      due: record.due || "Bugün",
+      due: targetDateLabel(record.due, true),
       risk: record.risk
     } satisfies AreaIssueCard));
   return [...jobCards, ...recordCards];
@@ -954,6 +954,7 @@ function guestPlanForArea(
   const guestImpactJob = jobs.find((job) => job.guestImpact && !isDepartmentWorkJob(job));
   if (status.tone === "occupied") {
     const scheduleValue = records[0]?.due || guestImpactJob?.due;
+    if (!scheduleValue?.trim()) return "Misafir var";
     const sourceText = [
       scheduleValue,
       records[0]?.meta,
@@ -964,21 +965,7 @@ function guestPlanForArea(
     const day = dateOrDayLabel(scheduleValue);
     return `Misafir var · misafir girişi ${time ? `${day} ${time}` : day}`;
   }
-  if (status.tone === "department") {
-    const scheduleValue = jobs[0]?.due || records[0]?.due;
-    const sourceText = [
-      scheduleValue,
-      jobs[0]?.description,
-      jobs[0]?.tags,
-      records[0]?.meta,
-      records[0]?.detail
-    ].filter(Boolean).join(" ");
-    const time = findTime(sourceText);
-    const day = scheduleValue ? dateOrDayLabel(scheduleValue) : "";
-    const schedule = time ? `${day || "Bugün"} ${time}` : day;
-    const departmentLabel = status.departmentLabel || "Departman";
-    return schedule ? `${departmentLabel} işlemde · hedef ${schedule}` : `${departmentLabel} işlemde`;
-  }
+  if (status.tone === "department") return "";
   return "Misafir giriş planı yok";
 }
 
@@ -1160,4 +1147,10 @@ function formatBoardDate(value: string) {
   if (Number.isNaN(parsed.getTime())) return value;
   const time = parsed.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
   return `${parsed.toLocaleDateString("tr-TR", { day: "2-digit", month: "short" })} ${time}`;
+}
+
+function targetDateLabel(value?: string, includePrefix = false) {
+  if (!value?.trim()) return includePrefix ? "Hedef tanımlı değil" : "Tanımlı değil";
+  const dateLabel = formatBoardDate(value);
+  return includePrefix ? `Hedef ${dateLabel}` : dateLabel;
 }
