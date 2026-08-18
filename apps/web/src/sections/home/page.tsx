@@ -4,59 +4,66 @@ import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowRight,
+  ArrowUpRight,
   BadgeCheck,
   Blocks,
   Building2,
-  ChevronRight,
   CircuitBoard,
   ClipboardCheck,
-  Code2,
   Cpu,
-  Download,
   ExternalLink,
-  Factory,
   Github,
   Globe2,
+  Layers3,
   Mail,
   MapPin,
   MonitorCog,
-  Network,
+  MonitorPlay,
   ScanSearch,
   ShieldCheck,
-  Smartphone,
-  Sparkles,
-  Wrench
+  Sparkles
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import styles from "./home.module.css";
+import { UndeadHellgradSection } from "./undead-hellgrad-section";
 
 export const metadata: Metadata = {
-  title: "Nodera Software | Hotel, Embedded ve Kalite Yönetim Yazılımları",
+  title: "Nodera Software | Dijital Ürünler, Oyun ve Mühendislik",
   description:
-    "Nodera Software; HotelOps, STM32/ESP32 tabanlı gömülü yazılım, ISO 9001/14001 kalite yönetimi, elektronik tasarım ve özel otomasyon çözümleri geliştirir."
+    "Nodera Software; HotelOps, Undead Hellgrad, VideoWallPlayer, gömülü sistemler, kalite yönetimi ve özel otomasyon çözümleri geliştirir."
 };
 
 const brandLogo = "/brand/nodera-logo.png";
 
-const serviceLines: Array<{ title: string; text: string; icon: LucideIcon }> = [
+const serviceLines: Array<{
+  title: string;
+  text: string;
+  tag: string;
+  icon: LucideIcon;
+}> = [
   {
-    title: "Özel web panelleri",
-    text: "Satış, operasyon, stok, servis ve yönetim işlerini tek merkeze alan hızlı ve ölçülebilir web uygulamaları.",
+    title: "Özel iş uygulamaları",
+    text: "Satış, operasyon, stok, servis ve yönetim akışlarını tek merkezde toplayan web ve masaüstü ürünleri.",
+    tag: "Web · Desktop",
     icon: MonitorCog
   },
   {
-    title: "Elektronik kart ve kütüphane",
-    text: "Altium Designer tabanlı kart kütüphaneleri, eğitim kitleri ve mikrodenetleyici çevre birimi tasarımları.",
+    title: "Gömülü sistemler",
+    text: "STM32, ESP32 ve Raspberry Pi üzerinde sensör, haberleşme, kontrol ve saha prototipleme çözümleri.",
+    tag: "Firmware · IoT",
     icon: CircuitBoard
   },
   {
     title: "Görüntü işleme",
-    text: "Python ve OpenCV ile tespit, ölçüm, geometri işleme ve Raspberry Pi destekli prototipleme işleri.",
+    text: "Python ve OpenCV ile tespit, ölçüm, geometri işleme ve donanım destekli görüntü analizi.",
+    tag: "Python · OpenCV",
     icon: ScanSearch
   },
   {
-    title: "C# ve otomasyon arayüzleri",
-    text: "Makine, saha cihazı veya kurum içi iş akışları için masaüstü arayüzler ve kontrol ekranları.",
-    icon: Code2
+    title: "Kalite ve otomasyon",
+    text: "ISO 9001/14001 süreçlerini, saha verisini ve kurum içi iş akışlarını izlenebilir dijital sistemlere dönüştürme.",
+    tag: "QMS · Workflow",
+    icon: ClipboardCheck
   }
 ];
 
@@ -64,7 +71,7 @@ const currentProducts = [
   {
     name: "STM32_KalmanFilter_MPU6050",
     type: "STM32",
-    text: "MPU6050 ve Kalman filtre odağında hareket/ölçüm çözümü.",
+    text: "MPU6050 ve Kalman filtre odağında hareket ve ölçüm çözümü.",
     href: "https://github.com/spacemonochrome/STM32_KalmanFilter_MPU6050"
   },
   {
@@ -99,162 +106,385 @@ const currentProducts = [
   }
 ];
 
-const qmsModules = [
-  "Doküman ve revizyon yönetimi",
-  "Uygunsuzluk, CAPA ve kök neden takibi",
-  "İç tetkik ve tedarikçi değerlendirme",
-  "Çevre hedefleri, atık ve faaliyet kayıtları"
-];
-
 export default function Home() {
   return (
-    <main className="nodera-site min-h-screen bg-[#e7eef6] text-[#17324d]">
-      <section className="relative isolate overflow-hidden border-b border-[#b8cce0] bg-[#123a56] text-[#edf7ff]">
-        <div className="absolute inset-0 -z-20 bg-[linear-gradient(to_right,rgba(34,211,238,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(59,130,246,0.07)_1px,transparent_1px)] bg-[size:54px_54px]" />
-        <div className="absolute inset-0 -z-10 bg-[linear-gradient(140deg,rgba(18,58,86,0.98)_0%,rgba(21,77,111,0.94)_48%,rgba(42,116,139,0.9)_100%)]" />
-
-        <div className="mx-auto flex min-h-[76vh] w-full max-w-7xl flex-col px-5 py-5 sm:px-8 lg:px-10">
-          <nav className="flex items-center justify-between gap-4">
-            <Link href="/" className="flex min-w-0 items-center gap-3 text-sm font-bold uppercase text-[#edf7ff]">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-[#eaf4fb] p-1.5">
+    <main className={styles.site}>
+      <header className={styles.hero}>
+        <div className="mx-auto flex min-h-[760px] w-full max-w-7xl flex-col px-5 pb-16 pt-5 sm:px-8 lg:px-10">
+          <nav className={`${styles.navShell} flex items-center justify-between gap-4 rounded-2xl px-3 py-3 sm:px-4`}>
+            <Link href="/" className="flex min-w-0 items-center gap-3 text-sm font-bold uppercase tracking-[0.08em] text-white">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/10">
                 <Image src={brandLogo} alt="Nodera Software logosu" width={36} height={36} priority unoptimized />
               </span>
-              <span className="truncate">Nodera Software</span>
+              <span className="hidden truncate sm:block">Nodera Software</span>
             </Link>
-            <div className="hidden items-center gap-6 text-sm font-semibold text-[#d5ebf8] md:flex">
-              <a href="#urunler" className="hover:text-[#ffffff]">
-                Ürünler
+
+            <div className="hidden items-center gap-5 text-sm font-semibold text-[#cbe2ee] xl:flex">
+              <a href="#projeler" className="transition hover:text-white">
+                Projeler
               </a>
-              <Link href="/hotel/" className="hover:text-[#ffffff]">
+              <a href="#undead-hellgrad" className="transition hover:text-white">
+                Undead
+              </a>
+              <Link href="/hotel/" className="transition hover:text-white">
                 HotelOps
               </Link>
-              <Link href="/hotel/hotelpanel/" className="hover:text-[#ffffff]">
-                HotelPanel
-              </Link>
-              <Link href="/videowallplayer/" className="hover:text-[#ffffff]">
+              <Link href="/videowallplayer/" className="transition hover:text-white">
                 VideoWallPlayer
               </Link>
-              <a href="#embedded" className="hover:text-[#ffffff]">
-                STM32 / ESP32
+              <a href="#yetkinlikler" className="transition hover:text-white">
+                Yetkinlikler
               </a>
-              <a href="#kalite" className="hover:text-[#ffffff]">
-                Kalite
-              </a>
-              <a href="#referanslar" className="hover:text-[#ffffff]">
-                Referanslar
-              </a>
-              <a href="#iletisim" className="hover:text-[#ffffff]">
+              <a href="#iletisim" className="transition hover:text-white">
                 İletişim
               </a>
             </div>
+
             <div className="flex items-center gap-2">
               <ThemeToggle />
               <a
                 href="mailto:info@noderasoftware.com"
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-[#eaf4fb] px-4 py-2.5 text-sm font-bold text-[#17324d] transition hover:bg-[#d5ebf8]"
+                className="hidden items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-[#12334a] transition hover:-translate-y-0.5 hover:bg-[#dff5f5] sm:inline-flex"
               >
-                <Mail size={16} />
-                Teklif Al
+                Projeni konuşalım
+                <ArrowUpRight size={16} />
               </a>
             </div>
           </nav>
 
-          <div className="flex flex-1 items-center py-10 lg:py-14">
-            <div className="max-w-4xl">
-              <p className="mb-5 inline-flex items-center gap-2 rounded-md border border-[#22d3ee]/45 bg-[#22d3ee]/10 px-3 py-2 text-sm font-semibold text-[#a5f3fc]">
-                <Sparkles size={16} />
-                Otel, gömülü sistem ve kalite yönetimi için yazılım
+          <div className="grid flex-1 gap-14 py-16 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:py-20">
+            <div>
+              <p className="inline-flex items-center gap-2 rounded-full border border-[#8adce2]/25 bg-[#8adce2]/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.2em] text-[#a7edf0]">
+                <Sparkles size={15} />
+                Nodera Product Studio · İstanbul
               </p>
-              <h1 className="max-w-4xl text-5xl font-semibold leading-[1.04] md:text-6xl lg:text-7xl">
-                Nodera Software
+              <h1 className="mt-7 max-w-3xl text-5xl font-semibold leading-[1.02] tracking-[-0.045em] text-white sm:text-6xl lg:text-7xl">
+                Karmaşık fikirleri <span className={styles.heroAccent}>çalışan ürünlere</span> dönüştürüyoruz.
               </h1>
-              <p className="mt-6 max-w-2xl text-lg leading-8 text-[#d5ebf8]">
-                Hotel yönetim sistemi, STM32/ESP32 tabanlı ürün yazılımları, ISO 9001/14001 kalite yönetim modülleri ve
-                mevcut elektronik/yazılım ürünleri için tanıtım, satış ve uygulama merkezi.
+              <p className="mt-7 max-w-2xl text-lg leading-8 text-[#c4dbe7]">
+                Kurumsal operasyon yazılımlarından bağımsız oyunlara, gömülü sistemlerden medya teknolojilerine uzanan
+                ürünler tasarlıyor ve geliştiriyoruz.
               </p>
-              <div className="mt-8 flex flex-wrap gap-3">
+
+              <div className="mt-9 flex flex-wrap gap-3">
                 <a
-                  href="#urunler"
-                  className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2dd4bf] px-5 py-3 text-sm font-bold text-[#17324d] transition hover:bg-[#67e8f9]"
+                  href="#projeler"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-[#42d6c1] px-5 py-3 text-sm font-bold text-[#092635] transition hover:-translate-y-0.5 hover:bg-[#69e7d5]"
                 >
-                  Ürünleri incele
+                  Projeleri keşfet
                   <ArrowRight size={17} />
                 </a>
                 <Link
                   href="/hotel/"
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/5 px-5 py-3 text-sm font-semibold text-white backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/10"
                 >
                   HotelOps demosu
                   <ExternalLink size={17} />
                 </Link>
               </div>
-              <div className="mt-8 flex flex-wrap items-center gap-3 text-sm font-semibold text-[#d5ebf8]">
-                <span className="inline-flex items-center gap-2 rounded-md border border-[#d5ebf8]/25 bg-[#edf7ff]/10 px-3 py-2">
-                  <MapPin size={16} />
-                  İstanbul
+
+              <div className="mt-10 flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold text-[#b6cfdb]">
+                <span className="inline-flex items-center gap-2">
+                  <Globe2 size={16} className="text-[#68d8dc]" />
+                  Web + mobil
                 </span>
-                <span className="inline-flex items-center gap-2 rounded-md border border-[#d5ebf8]/25 bg-[#edf7ff]/10 px-3 py-2">
-                  <Factory size={16} />
-                  KOBİ ve saha operasyonları
+                <span className="inline-flex items-center gap-2">
+                  <Cpu size={16} className="text-[#68d8dc]" />
+                  Embedded + IoT
                 </span>
-                <span className="inline-flex items-center gap-2 rounded-md border border-[#d5ebf8]/25 bg-[#edf7ff]/10 px-3 py-2">
-                  <BadgeCheck size={16} />
-                  Web, mobil, desktop, embedded
+                <span className="inline-flex items-center gap-2">
+                  <MonitorPlay size={16} className="text-[#68d8dc]" />
+                  Oyun + medya
                 </span>
+              </div>
+            </div>
+
+            <div className={`${styles.heroPanel} rounded-[1.75rem] p-4 sm:p-5`}>
+              <div className="relative z-10 flex items-center justify-between gap-4 border-b border-white/10 px-1 pb-4">
+                <div>
+                  <p className="text-[0.65rem] font-bold uppercase tracking-[0.24em] text-[#7bcdd7]">Nodera / Product system</p>
+                  <p className="mt-2 text-sm font-semibold text-white">Aktif ürün hatları</p>
+                </div>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#77d9cf]/20 bg-[#58d7c5]/10 px-3 py-2 text-xs font-bold text-[#9de7dd]">
+                  <span className="h-2 w-2 rounded-full bg-[#54ddca] shadow-[0_0_14px_rgba(84,221,202,0.8)]" />
+                  03 aktif
+                </span>
+              </div>
+
+              <div className="relative z-10 mt-4 space-y-3">
+                <Link href="/hotel/" className={`${styles.productLine} flex items-center gap-4 rounded-2xl p-4`}>
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#4ed4bf]/15 text-[#69e0cf]">
+                    <Building2 size={23} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold uppercase tracking-[0.16em] text-[#78cfd4]">SaaS / Operations</span>
+                    <span className="mt-1 block text-lg font-semibold text-white">HotelOps</span>
+                  </span>
+                  <ArrowUpRight className="text-[#8db4c6]" size={19} />
+                </Link>
+
+                <a
+                  href="https://noderasoftware.com/undeadhellgrad/"
+                  className={`${styles.productLine} flex items-center gap-4 rounded-2xl p-4`}
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#351716]">
+                    <Image
+                      src="/brand/undead-hellgrad/hellgrad-skull.png"
+                      alt=""
+                      width={48}
+                      height={48}
+                      className="h-full w-full object-cover"
+                      unoptimized
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold uppercase tracking-[0.16em] text-[#e88972]">Game / Prototype</span>
+                    <span className="mt-1 block text-lg font-semibold text-white">Undead Hellgrad</span>
+                  </span>
+                  <ArrowUpRight className="text-[#8db4c6]" size={19} />
+                </a>
+
+                <Link href="/videowallplayer/" className={`${styles.productLine} flex items-center gap-4 rounded-2xl p-4`}>
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#51bce0]/15 text-[#72d6ef]">
+                    <MonitorPlay size={23} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold uppercase tracking-[0.16em] text-[#78cfd4]">Media / Multi-platform</span>
+                    <span className="mt-1 block text-lg font-semibold text-white">VideoWallPlayer</span>
+                  </span>
+                  <ArrowUpRight className="text-[#8db4c6]" size={19} />
+                </Link>
+              </div>
+
+              <div className="relative z-10 mt-4 grid grid-cols-3 gap-2">
+                {[
+                  ["Web", "Ürün arayüzü"],
+                  ["Native", "Desktop + cihaz"],
+                  ["Cloud", "Canlı servis"]
+                ].map(([value, label]) => (
+                  <div key={value} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                    <p className="text-sm font-bold text-white">{value}</p>
+                    <p className="mt-1 text-xs leading-5 text-[#91adbb]">{label}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </header>
 
-      <section id="urunler" className="border-y border-[#5f86a0] bg-[#07111f] text-[#edf7ff]">
-        <div className="relative min-h-[calc(100vh-96px)] overflow-hidden">
-          <iframe
-            title="Nodera HotelOps web tabanlı tanıtım deneyimi"
-            src="/animations/hotelops-ad/Nodera%20Reklam%20Web.html"
-            className="pointer-events-none absolute inset-0 h-full w-full border-0 opacity-55"
-            loading="eager"
-          />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_42%,rgba(47,230,176,0.08),transparent_34%),linear-gradient(90deg,rgba(7,17,31,0.94)_0%,rgba(7,17,31,0.82)_42%,rgba(7,17,31,0.52)_100%)]" />
-          <div className="relative z-10 mx-auto flex min-h-[calc(100vh-96px)] w-full max-w-7xl flex-col justify-center px-5 py-16 sm:px-8 lg:px-10">
-            <div className="grid gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:items-center">
+      <section id="projeler" className={`${styles.section} border-b px-5 py-20 sm:px-8 sm:py-24 lg:px-10`}>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <div className="grid gap-7 lg:grid-cols-[0.72fr_1.28fr] lg:items-end">
+            <div>
+              <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.22em]`}>Seçili projeler / 01</p>
+              <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">
+                Farklı sektörler. Aynı ürün disiplini.
+              </h2>
+            </div>
+            <p className={`${styles.mutedText} max-w-2xl text-lg leading-8 lg:justify-self-end`}>
+              Her projeyi yalnızca bir ekran olarak değil; kullanıcı akışı, altyapı, dağıtım ve sürdürülebilir operasyonuyla
+              birlikte ele alıyoruz.
+            </p>
+          </div>
+
+          <article className={`${styles.hotelShowcase} mt-12 rounded-[2rem] p-5 sm:p-8 lg:p-10`}>
+            <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
               <div>
-                <p className="text-sm font-bold uppercase text-[#2dd4bf]">HotelOps web deneyimi</p>
-                <h2 className="mt-5 max-w-3xl text-5xl font-semibold leading-tight sm:text-6xl">
-                  Nodera HotelOps
-                </h2>
-                <p className="mt-6 max-w-2xl text-lg leading-8 text-[#d5ebf8]">
-                  Otel operasyonlarını, departman görevlerini ve yönetim takiplerini tek merkezde toplayan seçilebilir,
-                  tıklanabilir ve web tabanlı tanıtım yüzeyi.
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#55dbc8]">Hotel operations platform</p>
+                <h3 className="mt-5 text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">Nodera HotelOps</h3>
+                <p className="mt-6 max-w-xl text-base leading-8 text-[#c4dbe7] sm:text-lg">
+                  Housekeeping, teknik servis, talepler, envanter ve yönetim görünümünü rol bazlı ekranlarla tek operasyon
+                  merkezinde toplar.
                 </p>
+
+                <div className="mt-7 flex flex-wrap gap-2">
+                  {["Departman bazlı takip", "Mobil + masaüstü", "Canlı API", "Yerel veya bulut"].map((item) => (
+                    <span key={item} className="rounded-full border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-[#d9eaf2]">
+                      {item}
+                    </span>
+                  ))}
+                </div>
+
                 <div className="mt-8 flex flex-wrap gap-3">
                   <Link
                     href="/hotel/"
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2dd4bf] px-5 py-3 text-sm font-bold text-[#17324d] transition hover:bg-[#67e8f9]"
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-[#43d6c1] px-5 py-3 text-sm font-bold text-[#082635] transition hover:-translate-y-0.5 hover:bg-[#6de9d7]"
                   >
                     HotelOps girişini aç
                     <ExternalLink size={17} />
                   </Link>
-                  <a
-                    href="mailto:info@noderasoftware.com"
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
+                  <Link
+                    href="/hotel/hotelpanel/"
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
                   >
-                    Demo talep et
-                    <Mail size={17} />
-                  </a>
+                    HotelPanel
+                    <ArrowRight size={17} />
+                  </Link>
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
-                {[
-                  { value: "Housekeeping", label: "oda ve görev takibi" },
-                  { value: "Teknik servis", label: "arıza, bakım ve aksiyon" },
-                  { value: "Yönetim", label: "rapor, rol ve süreç görünümü" }
-                ].map((item) => (
-                  <div key={item.value} className="rounded-lg border border-[#d5ebf8]/22 bg-[#edf7ff]/10 p-5 backdrop-blur-md">
-                    <p className="text-xl font-bold text-[#ffffff]">{item.value}</p>
-                    <p className="mt-3 text-sm font-semibold leading-6 text-[#c8e3f3]">{item.label}</p>
+              <div className={styles.hotelScreen}>
+                <iframe
+                  title="Nodera HotelOps tanıtım deneyimi"
+                  src="/animations/hotelops-ad/Nodera%20Reklam%20Web.html"
+                  className="pointer-events-none absolute inset-0 h-full w-full border-0 opacity-80"
+                  loading="lazy"
+                />
+                <div className="absolute inset-x-4 bottom-4 z-10 grid grid-cols-3 gap-2">
+                  {[
+                    ["Housekeeping", "oda akışı"],
+                    ["Teknik", "bakım takibi"],
+                    ["Yönetim", "rapor görünümü"]
+                  ].map(([value, label]) => (
+                    <div key={value} className="rounded-xl border border-white/15 bg-[#07131e]/75 p-3 backdrop-blur-md">
+                      <p className="text-xs font-bold text-white sm:text-sm">{value}</p>
+                      <p className="mt-1 hidden text-xs text-[#9fbdca] sm:block">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <UndeadHellgradSection />
+
+      <section id="videowallplayer" className={`${styles.sectionMuted} border-b border-[var(--site-line)] px-5 py-20 sm:px-8 sm:py-24 lg:px-10`}>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <article className={`${styles.videoWallCard} grid gap-8 rounded-[2rem] p-6 sm:p-9 lg:grid-cols-[1.08fr_0.92fr] lg:items-center lg:p-12`}>
+            <div>
+              <div className="flex items-center gap-4">
+                <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#071522] p-2.5">
+                  <Image
+                    src="/brand/videowallplayer/brand-logo.png"
+                    alt="VideoWallPlayer logosu"
+                    width={48}
+                    height={48}
+                    className="h-full w-full object-contain"
+                    unoptimized
+                  />
+                </span>
+                <div>
+                  <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.2em]`}>Multi-platform media</p>
+                  <p className={`${styles.mutedText} mt-1 text-sm font-semibold`}>Windows + Android</p>
+                </div>
+              </div>
+
+              <h2 className="mt-7 text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">VideoWallPlayer</h2>
+              <p className={`${styles.mutedText} mt-5 max-w-2xl text-lg leading-8`}>
+                Otel, showroom ve video wall ekranlarında kenarlıksız, tam ekran ve kesintisiz oynatma için geliştirilen
+                medya deneyimi.
+              </p>
+
+              <div className="mt-7 grid gap-3 sm:grid-cols-3">
+                {["Kiosk oynatma", "VLC/libVLC altyapısı", "Loop + karışık mod"].map((item) => (
+                  <div key={item} className={`${styles.surfaceCard} rounded-xl p-4`}>
+                    <BadgeCheck className="text-[#19a98f]" size={20} />
+                    <p className="mt-3 text-sm font-bold leading-6">{item}</p>
                   </div>
+                ))}
+              </div>
+
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link
+                  href="/videowallplayer/"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-[#257fc0] px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-[#1f6fa9]"
+                >
+                  Detay ve indirme
+                  <ArrowUpRight size={17} />
+                </Link>
+                <a
+                  href="https://github.com/monocosmos/VideoWallPlayer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--site-line)] px-5 py-3 text-sm font-semibold transition hover:bg-[var(--site-surface)]"
+                >
+                  Kaynak kod
+                  <Github size={17} />
+                </a>
+              </div>
+            </div>
+
+            <div className="relative flex min-h-[300px] items-center justify-center lg:min-h-[440px]">
+              <div className="absolute h-64 w-64 rounded-full bg-[#2cccd3]/15 blur-3xl sm:h-80 sm:w-80" />
+              <Image
+                src="/brand/videowallplayer/brand-model.png"
+                alt="VideoWallPlayer medya ağı görseli"
+                width={520}
+                height={520}
+                className={`${styles.videoWallArt} relative z-10 h-auto w-full max-w-[430px]`}
+                unoptimized
+              />
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="yetkinlikler" className={`${styles.section} border-b px-5 py-20 sm:px-8 sm:py-24 lg:px-10`}>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <div className="grid gap-8 lg:grid-cols-[0.75fr_1.25fr] lg:items-end">
+            <div>
+              <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.22em]`}>Mühendislik yetkinlikleri / 02</p>
+              <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">
+                Yazılımın ötesinde, uçtan uca ürün geliştirme.
+              </h2>
+            </div>
+            <p className={`${styles.mutedText} max-w-2xl text-lg leading-8 lg:justify-self-end`}>
+              Arayüz, iş kuralı, cihaz yazılımı ve dağıtım katmanlarını aynı ürün hedefi etrafında birleştiriyoruz.
+            </p>
+          </div>
+
+          <div className="mt-12 grid gap-4 md:grid-cols-2">
+            {serviceLines.map(({ title, text, tag, icon: Icon }, index) => (
+              <article key={title} className={`${styles.capabilityCard} rounded-2xl p-6 sm:p-7`}>
+                <div className="flex items-start justify-between gap-5">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#2d83be]/10 text-[#2d83be]">
+                    <Icon size={25} />
+                  </span>
+                  <span className={`${styles.mutedText} text-xs font-bold tabular-nums`}>0{index + 1}</span>
+                </div>
+                <p className={`${styles.sectionLabel} mt-8 text-xs font-bold uppercase tracking-[0.18em]`}>{tag}</p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">{title}</h3>
+                <p className={`${styles.mutedText} mt-4 leading-7`}>{text}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className={`${styles.surfaceCard} rounded-2xl p-6 sm:p-8`}>
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#f6c945]/15 text-[#b98508]">
+                  <Cpu size={22} />
+                </span>
+                <div>
+                  <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.18em]`}>STM32 / ESP32</p>
+                  <h3 className="mt-1 text-xl font-semibold">Cihazdan buluta veri hattı</h3>
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-2">
+                {["UART · I2C · SPI", "Wi-Fi + IoT", "Sensör füzyonu", "Raspberry Pi"].map((item) => (
+                  <span key={item} className="rounded-full border border-[var(--site-line)] px-3 py-2 text-sm font-semibold">
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className={`${styles.surfaceCard} rounded-2xl p-6 sm:p-8`}>
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2ec79c]/12 text-[#159b79]">
+                  <ShieldCheck size={22} />
+                </span>
+                <div>
+                  <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.18em]`}>ISO 9001 / 14001</p>
+                  <h3 className="mt-1 text-xl font-semibold">İzlenebilir kalite süreçleri</h3>
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-2">
+                {["Doküman + revizyon", "CAPA", "İç tetkik", "Çevre hedefleri"].map((item) => (
+                  <span key={item} className="rounded-full border border-[var(--site-line)] px-3 py-2 text-sm font-semibold">
+                    {item}
+                  </span>
                 ))}
               </div>
             </div>
@@ -262,190 +492,42 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="videowallplayer" className="border-y border-[#b8cce0] bg-[#edf4fa] px-5 py-14 sm:px-8 lg:px-10">
-        <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.82fr_1.18fr] lg:items-center">
-          <div className="flex items-start gap-5">
-            <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg border border-[#b8cce0] bg-[#07111f] p-3">
-              <Image
-                src="/brand/videowallplayer/brand-logo.png"
-                alt="VideoWallPlayer logosu"
-                width={64}
-                height={64}
-                className="h-full w-full object-contain"
-                unoptimized
-              />
-            </span>
+      <section id="referanslar" className={`${styles.sectionMuted} px-5 py-20 sm:px-8 sm:py-24 lg:px-10`}>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
             <div>
-              <p className="text-sm font-bold uppercase text-[#2563eb]">Yeni yayınlanan proje</p>
-              <h2 className="mt-3 text-3xl font-semibold leading-tight">VideoWallPlayer</h2>
-              <p className="mt-4 max-w-2xl leading-8 text-[#4d647a]">
-                Otel, showroom ve video wall ekranlarında kenarlıksız, tam ekran ve kesintisiz oynatma için Windows ve
-                Android tabanlı medya oynatıcı.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              "Windows ve Android paketleri",
-              "VLC/libVLC codec altyapısı",
-              "Loop, karışık mod ve kiosk oynatma"
-            ].map((item) => (
-              <div key={item} className="rounded-lg border border-[#b8cce0] bg-[#e1ebf4] p-5">
-                <BadgeCheck className="text-[#16a34a]" size={22} />
-                <p className="mt-4 text-sm font-bold leading-6 text-[#17324d]">{item}</p>
-              </div>
-            ))}
-          </div>
-          <div className="lg:col-span-2 flex flex-wrap gap-3">
-            <Link
-              href="/videowallplayer/"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2f80c9] px-5 py-3 text-sm font-bold text-[#edf7ff] transition hover:bg-[#2563eb]"
-            >
-              Detay ve indirme
-              <Download size={17} />
-            </Link>
-            <a
-              href="https://github.com/monocosmos/VideoWallPlayer"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#b8cce0] px-5 py-3 text-sm font-semibold text-[#17324d] transition hover:bg-[#d8e6f2]"
-            >
-              Kaynak kod
-              <Github size={17} />
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <section className="border-y border-[#b8cce0] bg-[#e1ebf4] px-5 py-20 sm:px-8 lg:px-10">
-        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.72fr_1.28fr]">
-          <div>
-            <p className="text-sm font-bold uppercase text-[#2563eb]">HotelOps</p>
-            <h2 className="mt-4 text-4xl font-semibold leading-tight">Otel içi işler için operasyon merkezi.</h2>
-            <p className="mt-5 leading-8 text-[#4d647a]">
-              Housekeeping, teknik servis, talepler, kayıp eşya, envanter, duyuru, eğitim ve VIP takiplerini rol bazlı
-              ekranlarla yönetmek için geliştirildi.
-            </p>
-            <Link
-              href="/hotel/"
-              className="mt-7 inline-flex items-center justify-center gap-2 rounded-md bg-[#2f80c9] px-5 py-3 text-sm font-bold text-[#edf7ff] transition hover:bg-[#2563eb]"
-            >
-              HotelOps girişini aç
-              <ExternalLink size={17} />
-            </Link>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {[
-              { title: "Departman bazlı iş takibi", icon: Building2 },
-              { title: "Mobil ve masaüstü erişim", icon: Smartphone },
-              { title: "Canlı API ve raporlama altyapısı", icon: Network },
-              { title: "Yerel sunucu veya bulut kurulum", icon: ShieldCheck }
-            ].map(({ title, icon: Icon }) => (
-              <div key={title} className="rounded-lg border border-[#b8cce0] bg-[#edf4fa] p-6">
-                <Icon className="text-[#2563eb]" size={28} />
-                <p className="mt-8 text-xl font-semibold">{title}</p>
-                <p className="mt-3 leading-7 text-[#4d647a]">
-                  Kuruma göre yetki, ekran, süreç ve raporlar uyarlanarak teslim edilir.
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="embedded" className="px-5 py-20 sm:px-8 lg:px-10">
-        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-2">
-          <div className="rounded-lg border border-[#b8cce0] bg-[#1e4f6f] p-7 text-[#edf7ff]">
-            <p className="text-sm font-bold uppercase text-[#facc15]">STM32 / ESP32</p>
-            <h2 className="mt-4 text-4xl font-semibold leading-tight">Firmware, eğitim kiti ve saha prototipi.</h2>
-            <p className="mt-5 leading-8 text-[#d5ebf8]">
-              Sensör, haberleşme, motor/kontrol, veri toplama ve cihaz arayüzü işleri için ürünleşmeye hazır gömülü
-              yazılım geliştirme hattı.
-            </p>
-            <div className="mt-8 grid gap-3 sm:grid-cols-2">
-              {["UART, I2C, SPI, ADC", "Wi-Fi ve IoT senaryoları", "MPU6050 ve filtreleme", "Raspberry Pi entegrasyonu"].map(
-                (item) => (
-                  <div key={item} className="rounded-md border border-[#d5ebf8]/25 bg-[#edf7ff]/12 p-4 text-sm font-semibold text-[#e1f2fb]">
-                    {item}
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-          <div id="kalite" className="rounded-lg border border-[#b8cce0] bg-[#edf4fa] p-7 shadow-soft">
-            <p className="text-sm font-bold uppercase text-[#2563eb]">ISO 9001 / ISO 14001</p>
-            <h2 className="mt-4 text-4xl font-semibold leading-tight">Kalite süreçleri için yönetilebilir yazılım modülleri.</h2>
-            <p className="mt-5 leading-8 text-[#4d647a]">
-              Klasör ve Excel ağırlıklı kalite takibini kontrollü, izlenebilir ve raporlanabilir bir sisteme taşımak için
-              modüler yapı.
-            </p>
-            <div className="mt-8 space-y-3">
-              {qmsModules.map((item) => (
-                <div key={item} className="flex items-center gap-3 rounded-md border border-[#b8cce0] bg-[#e1ebf4] p-4">
-                  <ShieldCheck className="shrink-0 text-[#16a34a]" size={20} />
-                  <span className="font-semibold text-[#17324d]">{item}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="border-y border-[#b8cce0] bg-[#d8e6f2] px-5 py-20 sm:px-8 lg:px-10">
-        <div className="mx-auto max-w-7xl">
-          <div className="grid gap-10 lg:grid-cols-[0.66fr_1.34fr]">
-            <div>
-              <p className="text-sm font-bold uppercase text-[#2563eb]">Hizmet alanları</p>
-              <h2 className="mt-4 text-4xl font-semibold leading-tight">Mevcut uzmanlıklar satış diline dönüştürüldü.</h2>
-              <p className="mt-5 leading-8 text-[#4d647a]">
-                Canlı sitedeki portföy başlıkları artık ürünleştirilebilir hizmet kalemleri olarak konumlandırıldı.
-              </p>
-            </div>
-            <div className="grid gap-px overflow-hidden rounded-lg border border-[#b8cce0] bg-[#b8cce0] md:grid-cols-2">
-              {serviceLines.map(({ title, text, icon: Icon }) => (
-                <article key={title} className="bg-[#edf4fa] p-7">
-                  <Icon className="mb-8 text-[#2563eb]" size={30} />
-                  <h3 className="text-xl font-semibold">{title}</h3>
-                  <p className="mt-4 leading-7 text-[#4d647a]">{text}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="referanslar" className="bg-[#e7eef6] px-5 py-20 sm:px-8 lg:px-10">
-        <div className="mx-auto max-w-7xl">
-          <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
-            <div>
-              <p className="text-sm font-bold uppercase text-[#2563eb]">Mevcut ürün ve referanslar</p>
-              <h2 className="mt-4 text-4xl font-semibold leading-tight">Sitedeki açık ürünler korunarak tanıtım alanına taşındı.</h2>
+              <p className={`${styles.sectionLabel} text-xs font-bold uppercase tracking-[0.22em]`}>Açık kaynak / 03</p>
+              <h2 className="mt-5 max-w-3xl text-4xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">
+                Deney, kütüphane ve mühendislik arşivi.
+              </h2>
             </div>
             <a
               href="https://github.com/spacemonochrome?tab=repositories"
-              className="inline-flex items-center gap-2 rounded-md border border-[#b8cce0] px-4 py-3 text-sm font-semibold text-[#17324d] transition hover:bg-[#d8e6f2]"
+              className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--site-line)] bg-[var(--site-surface)] px-5 py-3 text-sm font-semibold transition hover:-translate-y-0.5"
             >
               Tüm repolar
-              <Github size={16} />
+              <Github size={17} />
             </a>
           </div>
 
           <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {currentProducts.map((product) => (
-              <a
-                key={product.name}
-                href={product.href}
-                className="group rounded-lg border border-[#b8cce0] bg-[#edf4fa] p-6 transition hover:-translate-y-0.5 hover:border-[#60a5fa] hover:shadow-xl hover:shadow-[#2f80c9]/16"
-              >
+              <a key={product.name} href={product.href} className={`${styles.referenceCard} group rounded-2xl p-6`}>
                 <div className="flex items-start justify-between gap-4">
-                  <Blocks className="text-[#2563eb]" size={24} />
-                  <span className="rounded-md border border-[#b8cce0] bg-[#e1ebf4] px-2 py-1 text-xs font-bold text-[#4d647a]">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2d83be]/10 text-[#2d83be]">
+                    <Blocks size={21} />
+                  </span>
+                  <span className={`${styles.mutedText} rounded-full border border-[var(--site-line)] px-2.5 py-1.5 text-[0.68rem] font-bold uppercase tracking-[0.12em]`}>
                     {product.type}
                   </span>
                 </div>
-                <h3 className="mt-6 text-xl font-semibold group-hover:text-[#2563eb]">{product.name}</h3>
-                <p className="mt-4 min-h-20 leading-7 text-[#4d647a]">{product.text}</p>
-                <span className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#2563eb]">
+                <h3 className="mt-7 break-words text-xl font-semibold tracking-[-0.02em] transition group-hover:text-[#2d83be]">
+                  {product.name}
+                </h3>
+                <p className={`${styles.mutedText} mt-4 min-h-14 leading-7`}>{product.text}</p>
+                <span className={`${styles.sectionLabel} mt-6 inline-flex items-center gap-2 text-sm font-bold`}>
                   İncele
-                  <ChevronRight size={16} />
+                  <ArrowUpRight size={16} />
                 </span>
               </a>
             ))}
@@ -453,51 +535,48 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="iletisim" className="border-t border-[#b8cce0] bg-[#1e4f6f] px-5 py-16 text-[#edf7ff] sm:px-8 lg:px-10">
-        <div className="mx-auto grid max-w-7xl gap-8 md:grid-cols-[1fr_auto] md:items-center">
-          <div>
-            <p className="text-sm font-bold uppercase text-[#22d3ee]">Satış ve demo</p>
-            <h2 className="mt-3 text-3xl font-semibold">HotelOps, embedded ya da kalite yönetimi için görüşme başlatın.</h2>
-            <p className="mt-4 max-w-2xl leading-7 text-[#d5ebf8]">
-              Kurulum kapsamı, demo akışı, ürün özelleştirme ve teslim planı için doğrudan iletişime geçilebilir.
-            </p>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row">
+      <section id="iletisim" className={`${styles.contactSection} px-5 py-20 sm:px-8 sm:py-24 lg:px-10`}>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <div className="grid gap-10 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#7ee4da]">Birlikte üretelim</p>
+              <h2 className="mt-5 max-w-4xl text-4xl font-semibold leading-tight tracking-[-0.04em] sm:text-6xl">
+                Bir sonraki ürünü birlikte kuralım.
+              </h2>
+              <p className="mt-6 max-w-2xl text-lg leading-8 text-[#c4dbe7]">
+                Yeni ürün, mevcut sistemin modernizasyonu ya da özel mühendislik ihtiyacı için kapsamı birlikte netleştirelim.
+              </p>
+            </div>
             <a
               href="mailto:info@noderasoftware.com"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#2dd4bf] px-5 py-3 text-sm font-bold text-[#17324d] transition hover:bg-[#67e8f9]"
+              className="inline-flex w-fit items-center justify-center gap-3 rounded-full bg-[#4ad9c4] px-6 py-3.5 text-sm font-bold text-[#082635] transition hover:-translate-y-0.5 hover:bg-[#72ead9]"
             >
               info@noderasoftware.com
-              <Mail size={17} />
+              <Mail size={18} />
             </a>
-            <a
-              href="https://www.noderasoftware.com/"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
-            >
-              <Globe2 size={17} />
-              noderasoftware.com
-            </a>
-            <Link
-              href="/privacy/"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d5ebf8]/35 px-5 py-3 text-sm font-semibold text-[#edf7ff] transition hover:bg-[#edf7ff]/12"
-            >
-              <ShieldCheck size={17} />
-              Privacy Policy
-            </Link>
           </div>
-          <div className="md:col-span-2 flex flex-wrap gap-3 text-sm font-semibold text-[#c6e2f2]">
-            <span className="inline-flex items-center gap-2">
-              <Wrench size={15} />
-              Özel geliştirme
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Cpu size={15} />
-              Gömülü sistem
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <ClipboardCheck size={15} />
-              Kalite süreçleri
-            </span>
+
+          <div className="mt-16 flex flex-col gap-7 border-t border-white/10 pt-8 md:flex-row md:items-center md:justify-between">
+            <Link href="/" className="flex items-center gap-3 text-sm font-bold uppercase tracking-[0.08em] text-white">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white p-1.5">
+                <Image src={brandLogo} alt="" width={32} height={32} unoptimized />
+              </span>
+              Nodera Software
+            </Link>
+            <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-[#b8d2df]">
+              <span className="inline-flex items-center gap-2">
+                <MapPin size={15} />
+                İstanbul
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <Layers3 size={15} />
+                Web · Mobil · Desktop · Embedded
+              </span>
+              <Link href="/privacy/" className="inline-flex items-center gap-2 transition hover:text-white">
+                <ShieldCheck size={15} />
+                Privacy Policy
+              </Link>
+            </div>
           </div>
         </div>
       </section>

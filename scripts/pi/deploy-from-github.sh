@@ -187,14 +187,18 @@ sync_home_section() {
   sync_required_file "${build_dir}/apps/web/out/index.html" "${APP_DIR}/apps/web/out/index.html"
   sync_file_if_exists "${build_dir}/apps/web/out/index.txt" "${APP_DIR}/apps/web/out/index.txt"
   sync_file_if_exists "${build_dir}/apps/web/out/brand/nodera-logo.png" "${APP_DIR}/apps/web/out/brand/nodera-logo.png"
+  sync_dir_replace "${build_dir}/apps/web/out/brand/undead-hellgrad" "${APP_DIR}/apps/web/out/brand/undead-hellgrad"
   sync_dir_replace "${build_dir}/apps/web/out/animations/hotelops-ad" "${APP_DIR}/apps/web/out/animations/hotelops-ad"
   sync_required_file "${build_dir}/apps/web/src/app/page.tsx" "${APP_DIR}/apps/web/src/app/page.tsx"
   sync_dir_replace "${build_dir}/apps/web/src/sections/home" "${APP_DIR}/apps/web/src/sections/home"
   sync_file_if_exists "${build_dir}/apps/web/public/brand/nodera-logo.png" "${APP_DIR}/apps/web/public/brand/nodera-logo.png"
+  sync_dir_replace "${build_dir}/apps/web/public/brand/undead-hellgrad" "${APP_DIR}/apps/web/public/brand/undead-hellgrad"
   sync_dir_replace "${build_dir}/apps/web/public/animations/hotelops-ad" "${APP_DIR}/apps/web/public/animations/hotelops-ad"
   sync_next_static "${build_dir}"
   sync_web_build_manifest "${build_dir}"
   test -s "${APP_DIR}/apps/web/out/index.html"
+  test -s "${APP_DIR}/apps/web/out/brand/undead-hellgrad/hellgrad-city.jpg"
+  test -s "${APP_DIR}/apps/web/out/brand/undead-hellgrad/hellgrad-logo.png"
 }
 
 sync_videowallplayer_section() {

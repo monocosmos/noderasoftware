@@ -1,0 +1,399 @@
+.site {
+  --site-bg: #f4f7fb;
+  --site-surface: rgba(255, 255, 255, 0.82);
+  --site-surface-solid: #ffffff;
+  --site-ink: #102a43;
+  --site-muted: #60758a;
+  --site-line: rgba(78, 111, 141, 0.2);
+  --site-blue: #2878b8;
+  --site-teal: #14b8a6;
+  min-height: 100vh;
+  overflow: hidden;
+  color: var(--site-ink);
+  background: var(--site-bg);
+}
+
+:global(.nodera-dark) .site {
+  --site-bg: #07111b;
+  --site-surface: rgba(17, 35, 51, 0.82);
+  --site-surface-solid: #112333;
+  --site-ink: #edf7ff;
+  --site-muted: #a8c0d2;
+  --site-line: rgba(157, 197, 224, 0.17);
+  --site-blue: #66b8f0;
+  --site-teal: #35d6c4;
+}
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 760px;
+  overflow: hidden;
+  color: #edf7ff;
+  background:
+    radial-gradient(circle at 72% 28%, rgba(28, 181, 170, 0.22), transparent 29%),
+    radial-gradient(circle at 18% 78%, rgba(44, 126, 185, 0.25), transparent 34%),
+    linear-gradient(132deg, #071522 0%, #0a2638 52%, #0d3446 100%);
+}
+
+.hero::before {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  content: "";
+  opacity: 0.48;
+  background-image:
+    linear-gradient(rgba(139, 199, 224, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 199, 224, 0.08) 1px, transparent 1px);
+  background-size: 68px 68px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.hero::after {
+  position: absolute;
+  inset: auto -12% -42% 34%;
+  z-index: -1;
+  height: 620px;
+  content: "";
+  border: 1px solid rgba(113, 223, 216, 0.14);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 88px rgba(95, 192, 206, 0.03),
+    0 0 0 176px rgba(95, 192, 206, 0.025),
+    0 0 110px rgba(42, 181, 177, 0.12);
+}
+
+.navShell {
+  border: 1px solid rgba(210, 238, 250, 0.17);
+  background: rgba(7, 24, 36, 0.64);
+  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(20px);
+}
+
+.heroAccent {
+  color: transparent;
+  background: linear-gradient(92deg, #78dce0 4%, #62bbed 48%, #87e6ba 96%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+.heroPanel {
+  position: relative;
+  border: 1px solid rgba(205, 236, 249, 0.18);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025)),
+    rgba(5, 20, 31, 0.72);
+  box-shadow:
+    0 40px 110px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(24px);
+}
+
+.heroPanel::before {
+  position: absolute;
+  inset: -18% -16% auto auto;
+  width: 280px;
+  height: 280px;
+  content: "";
+  border-radius: 50%;
+  background: rgba(34, 211, 238, 0.13);
+  filter: blur(70px);
+}
+
+.productLine {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(211, 238, 248, 0.12);
+  background: rgba(214, 239, 249, 0.055);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.productLine:hover {
+  transform: translateX(5px);
+  border-color: rgba(114, 219, 224, 0.35);
+  background: rgba(214, 239, 249, 0.09);
+}
+
+.section {
+  position: relative;
+  border-color: var(--site-line);
+  color: var(--site-ink);
+  background: var(--site-bg);
+}
+
+.section::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    radial-gradient(circle at 8% 8%, rgba(40, 120, 184, 0.08), transparent 26%),
+    radial-gradient(circle at 92% 88%, rgba(20, 184, 166, 0.07), transparent 24%);
+}
+
+.sectionMuted {
+  position: relative;
+  color: var(--site-ink);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--site-bg) 90%, #d7e6f1), var(--site-bg));
+}
+
+.sectionLabel {
+  color: var(--site-blue);
+}
+
+.mutedText {
+  color: var(--site-muted);
+}
+
+.surfaceCard {
+  border: 1px solid var(--site-line);
+  color: var(--site-ink);
+  background: var(--site-surface);
+  box-shadow: 0 20px 70px rgba(31, 67, 94, 0.08);
+  backdrop-filter: blur(16px);
+}
+
+:global(.nodera-dark) .surfaceCard {
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.2);
+}
+
+.hotelShowcase {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(178, 223, 239, 0.2);
+  color: #edf7ff;
+  background:
+    radial-gradient(circle at 74% 32%, rgba(45, 212, 191, 0.17), transparent 31%),
+    linear-gradient(135deg, #081724 0%, #0d2f41 54%, #114359 100%);
+  box-shadow: 0 34px 100px rgba(11, 45, 64, 0.22);
+}
+
+.hotelShowcase::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  background-image:
+    linear-gradient(rgba(149, 211, 230, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(149, 211, 230, 0.05) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: linear-gradient(90deg, black, transparent);
+}
+
+.hotelScreen {
+  position: relative;
+  min-height: 390px;
+  overflow: hidden;
+  border: 1px solid rgba(207, 237, 248, 0.2);
+  border-radius: 1.35rem;
+  background: #06101b;
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.hotelScreen::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(108deg, rgba(4, 17, 27, 0.34), transparent 52%, rgba(31, 204, 182, 0.08));
+}
+
+.undeadSection {
+  position: relative;
+  isolation: isolate;
+  min-height: 760px;
+  overflow: hidden;
+  color: white;
+  background: #090909;
+}
+
+.undeadBackdrop {
+  z-index: -3;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.015);
+  filter: saturate(0.78) contrast(1.08);
+}
+
+.undeadShade {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 68% 54%, rgba(192, 65, 42, 0.13), transparent 28%),
+    linear-gradient(90deg, rgba(5, 5, 5, 0.96) 0%, rgba(5, 5, 5, 0.87) 38%, rgba(5, 5, 5, 0.4) 72%, rgba(5, 5, 5, 0.76) 100%),
+    linear-gradient(180deg, rgba(4, 4, 4, 0.5), transparent 42%, rgba(3, 3, 3, 0.86));
+}
+
+.undeadEmbers {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.3;
+  background-image:
+    radial-gradient(circle at 19% 72%, #ef5a3d 0 1px, transparent 2px),
+    radial-gradient(circle at 37% 31%, #f08353 0 1px, transparent 2px),
+    radial-gradient(circle at 77% 62%, #d64a31 0 1px, transparent 2px),
+    radial-gradient(circle at 89% 26%, #ef7c52 0 1px, transparent 2px);
+  background-size: 170px 190px, 230px 260px, 210px 170px, 260px 220px;
+}
+
+.undeadLogo {
+  width: min(100%, 500px);
+  height: auto;
+  margin: -2.2rem 0 -1.1rem -1.65rem;
+  object-fit: contain;
+  filter: drop-shadow(0 22px 45px rgba(0, 0, 0, 0.65));
+}
+
+.undeadProofCard {
+  margin: 0;
+  padding: 0.75rem 0.75rem 1.05rem;
+  overflow: hidden;
+  border: 1px solid rgba(244, 220, 210, 0.18);
+  border-radius: 1.55rem;
+  background: rgba(12, 10, 9, 0.74);
+  box-shadow:
+    0 42px 110px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  transform: rotate(1deg);
+  transition:
+    transform 240ms ease,
+    border-color 240ms ease;
+}
+
+.undeadProofCard:hover {
+  transform: rotate(0deg) translateY(-4px);
+  border-color: rgba(230, 108, 82, 0.38);
+}
+
+.videoWallCard {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--site-line);
+  color: var(--site-ink);
+  background:
+    radial-gradient(circle at 85% 25%, rgba(34, 211, 238, 0.13), transparent 28%),
+    var(--site-surface-solid);
+  box-shadow: 0 28px 90px rgba(31, 67, 94, 0.1);
+}
+
+.videoWallArt {
+  filter: drop-shadow(0 28px 42px rgba(13, 119, 154, 0.24));
+  transition: transform 300ms ease;
+}
+
+.videoWallCard:hover .videoWallArt {
+  transform: translateY(-6px) rotate(1.5deg) scale(1.02);
+}
+
+.capabilityCard {
+  border: 1px solid var(--site-line);
+  color: var(--site-ink);
+  background: var(--site-surface);
+  box-shadow: 0 18px 55px rgba(31, 67, 94, 0.065);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.capabilityCard:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--site-blue) 44%, transparent);
+  box-shadow: 0 28px 70px rgba(31, 92, 133, 0.12);
+}
+
+.referenceCard {
+  border: 1px solid var(--site-line);
+  color: var(--site-ink);
+  background: color-mix(in srgb, var(--site-surface-solid) 88%, transparent);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.referenceCard:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--site-blue) 45%, transparent);
+  background: var(--site-surface-solid);
+}
+
+.contactSection {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #edf7ff;
+  background:
+    radial-gradient(circle at 84% 20%, rgba(45, 212, 191, 0.22), transparent 29%),
+    linear-gradient(126deg, #071522 0%, #0b3043 58%, #155067 100%);
+}
+
+.contactSection::after {
+  position: absolute;
+  right: -130px;
+  bottom: -220px;
+  z-index: -1;
+  width: 520px;
+  height: 520px;
+  content: "";
+  border: 1px solid rgba(125, 225, 221, 0.2);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 82px rgba(125, 225, 221, 0.035),
+    0 0 0 164px rgba(125, 225, 221, 0.025);
+}
+
+@media (max-width: 1023px) {
+  .hero {
+    min-height: auto;
+  }
+
+  .undeadSection {
+    min-height: auto;
+  }
+
+  .undeadShade {
+    background:
+      linear-gradient(180deg, rgba(5, 5, 5, 0.89) 0%, rgba(5, 5, 5, 0.76) 50%, rgba(3, 3, 3, 0.94) 100%),
+      linear-gradient(90deg, rgba(5, 5, 5, 0.88), rgba(5, 5, 5, 0.35));
+  }
+
+  .undeadProofCard {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero::before {
+    background-size: 42px 42px;
+  }
+
+  .hotelScreen {
+    min-height: 290px;
+  }
+
+  .undeadLogo {
+    width: min(100%, 390px);
+    margin: -1.5rem 0 -0.75rem -1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .productLine,
+  .undeadProofCard,
+  .videoWallArt,
+  .capabilityCard,
+  .referenceCard {
+    transition: none;
+  }
+}

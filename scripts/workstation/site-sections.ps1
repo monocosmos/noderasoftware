@@ -59,11 +59,13 @@ function Get-NoderaSiteSection {
           "apps/web/src/app/page.tsx",
           "apps/web/src/sections/home",
           "apps/web/public/brand/nodera-logo.png",
+          "apps/web/public/brand/undead-hellgrad",
           "apps/web/public/animations/hotelops-ad",
           "apps/web/public/web-build.json",
           "apps/web/out/index.html",
           "apps/web/out/index.txt",
           "apps/web/out/brand/nodera-logo.png",
+          "apps/web/out/brand/undead-hellgrad",
           "apps/web/out/animations/hotelops-ad",
           "apps/web/out/_next/static",
           "apps/web/out/web-build.json"
